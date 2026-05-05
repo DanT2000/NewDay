@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Печать — Планировщик</title>
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background: #f2f2f2;
+      font-family: Arial, Helvetica, sans-serif;
+      color: #111;
+    }
+
+    /* ---- Print controls (hidden on print) ---- */
+    .print-bar {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 48px;
+      background: #fff;
+      border-bottom: 1px solid #ddd;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      gap: 12px;
+      z-index: 100;
+    }
+
+    .print-bar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .back-link {
+      font-size: 13px;
+      color: #4f6ef7;
+      text-decoration: none;
+    }
+    .back-link:hover { text-decoration: underline; }
+
+    .print-title-text {
+      font-size: 14px;
+      font-weight: 600;
+      color: #111;
+    }
+
+    .btn-print {
+      background: #4f6ef7;
+      color: #fff;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .btn-print:hover { background: #3b5bdb; }
+
+    .print-hint {
+      font-size: 12px;
+      color: #888;
+    }
+
+    /* ---- A4 page ---- */
+    .page-wrap {
+      padding-top: 64px;
+      padding-bottom: 32px;
+    }
+
+    .page {
+      width: 210mm;
+      min-height: 297mm;
+      margin: 0 auto;
+      padding: 10mm 11mm;
+      background: #fff;
+    }
+
+    /* ---- Typography ---- */
+    .header {
+      border: 2px solid #111;
+      padding: 9px 11px;
+      margin-bottom: 8px;
+    }
+
+    .header-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.15;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .subtitle {
+      margin-top: 5px;
+      font-size: 12px;
+      color: #333;
+    }
+
+    .weight-box {
+      min-width: 130px;
+      border: 1.5px solid #111;
+      padding: 7px 9px;
+      font-size: 13px;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .weight-val {
+      font-weight: 700;
+    }
+
+    /* ---- Sections ---- */
+    .section {
+      margin-top: 8px;
+      break-inside: avoid;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 5px;
+      font-size: 13.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.25px;
+    }
+
+    .section-title::before {
+      content: "";
+      display: inline-block;
+      width: 7px;
+      height: 16px;
+      background: #111;
+    }
+
+    /* ---- Tables ---- */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    th, td {
+      border: 1px solid #222;
+      padding: 4px 6px;
+      vertical-align: top;
+      font-size: 10.5px;
+      line-height: 1.2;
+    }
+
+    th {
+      background: #eaeaea;
+      font-weight: 700;
+      text-align: left;
+    }
+
+    .schedule th:nth-child(1), .schedule td:nth-child(1) {
+      width: 27%;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .schedule th:nth-child(2), .schedule td:nth-child(2) { width: 73%; }
+
+    .empty-td { height: 17px; }
+
+    /* ---- Task grid ---- */
+    .grid-two {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .box {
+      border: 1.5px solid #111;
+      padding: 7px;
+      min-height: 54px;
+    }
+
+    .check-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 5px;
+      font-size: 11px;
+    }
+
+    .check-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 5px;
+    }
+
+    .checkbox {
+      display: inline-block;
+      flex-shrink: 0;
+      width: 11px;
+      height: 11px;
+      border: 1.5px solid #111;
+      margin-top: 1px;
+    }
+
+    .checkbox.checked {
+      background: #111;
+      position: relative;
+    }
+    .checkbox.checked::after {
+      content: '✓';
+      color: #fff;
+      font-size: 8px;
+      position: absolute;
+      top: -1px;
+      left: 1px;
+      line-height: 1;
+    }
+
+    /* ---- Sport table ---- */
+    .sport th:nth-child(1), .sport td:nth-child(1) { width: 38%; }
+    .sport th:nth-child(2), .sport td:nth-child(2) { width: 17%; text-align: center; }
+    .sport th:nth-child(3), .sport td:nth-child(3) { width: 31%; }
+    .sport th:nth-child(4), .sport td:nth-child(4) { width: 14%; text-align: center; }
+
+    /* ---- Habits ---- */
+    .habits-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 5px;
+      font-size: 11px;
+    }
+
+    .habit-cell {
+      border: 1px solid #222;
+      padding: 5px 7px;
+      min-height: 28px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-weight: 700;
+    }
+
+    /* ---- Notes ---- */
+    .notes-list { display: grid; gap: 5px; }
+
+    .note-cell {
+      border: 1px solid #222;
+      min-height: 26px;
+      padding: 5px 7px;
+      font-size: 11px;
+    }
+
+    /* ---- Loader ---- */
+    .page-loader {
+      text-align: center;
+      padding: 60px 20px;
+      color: #666;
+      font-size: 16px;
+    }
+
+    /* ---- Print media ---- */
+    @media print {
+      body { background: #fff; }
+
+      .print-bar { display: none; }
+      .page-wrap { padding: 0; }
+
+      .page {
+        width: 210mm;
+        min-height: 297mm;
+        margin: 0;
+        padding: 9mm;
+        box-shadow: none;
+      }
+
+      @page {
+        size: A4 portrait;
+        margin: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="print-bar" id="printBar">
+    <div class="print-bar-left">
+      <a href="/app" class="back-link">← Назад</a>
+      <span class="print-title-text" id="printBarTitle">Загрузка...</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <span class="print-hint">Клавиша P — печать</span>
+      <button class="btn-print" onclick="window.print()">🖨 Печать / PDF</button>
+    </div>
+  </div>
+
+  <div class="page-wrap">
+    <div id="pageContainer">
+      <div class="page-loader">Загрузка данных...</div>
+    </div>
+  </div>
+
+  <script>
+    // Escape HTML for safe insertion
+    function esc(s) {
+      if (s == null) return '';
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    // Get date from URL: /print/2026-05-06
+    const pathParts = window.location.pathname.split('/');
+    const dateParam = pathParts[pathParts.length - 1];
+
+    function formatDateRu(dateStr) {
+      if (!dateStr) return '';
+      const [y, m, d] = dateStr.split('-');
+      return `${d}.${m}.${y}`;
+    }
+
+    function renderPage(day) {
+      const schedule = day.schedule || [];
+      const extraRows = day.extraScheduleRows || 0;
+      const workTasks = day.workTasks || [];
+      const homeTasks = day.homeTasks || [];
+      const sport = day.sport || [];
+      const habits = day.habits || [];
+      const notes = Array.isArray(day.notes) ? day.notes : ['', '', ''];
+
+      // Schedule rows
+      const schedRows = schedule.map(item => `
+        <tr>
+          <td>${esc(item.time || '')}</td>
+          <td>${esc(item.action || '')}</td>
+        </tr>`).join('');
+
+      const emptyRows = Array.from({ length: Math.max(extraRows, 0) }, () =>
+        `<tr><td class="empty-td"></td><td class="empty-td"></td></tr>`
+      ).join('');
+
+      // Task lists
+      function taskListHtml(tasks) {
+        if (!tasks.length) return '<li><span class="checkbox"></span><em style="color:#999">—</em></li>';
+        return tasks.map(t => `
+          <li>
+            <span class="checkbox ${t.done ? 'checked' : ''}"></span>
+            <span ${t.done ? 'style="text-decoration:line-through;color:#666"' : ''}>${esc(t.text)}</span>
+          </li>`).join('');
+      }
+
+      // Sport rows
+      const sportRows = sport.map(item => `
+        <tr>
+          <td>${esc(item.exercise || '')}</td>
+          <td style="text-align:center">${esc(item.sets || '')}</td>
+          <td>${esc(item.reps || '')}</td>
+          <td style="text-align:center"><span class="checkbox ${item.done ? 'checked' : ''}"></span></td>
+        </tr>`).join('');
+
+      // Habits
+      const habitCells = habits.map(h => `
+        <div class="habit-cell">
+          <span class="checkbox ${h.done ? 'checked' : ''}"></span>
+          <span ${h.done ? 'style="text-decoration:line-through;color:#666"' : ''}>${esc(h.text)}</span>
+        </div>`).join('');
+
+      // Notes
+      const noteCells = notes.map(n =>
+        `<div class="note-cell">${esc(n || '')}</div>`
+      ).join('');
+
+      const weightHtml = day.weight != null
+        ? `Вес: <span class="weight-val">${day.weight} кг</span>`
+        : `Вес: <span style="color:#aaa">не указан</span>`;
+
+      const title = `${esc(day.title || 'План дня')} — ${esc(formatDateRu(day.date))}`;
+
+      document.title = `${formatDateRu(day.date)} — Планировщик`;
+      document.getElementById('printBarTitle').textContent =
+        `${formatDateRu(day.date)}, ${day.weekday || ''}`;
+
+      return `<div class="page">
+        <header class="header">
+          <div class="header-top">
+            <div>
+              <h1>${title}</h1>
+              ${day.weekday || day.focus ? `<div class="subtitle">${esc([day.weekday, day.focus].filter(Boolean).join(' · '))}</div>` : ''}
+            </div>
+            <div class="weight-box">${weightHtml}</div>
+          </div>
+        </header>
+
+        ${schedule.length > 0 || extraRows > 0 ? `
+        <section class="section">
+          <h2 class="section-title">Основное расписание</h2>
+          <table class="schedule">
+            <thead><tr><th>Время</th><th>Действие</th></tr></thead>
+            <tbody>${schedRows}${emptyRows}</tbody>
+          </table>
+        </section>` : ''}
+
+        ${(workTasks.length > 0 || homeTasks.length > 0) ? `
+        <div class="grid-two">
+          <section class="section box">
+            <h2 class="section-title">Рабочие задачи</h2>
+            <ul class="check-list">${taskListHtml(workTasks)}</ul>
+          </section>
+          <section class="section box">
+            <h2 class="section-title">Дом и питание</h2>
+            <ul class="check-list">${taskListHtml(homeTasks)}</ul>
+          </section>
+        </div>` : ''}
+
+        ${sport.length > 0 ? `
+        <section class="section">
+          <h2 class="section-title">Спорт</h2>
+          <table class="sport">
+            <thead><tr>
+              <th>Упражнение</th><th>Подходы</th><th>Повторения</th><th>Выполнено</th>
+            </tr></thead>
+            <tbody>${sportRows}</tbody>
+          </table>
+        </section>` : ''}
+
+        ${habits.length > 0 ? `
+        <section class="section">
+          <h2 class="section-title">Привычки дня</h2>
+          <div class="habits-grid">${habitCells}</div>
+        </section>` : ''}
+
+        ${notes.some(n => n && n.trim()) ? `
+        <section class="section">
+          <h2 class="section-title">Заметки</h2>
+          <div class="notes-list">${noteCells}</div>
+        </section>` : ''}
+      </div>`;
+    }
+
+    async function loadAndRender() {
+      if (!dateParam || !/^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+        document.getElementById('pageContainer').innerHTML =
+          '<div class="page-loader">❌ Неверный формат даты в URL</div>';
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/days/${dateParam}`);
+        if (res.status === 401) {
+          window.location.href = '/login';
+          return;
+        }
+        if (!res.ok) {
+          document.getElementById('pageContainer').innerHTML =
+            `<div class="page-loader">❌ День не найден (${dateParam})</div>`;
+          return;
+        }
+
+        const day = await res.json();
+        document.getElementById('pageContainer').innerHTML = renderPage(day);
+
+      } catch (err) {
+        document.getElementById('pageContainer').innerHTML =
+          '<div class="page-loader">❌ Ошибка загрузки данных</div>';
+        console.error(err);
+      }
+    }
+
+    loadAndRender();
+
+    // Keyboard: P → print
+    document.addEventListener('keydown', (e) => {
+      const isTyping = ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName);
+      if (!isTyping && e.key.toLowerCase() === 'p' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        window.print();
+      }
+    });
+  </script>
+</body>
+</html>

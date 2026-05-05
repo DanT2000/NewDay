@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Вход — Планировщик</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body class="auth-body">
+  <div class="auth-container">
+    <div class="auth-card">
+      <div class="auth-logo">
+        <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+          <rect width="36" height="36" rx="8" fill="#4f6ef7"/>
+          <rect x="9" y="8" width="18" height="20" rx="2" fill="white"/>
+          <rect x="12" y="13" width="12" height="2" rx="1" fill="#4f6ef7"/>
+          <rect x="12" y="17" width="9" height="2" rx="1" fill="#4f6ef7"/>
+          <rect x="12" y="21" width="6" height="2" rx="1" fill="#4f6ef7"/>
+        </svg>
+        <span class="auth-logo-text">Планировщик</span>
+      </div>
+
+      <h1 class="auth-title">Вход в аккаунт</h1>
+
+      <div id="errorMsg" class="alert alert-error" style="display:none"></div>
+
+      <form id="loginForm" class="auth-form" autocomplete="on">
+        <div class="form-group">
+          <label class="form-label" for="username">Логин</label>
+          <input
+            type="text"
+            id="username"
+            name="username"
+            class="form-input"
+            placeholder="Введите логин"
+            autocomplete="username"
+            required
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="password">Пароль</label>
+          <input
+            type="password"
+            id="password"
+            name="password"
+            class="form-input"
+            placeholder="Введите пароль"
+            autocomplete="current-password"
+            required
+          />
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-full btn-lg" id="submitBtn">
+          Войти
+        </button>
+      </form>
+
+      <p class="auth-footer">
+        Нет аккаунта? <a href="/register" class="link">Зарегистрироваться</a>
+      </p>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('loginForm');
+    const errorMsg = document.getElementById('errorMsg');
+    const submitBtn = document.getElementById('submitBtn');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorMsg.style.display = 'none';
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Входим...';
+
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          errorMsg.textContent = data.error || 'Ошибка входа';
+          errorMsg.style.display = 'block';
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Войти';
+          return;
+        }
+
+        window.location.href = '/app';
+      } catch (err) {
+        errorMsg.textContent = 'Ошибка сети. Попробуйте ещё раз.';
+        errorMsg.style.display = 'block';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Войти';
+      }
+    });
+  </script>
+</body>
+</html>

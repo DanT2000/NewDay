@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Планировщик</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+
+  <!-- Navbar -->
+  <nav class="navbar">
+    <div class="navbar-brand">
+      <svg width="28" height="28" viewBox="0 0 36 36" fill="none">
+        <rect width="36" height="36" rx="8" fill="#4f6ef7"/>
+        <rect x="9" y="8" width="18" height="20" rx="2" fill="white"/>
+        <rect x="12" y="13" width="12" height="2" rx="1" fill="#4f6ef7"/>
+        <rect x="12" y="17" width="9" height="2" rx="1" fill="#4f6ef7"/>
+        <rect x="12" y="21" width="6" height="2" rx="1" fill="#4f6ef7"/>
+      </svg>
+      Планировщик
+    </div>
+    <div class="navbar-user">
+      <span class="navbar-username" id="navUsername"></span>
+      <button class="btn btn-secondary btn-sm" id="logoutBtn">Выйти</button>
+    </div>
+  </nav>
+
+  <!-- App Layout -->
+  <div class="app-layout">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-actions">
+        <button class="btn btn-primary btn-full" id="newDayBtn">+ Новый день</button>
+        <button class="btn btn-secondary btn-full" id="importBtn">↑ Импорт JSON</button>
+        <button class="btn btn-secondary btn-full" id="exportAllBtn">↓ Экспорт базы</button>
+      </div>
+      <div class="days-list-header">Дни</div>
+      <div class="days-list" id="daysList"></div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="main-content" id="mainContent">
+      <div class="empty-state" id="emptyState">
+        <div class="empty-state-icon">📅</div>
+        <h2>Нет выбранного дня</h2>
+        <p>Создайте новый день или импортируйте JSON</p>
+        <button class="btn btn-primary mt-8" id="emptyNewDayBtn">+ Создать день</button>
+      </div>
+      <div id="dayView" class="day-view hidden"></div>
+    </main>
+
+    <!-- Progress panel -->
+    <aside class="progress-panel" id="progressPanel">
+      <div id="progressContent">
+        <div class="panel-section">
+          <div class="panel-heading">Прогресс дня</div>
+          <p class="text-muted text-sm">Выберите день</p>
+        </div>
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- Save indicator -->
+  <div class="save-indicator" id="saveIndicator">✓ Сохранено</div>
+
+  <!-- Modal: Import JSON -->
+  <div class="modal-overlay hidden" id="importModal">
+    <div class="modal-box">
+      <div class="modal-title">Импорт дня из JSON</div>
+
+      <div class="form-group">
+        <label class="form-label">Вставьте JSON</label>
+        <textarea
+          class="import-textarea"
+          id="importTextarea"
+          placeholder='{"date": "2026-05-06", "weekday": "Среда", ...}'
+        ></textarea>
+      </div>
+
+      <div class="import-divider">или</div>
+
+      <div class="file-drop-zone" id="fileDropZone">
+        📂 Нажмите, чтобы выбрать файл, или перетащите его сюда
+        <input type="file" id="fileInput" accept=".json" style="display:none" />
+      </div>
+
+      <div class="import-preview hidden" id="importPreview"></div>
+
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="importCancelBtn">Отмена</button>
+        <button class="btn btn-primary" id="importConfirmBtn">Импортировать</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: New Day -->
+  <div class="modal-overlay hidden" id="newDayModal">
+    <div class="modal-box" style="width:380px">
+      <div class="modal-title">Создать новый день</div>
+      <div class="new-day-form">
+        <div class="form-group">
+          <label class="form-label">Дата</label>
+          <input type="date" class="form-input" id="newDayDate" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Фокус дня <span class="text-muted">(необязательно)</span></label>
+          <input type="text" class="form-input" id="newDayFocus" placeholder="Детокс · Фокус · Без экранов..." />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="newDayCancelBtn">Отмена</button>
+        <button class="btn btn-primary" id="newDayConfirmBtn">Создать</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Confirm -->
+  <div class="modal-overlay hidden" id="confirmModal">
+    <div class="confirm-box">
+      <div class="confirm-icon" id="confirmIcon">⚠️</div>
+      <div class="confirm-title" id="confirmTitle">Подтвердите действие</div>
+      <div class="confirm-message" id="confirmMessage"></div>
+      <div class="confirm-actions">
+        <button class="btn btn-secondary" id="confirmCancelBtn">Отмена</button>
+        <button class="btn btn-danger" id="confirmOkBtn">Подтвердить</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
