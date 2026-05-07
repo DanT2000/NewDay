@@ -40,13 +40,5 @@
     { "exercise": "Ролик для пресса с коленей", "sets": "3", "reps": "6–10", "done": false },
     { "exercise": "Гантели 3 кг — медленная проработка ног", "sets": "3", "reps": "10–15 спокойных повторений", "done": false }
   ],
-  "habits": [
-    { "text": "Пробуждение 09:00", "done": false },
-    { "text": "NN", "done": false },
-    { "text": "🏃 Спорт", "done": false },
-    { "text": "🚶 Вечерняя прогулка", "done": false },
-    { "text": "🍽 Питание", "done": false },
-    { "text": "😴 Сон до 00:00", "done": false }
-  ],
   "notes": ["", "", ""]
 }

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Установить NewDay на Android</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#ffffff">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="auth-page">
+  <div class="auth-card install-card">
+    <div class="auth-logo">
+      <span class="auth-logo-icon">📱</span>
+      <h1 class="auth-logo-title">NewDay для Android</h1>
+    </div>
+
+    <div class="install-section">
+      <h3>Вариант 1 — Добавить на экран (PWA)</h3>
+      <p>Самый простой способ. Работает прямо в браузере.</p>
+      <ol class="install-steps">
+        <li>Откройте <strong>newday.appswire.ru</strong> в браузере Chrome на Android.</li>
+        <li>Нажмите меню (⋮) → <strong>«Добавить на главный экран»</strong>.</li>
+        <li>Нажмите <strong>«Установить»</strong>.</li>
+        <li>NewDay появится на главном экране как приложение.</li>
+      </ol>
+    </div>
+
+    <div class="install-section">
+      <h3>Вариант 2 — Скачать APK</h3>
+      <p>Полноценное Android-приложение (требует разрешить установку из неизвестных источников).</p>
+      <div id="apk-status"></div>
+    </div>
+
+    <div class="install-section install-note">
+      <p><strong>Примечание:</strong> APK-приложение открывает сайт <code>newday.appswire.ru</code> внутри WebView. Для работы нужен доступ к интернету и к серверу.</p>
+    </div>
+
+    <p class="auth-footer"><a href="/app.html">← Вернуться в планировщик</a></p>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById('apk-status');
+    fetch('/downloads/NewDay.apk', { method: 'HEAD' })
+      .then(r => {
+        if (r.ok) {
+          statusEl.innerHTML = `
+            <a href="/downloads/NewDay.apk" class="btn btn-primary btn-block" download>
+              ⬇ Скачать NewDay.apk
+            </a>`;
+        } else {
+          throw new Error();
+        }
+      })
+      .catch(() => {
+        statusEl.innerHTML = `
+          <div class="apk-missing">
+            APK ещё не загружен. Соберите Android-приложение и положите файл в
+            <code>public/downloads/NewDay.apk</code>.
+            Инструкция в <code>README.md</code>.
+          </div>`;
+      });
+  </script>
+</body>
+</html>

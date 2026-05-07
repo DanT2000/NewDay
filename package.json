@@ -1,20 +1,27 @@
 {
-  "name": "planner-app",
+  "name": "newday",
   "version": "1.0.0",
-  "description": "Personal day planner with habits, tasks, weight tracking and A4 print",
+  "description": "Personal day planner - NewDay",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "dev": "nodemon server/index.js"
+    "dev": "nodemon server/index.js",
+    "cap:init": "npx cap init NewDay ru.appswire.newday --web-dir public",
+    "cap:add:android": "npx cap add android",
+    "cap:sync": "npx cap sync",
+    "cap:open": "npx cap open android"
   },
   "dependencies": {
-    "bcrypt": "^5.1.1",
+    "bcryptjs": "^2.4.3",
     "better-sqlite3": "^9.4.3",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-session": "^1.18.0"
   },
   "devDependencies": {
+    "@capacitor/android": "^6.0.0",
+    "@capacitor/cli": "^6.0.0",
+    "@capacitor/core": "^6.0.0",
     "nodemon": "^3.1.0"
   }
 }

@@ -1,0 +1,12 @@
+services:
+  newday:
+    build: .
+    container_name: newday
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./public/downloads:/app/public/downloads
+    restart: unless-stopped

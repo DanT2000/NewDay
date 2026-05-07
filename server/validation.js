@@ -1,32 +1,31 @@
-function validateDayData(data) {
-  if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    return 'Данные должны быть объектом';
-  }
+const MAX_JSON_BYTES = 512 * 1024; // 512 KB
 
-  if (!data.date || typeof data.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(data.date)) {
-    return 'Поле date обязательно в формате YYYY-MM-DD';
-  }
-
-  const d = new Date(data.date);
-  if (isNaN(d.getTime())) {
-    return 'Поле date содержит некорректную дату';
-  }
-
-  const arrayFields = ['schedule', 'workTasks', 'homeTasks', 'sport', 'habits', 'notes'];
-  for (const field of arrayFields) {
-    if (data[field] !== undefined && !Array.isArray(data[field])) {
-      return `Поле ${field} должно быть массивом`;
-    }
-  }
-
-  if (data.weight !== undefined && data.weight !== null) {
-    const w = parseFloat(data.weight);
-    if (isNaN(w) || w < 0 || w > 999) {
-      return 'Поле weight должно быть числом от 0 до 999';
-    }
-  }
-
+function validateUsername(username) {
+  if (!username || typeof username !== 'string') return 'Имя пользователя обязательно';
+  const u = username.trim();
+  if (u.length < 2 || u.length > 50) return 'Имя пользователя: от 2 до 50 символов';
+  if (!/^[a-zA-Z0-9_\-.]+$/.test(u)) return 'Имя пользователя: только буквы, цифры, _, -, .';
   return null;
 }
 
-module.exports = { validateDayData };
+function validatePassword(password) {
+  if (!password || typeof password !== 'string') return 'Пароль обязателен';
+  if (password.length < 4) return 'Пароль: не менее 4 символов';
+  if (password.length > 200) return 'Пароль слишком длинный';
+  return null;
+}
+
+function validateDate(date) {
+  if (!date || typeof date !== 'string') return 'Дата обязательна';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return 'Неверный формат даты (YYYY-MM-DD)';
+  return null;
+}
+
+function validateJsonSize(str) {
+  if (Buffer.byteLength(str, 'utf8') > MAX_JSON_BYTES) {
+    return 'Данные слишком большие (максимум 512 КБ)';
+  }
+  return null;
+}
+
+module.exports = { validateUsername, validatePassword, validateDate, validateJsonSize };

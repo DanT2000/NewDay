@@ -2,132 +2,118 @@ require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
 const path = require('path');
-const { db, runMigrations } = require('./db');
+const fs = require('fs');
+const db = require('./db');
 const { requireAuth } = require('./auth');
-const authRoutes = require('./routes/auth');
-const daysRoutes = require('./routes/days');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Trust reverse proxy (Coolify / nginx / Traefik)
-app.set('trust proxy', 1);
+// Ensure runtime dirs exist
+['public/downloads', 'public/icons'].forEach(dir => {
+  const p = path.join(__dirname, '..', dir);
+  if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+});
 
-// Body parsing — limit to 1 MB
-app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true, limit: '1mb' }));
-
-// ── SQLite session store ────────────────────────────────────
+// SQLite session store (uses same DB file)
 class SQLiteStore extends session.Store {
-  constructor(database) {
+  constructor() {
     super();
-    this._db = database;
-    // Purge expired sessions every hour
     setInterval(() => {
-      this._db.prepare('DELETE FROM sessions WHERE expire < ?').run(Math.floor(Date.now() / 1000));
-    }, 3_600_000).unref();
+      db.prepare('DELETE FROM sessions WHERE expired < ?').run(Date.now());
+    }, 60 * 60 * 1000);
   }
 
   get(sid, cb) {
     try {
-      const row = this._db.prepare('SELECT sess, expire FROM sessions WHERE sid = ?').get(sid);
-      if (!row) return cb(null, null);
-      if (row.expire < Math.floor(Date.now() / 1000)) {
-        this.destroy(sid, () => {});
-        return cb(null, null);
-      }
-      cb(null, JSON.parse(row.sess));
-    } catch (err) { cb(err); }
+      const row = db.prepare('SELECT sess FROM sessions WHERE sid = ? AND expired > ?').get(sid, Date.now());
+      cb(null, row ? JSON.parse(row.sess) : null);
+    } catch (e) { cb(e); }
   }
 
   set(sid, sess, cb) {
     try {
-      const expire = sess.cookie && sess.cookie.expires
-        ? Math.floor(new Date(sess.cookie.expires).getTime() / 1000)
-        : Math.floor(Date.now() / 1000) + 30 * 24 * 3600;
-      this._db.prepare(
-        'INSERT OR REPLACE INTO sessions (sid, sess, expire) VALUES (?, ?, ?)'
-      ).run(sid, JSON.stringify(sess), expire);
+      const ttl = (sess.cookie?.maxAge || 30 * 24 * 3600 * 1000);
+      const expired = Date.now() + ttl;
+      db.prepare('INSERT OR REPLACE INTO sessions (sid, sess, expired) VALUES (?, ?, ?)')
+        .run(sid, JSON.stringify(sess), expired);
       cb(null);
-    } catch (err) { cb(err); }
+    } catch (e) { cb(e); }
   }
 
   destroy(sid, cb) {
     try {
-      this._db.prepare('DELETE FROM sessions WHERE sid = ?').run(sid);
+      db.prepare('DELETE FROM sessions WHERE sid = ?').run(sid);
       cb(null);
-    } catch (err) { cb(err); }
+    } catch (e) { cb(e); }
   }
-
-  touch(sid, sess, cb) { this.set(sid, sess, cb); }
 }
-// ────────────────────────────────────────────────────────────
 
-app.use(
-  session({
-    store: new SQLiteStore(db),
-    name: 'planner.sid',
-    secret: process.env.SESSION_SECRET || 'change_me_please_use_a_long_random_string',
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-      sameSite: 'lax',
-    },
-  })
-);
+// Middleware
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
-// API routes
-app.use('/api/auth', authRoutes);
-app.use('/api/days', requireAuth, daysRoutes);
-
-// Export all days for current user
-app.get('/api/export/all', requireAuth, (req, res) => {
-  try {
-    const rows = db.prepare('SELECT data FROM days WHERE user_id = ? ORDER BY date DESC').all(req.session.userId);
-    const days = rows.map(row => JSON.parse(row.data));
-    const json = JSON.stringify(days, null, 2);
-    res.setHeader('Content-Disposition', 'attachment; filename="planner-export.json"');
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.send(json);
-  } catch (err) {
-    console.error('Export all error:', err);
-    res.status(500).json({ error: 'Ошибка сервера' });
-  }
-});
+app.use(session({
+  store: new SQLiteStore(),
+  secret: process.env.SESSION_SECRET || 'newday-dev-secret-change-in-production',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    secure: false, // set true only behind HTTPS reverse proxy with trust proxy
+    sameSite: 'lax',
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+  },
+}));
 
 // Static files
 app.use(express.static(path.join(__dirname, '../public')));
 
-// Page routes
-app.get('/', (req, res) => {
-  if (req.session && req.session.userId) return res.redirect('/app');
-  res.redirect('/login');
+// API routes
+app.use('/api/auth',   require('./routes/auth'));
+app.use('/api/days',   require('./routes/days'));
+app.use('/api/habits', require('./routes/habits'));
+
+// Export all data
+app.get('/api/export/all', requireAuth, (req, res) => {
+  function tryParse(s) { try { return JSON.parse(s); } catch { return {}; } }
+
+  const days = db
+    .prepare('SELECT date, data_json FROM days WHERE user_id = ? ORDER BY date DESC')
+    .all(req.session.userId)
+    .map(r => tryParse(r.data_json));
+
+  const habits = db
+    .prepare('SELECT id, title, description, emoji, is_active, sort_order, created_at FROM habits WHERE user_id = ? ORDER BY sort_order ASC')
+    .all(req.session.userId);
+
+  const habitLogs = db
+    .prepare('SELECT habit_id, date, done FROM habit_logs WHERE user_id = ? ORDER BY date DESC')
+    .all(req.session.userId);
+
+  const payload = {
+    exportDate: new Date().toISOString(),
+    username: req.session.username,
+    days,
+    habits,
+    habitLogs,
+  };
+
+  res.setHeader('Content-Disposition', 'attachment; filename="newday-full-export.json"');
+  res.setHeader('Content-Type', 'application/json');
+  res.send(JSON.stringify(payload, null, 2));
 });
 
-app.get('/login', (req, res) => {
-  if (req.session && req.session.userId) return res.redirect('/app');
-  res.sendFile(path.join(__dirname, '../public/login.html'));
+// Android install page
+app.get('/install', (_req, res) => {
+  res.sendFile(path.join(__dirname, '../public/install.html'));
 });
 
-app.get('/register', (req, res) => {
-  if (req.session && req.session.userId) return res.redirect('/app');
-  res.sendFile(path.join(__dirname, '../public/register.html'));
+// Root → index.html (auth check handled client-side)
+app.get('/', (_req, res) => {
+  res.sendFile(path.join(__dirname, '../public/index.html'));
 });
-
-app.get('/app', requireAuth, (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/app.html'));
-});
-
-app.get('/print/:date', requireAuth, (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/print.html'));
-});
-
-// Start
-runMigrations();
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Planner app running on port ${PORT}`);
+  console.log(`NewDay listening on port ${PORT}`);
 });

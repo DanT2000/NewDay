@@ -1,28 +1,15 @@
 FROM node:20-alpine
 
-# Build tools needed for better-sqlite3 native compilation
 RUN apk add --no-cache python3 make g++
 
 WORKDIR /app
 
-# Install dependencies first (layer cache)
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm install --production
 
-# Copy source
-COPY server/ ./server/
-COPY public/ ./public/
-COPY samples/ ./samples/
+COPY . .
 
-# Data directory for the SQLite file
-RUN mkdir -p /app/data
-
-# Non-root user
-RUN addgroup -S planner && adduser -S planner -G planner && \
-    chown -R planner:planner /app
-USER planner
-
-VOLUME ["/app/data"]
+RUN mkdir -p /app/data /app/public/downloads /app/public/icons
 
 EXPOSE 3000
 

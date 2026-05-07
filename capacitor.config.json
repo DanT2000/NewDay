@@ -1,0 +1,9 @@
+{
+  "appId": "ru.appswire.newday",
+  "appName": "NewDay",
+  "webDir": "public",
+  "server": {
+    "url": "https://newday.appswire.ru",
+    "cleartext": false
+  }
+}

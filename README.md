@@ -1,216 +1,253 @@
-# Планировщик дня
+# NewDay — Личный планировщик
 
-Веб-приложение для личного планирования: расписание, задачи, привычки, спорт, отслеживание веса и печать A4.
+Веб-приложение для планирования дня, отслеживания привычек, задач, веса и прогресса.
 
-## Стек
-
-- **Backend:** Node.js + Express
-- **База данных:** SQLite через `better-sqlite3` — файловая БД, хранится внутри проекта в `data/planner.db`, никакого отдельного сервиса
-- **Авторизация:** server-side sessions (express-session + connect-pg-simple), httpOnly cookie, bcrypt
-- **Frontend:** чистый HTML + CSS + JavaScript, без фреймворков
-- **Deploy:** Docker + docker-compose, совместимо с Coolify
+- **Сайт**: https://newday.appswire.ru
+- **Стек**: Node.js · Express · SQLite · Vanilla JS
+- **Развёртывание**: один Docker-контейнер
 
 ---
 
 ## Быстрый старт (локально)
 
 ### Требования
-
 - Node.js 18+
-- PostgreSQL 14+ (или Docker)
 
-### 1. Клонируйте / распакуйте проект
-
-```bash
-cd planner-app
-```
-
-### 2. Установите зависимости
-
+### Установка
 ```bash
 npm install
-```
-
-### 3. Создайте файл .env
-
-```bash
 cp .env.example .env
+# Отредактируйте .env — смените SESSION_SECRET
 ```
 
-Отредактируйте `.env`:
-
-```env
-NODE_ENV=development
-PORT=3000
-DB_PATH=./data/planner.db
-SESSION_SECRET=your_super_secret_string_here_at_least_32_chars
-```
-
-### 4. Запустите
-
+### Запуск
 ```bash
 npm start
+# или для разработки:
+npm run dev
 ```
 
-Миграции применяются автоматически при старте.
-
-Откройте браузер: **http://localhost:3000**
+Откройте в браузере: **http://localhost:3000**
 
 ---
 
-## Запуск через Docker Compose (локально)
+## Запуск через Docker
 
 ```bash
-# Скопируйте .env
 cp .env.example .env
+# Обязательно смените SESSION_SECRET в .env
 
-# Сгенерируйте SESSION_SECRET
-node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
-# Вставьте результат в .env -> SESSION_SECRET=...
-
-# Запустите
-docker compose up --build -d
-
-# Посмотреть логи
-docker compose logs -f app
+docker compose up -d
 ```
 
-Откройте браузер: **http://localhost:3000**
+Приложение будет доступно на **http://localhost:3000**.
+
+База данных хранится в `./data/newday.db` (volume примонтирован в контейнер).
 
 ---
 
-## Деплой через Coolify
+## Развёртывание через Coolify
 
-### 1. Подготовка репозитория
+1. Загрузите проект в Git-репозиторий.
+2. В Coolify создайте новый сервис → **Docker Compose**.
+3. Укажите URL репозитория.
+4. Coolify автоматически найдёт `docker-compose.yaml` в корне.
+5. Добавьте переменные окружения из `.env.example` в настройках Coolify:
+   - `SESSION_SECRET` — длинная случайная строка
+   - `DB_PATH` — `/app/data/newday.db`
+   - `NODE_ENV` — `production`
+6. Настройте домен `newday.appswire.ru` → порт `3000`.
+7. Volume `./data:/app/data` обеспечивает сохранение базы данных.
 
-Загрузите проект в Git-репозиторий (GitHub, GitLab, Gitea и т.д.).
-
-### 2. Создание проекта в Coolify
-
-1. Войдите в Coolify
-2. **New Resource → Docker Compose**
-3. Укажите репозиторий
-4. Coolify автоматически найдёт `docker-compose.yml`
-
-### 3. Переменные окружения
-
-В Coolify перейдите в раздел **Environment Variables** и добавьте:
-
-| Переменная | Значение |
-|---|---|
-| `NODE_ENV` | `production` |
-| `PORT` | `3000` |
-| `DB_PATH` | `/app/data/planner.db` |
-| `SESSION_SECRET` | *(длинная случайная строка)* |
-
-Для генерации SESSION_SECRET:
-```bash
-node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
-```
-
-> **Данные сохраняются** в Docker volume `planner_data`, смонтированном в `/app/data` — при перезапуске контейнера данные не теряются.
-
-### 4. Домен
-
-В Coolify назначьте домен для сервиса `app` (порт 3000).
-Включите HTTPS через Let's Encrypt.
-
-### 5. Деплой
-
-Нажмите **Deploy**. Coolify соберёт один образ (`app`) и смонтирует volume для данных.
+> **Важно**: Coolify использует встроенный прокси (Traefik/Caddy), который добавит HTTPS автоматически.
 
 ---
 
 ## Использование
 
 ### Регистрация и вход
+1. Откройте сайт → автоматически откроется страница входа.
+2. Нажмите «Зарегистрироваться» → введите логин и пароль.
+3. После входа сессия сохраняется на 30 дней — повторный ввод пароля не нужен.
 
-1. Откройте сайт → вы будете перенаправлены на `/login`
-2. Нажмите **Зарегистрироваться** → создайте аккаунт
-3. После входа сессия сохраняется на 30 дней
+### Добавление дня
+- Нажмите **«+ Добавить день»** в левой панели.
+- Выберите дату и необязательный заголовок.
+- Нажмите «Создать».
 
 ### Импорт дня из JSON
+- Нажмите **«📥 Импорт JSON»**.
+- Вставьте JSON или загрузите файл.
+- Пример формата: `samples/sample-day.json`.
+- Если день с такой датой уже существует — будет запрошено подтверждение.
 
-1. Нажмите **↑ Импорт JSON** в боковой панели
-2. Вставьте JSON или загрузите файл `.json`
-3. Нажмите **Импортировать**
+### Редактирование дня
+Все изменения сохраняются автоматически:
+- Заголовок, фокус дня, вес — редактируются в верхней части.
+- Задачи — нажмите чекбокс для отметки, редактируйте текст прямо в поле.
+- Расписание — редактируйте время и действие в таблице.
+- Спорт — вводите упражнение, подходы, повторения, отмечайте выполнение.
+- Заметки — свободный текст.
 
-Пример файла: `samples/sample-day.json`
+### Привычки
+1. Нажмите **«⚙️ Управление привычками»** в левой панели.
+2. Добавьте привычку: эмодзи + название.
+3. Привычки отображаются на каждом дне автоматически.
+4. Отмечайте выполнение в блоке «Привычки» на странице дня.
+5. Статистика за 7 и 30 дней — в правой панели.
 
-### Печать дня / PDF
+### Прогресс
+Правая панель показывает:
+- Круговые индикаторы: общий прогресс дня, работа, дом, спорт, привычки.
+- История веса с мини-графиком.
+- Статистика каждой привычки (% за 30 дней).
 
-**Способ 1:** Кнопка **🖨 Печать** в верхней части дня  
-**Способ 2:** Горячая клавиша **P** (английская)  
-**Способ 3:** В прогресс-панели справа → **🖨 Печать / PDF**
+### Печать A4
+- Нажмите **«🖨️ Печать»** или клавишу **P** (английская).
+- Откроется предварительный просмотр.
+- Шаблон автоматически сжимается под одну страницу A4.
+- Нажмите **«Печать / PDF»** для вывода на принтер или сохранения как PDF.
 
-Откроется страница в формате A4 — используйте **Ctrl+P** / **Cmd+P** для печати или сохранения в PDF.
-
-### Экспорт
-
-- **Скачать день JSON:** в правой панели → **↓ Скачать день JSON**
-- **Экспорт всей базы:** кнопка **↓ Экспорт базы** в боковой панели
-
-### Редактирование
-
-- Все поля редактируются прямо на странице (клик → ввод)
-- Чекбоксы сохраняются автоматически
-- Вес, фокус, заметки — редактируются inline
-- Задачи и строки расписания — добавляются и удаляются кнопками
+### Экспорт данных
+- **«📤 Экспорт дня»** — скачать текущий день в JSON.
+- **«📤 Экспорт базы»** — скачать все дни, привычки и логи в JSON.
 
 ---
 
-## API
+## Подготовка иконки
 
-| Метод | Путь | Описание |
-|---|---|---|
-| POST | `/api/auth/register` | Регистрация |
-| POST | `/api/auth/login` | Вход |
-| POST | `/api/auth/logout` | Выход |
-| GET | `/api/auth/me` | Текущий пользователь |
-| GET | `/api/days` | Список дней |
-| GET | `/api/days/:date` | Получить день |
-| POST | `/api/days` | Создать день |
-| PUT | `/api/days/:date` | Обновить день |
-| DELETE | `/api/days/:date` | Удалить день |
-| POST | `/api/days/import` | Импорт (upsert) |
-| GET | `/api/days/:date/export` | Скачать день JSON |
-| GET | `/api/export/all` | Скачать все дни JSON |
+Положите иконки в `public/icons/`:
+- `icon-192.png` — 192×192 пикселей
+- `icon-512.png` — 512×512 пикселей
+
+Рекомендуемые онлайн-инструменты: https://realfavicongenerator.net
+
+---
+
+## Сборка Android APK (через Capacitor)
+
+Capacitor создаёт Android-приложение, которое открывает сайт `newday.appswire.ru` внутри WebView.
+
+**Требования**: Android Studio, JDK 17+
+
+### Шаги сборки
+
+```bash
+# 1. Установить все зависимости (включая devDependencies)
+npm install
+
+# 2. Добавить Android-платформу (первый раз)
+npx cap add android
+
+# 3. Синхронизировать (после любых изменений)
+npx cap sync
+
+# 4. Открыть проект в Android Studio
+npx cap open android
+```
+
+В Android Studio:
+- **Build → Generate Signed Bundle / APK → APK**
+- Выберите или создайте keystore
+- Build Variant: **release**
+- Соберите APK
+
+### Куда положить APK
+
+После сборки скопируйте файл APK:
+```
+app/build/outputs/apk/release/app-release.apk
+→ public/downloads/NewDay.apk
+```
+
+После этого кнопка «📱 Android» → «Скачать NewDay.apk» на сайте заработает.
+
+### Как заменить иконку в Android-приложении
+
+После `npx cap add android`:
+- Откройте Android Studio
+- **Tools → Resource Manager → + → Image Asset**
+- Выберите свой файл иконки
+- Android Studio сгенерирует все размеры автоматически
+
+### Примечания
+
+- APK-приложение требует доступа к интернету (открывает сайт через WebView).
+- Для установки APK на Android нужно разрешить «Установку из неизвестных источников».
+- **Альтернатива без сборки**: установить сайт как PWA через Chrome → «Добавить на главный экран».
 
 ---
 
 ## Структура проекта
 
 ```
-planner-app/
+newday/
 ├── server/
-│   ├── index.js          # Express app + server start
-│   ├── db.js             # PostgreSQL pool + migrations
-│   ├── auth.js           # requireAuth middleware
-│   ├── validation.js     # Input validation
+│   ├── index.js          # Express-сервер
+│   ├── db.js             # SQLite, создание таблиц
+│   ├── auth.js           # Middleware авторизации
+│   ├── validation.js     # Валидация входных данных
 │   └── routes/
-│       ├── auth.js       # Auth routes
-│       └── days.js       # Days CRUD routes
+│       ├── auth.js       # /api/auth/*
+│       ├── days.js       # /api/days/*
+│       └── habits.js     # /api/habits/*
 ├── public/
-│   ├── login.html        # Login page
-│   ├── register.html     # Register page
-│   ├── app.html          # Main app
-│   ├── print.html        # A4 print view
-│   ├── styles.css        # App styles
-│   └── app.js            # Frontend logic
+│   ├── index.html        # Редирект (auth check)
+│   ├── login.html        # Страница входа
+│   ├── register.html     # Регистрация
+│   ├── app.html          # Основное приложение
+│   ├── install.html      # Установка Android
+│   ├── styles.css        # Стили + @media print
+│   ├── app.js            # Логика приложения
+│   ├── manifest.webmanifest
+│   ├── service-worker.js
+│   ├── icons/            # Иконки PWA (положите сюда PNG)
+│   └── downloads/        # Положите сюда NewDay.apk
 ├── samples/
-│   └── sample-day.json   # Example day structure
+│   └── sample-day.json   # Пример формата дня
+├── data/                 # SQLite-база (создаётся автоматически)
 ├── Dockerfile
-├── docker-compose.yml
+├── docker-compose.yaml
+├── capacitor.config.json # Настройки Capacitor (Android)
+├── package.json
 ├── .env.example
-└── package.json
+└── README.md
 ```
 
 ---
 
-## Безопасность
+## API
 
-- Пароли хранятся как bcrypt-хэш (cost=12)
-- Сессия хранится в PostgreSQL, cookie httpOnly
-- Каждый пользователь видит только свои дни (user_id проверяется на сервере)
-- JSON-импорт валидируется на сервере, ограничен 1 МБ
-- Пользовательский контент экранируется при выводе (защита от XSS)
+| Метод  | Путь                          | Описание                   |
+|--------|-------------------------------|----------------------------|
+| POST   | /api/auth/register            | Регистрация                |
+| POST   | /api/auth/login               | Вход                       |
+| POST   | /api/auth/logout              | Выход                      |
+| GET    | /api/auth/me                  | Текущий пользователь       |
+| GET    | /api/days                     | Список дней                |
+| GET    | /api/days/:date               | Получить день              |
+| POST   | /api/days                     | Создать/обновить день      |
+| PUT    | /api/days/:date               | Обновить день              |
+| DELETE | /api/days/:date               | Удалить день               |
+| POST   | /api/days/import              | Импорт из JSON             |
+| GET    | /api/days/:date/export        | Экспорт одного дня         |
+| GET    | /api/export/all               | Экспорт всей базы          |
+| GET    | /api/habits                   | Список привычек            |
+| POST   | /api/habits                   | Создать привычку           |
+| PUT    | /api/habits/:id               | Обновить привычку          |
+| DELETE | /api/habits/:id               | Удалить привычку           |
+| GET    | /api/habits/logs/:date        | Логи привычек на дату      |
+| PUT    | /api/habits/logs/:date/:id    | Отметить привычку          |
+| GET    | /api/habits/stats             | Статистика привычек        |
+
+---
+
+## .env переменные
+
+| Переменная     | По умолчанию                    | Описание                   |
+|----------------|---------------------------------|----------------------------|
+| PORT           | 3000                            | Порт сервера               |
+| SESSION_SECRET | (случайная строка)              | Секрет сессии — СМЕНИТЕ!   |
+| DB_PATH        | /app/data/newday.db             | Путь к базе данных         |
+| NODE_ENV       | production                      | Окружение                  |
+| APP_URL        | https://newday.appswire.ru      | URL приложения             |
