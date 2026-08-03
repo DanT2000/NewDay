@@ -1,6 +1,7 @@
 const { makeRowRepo } = require('./_rowRepo');
-const { ApiError, notFound } = require('../lib/errors');
+const { ApiError, notFound, badRequest } = require('../lib/errors');
 const { bumpRev } = require('./days');
+const { parseTimeRange } = require('../lib/dates');
 
 const FIELD_MAP = {
   startMin: 'start_min', endMin: 'end_min', title: 'title', note: 'note',
@@ -15,6 +16,22 @@ const DEFAULTS = {
   remindBeforeMin: null, seriesId: null,
 };
 
+/**
+ * Строку можно задать как startMin/endMin числами, так и полем time: «9:30-13».
+ * Разбор живёт здесь, а не в валидаторе роута, чтобы им пользовались все входы:
+ * и POST одной строки, и PUT /days/:date/full.
+ */
+function normalizeTime(data) {
+  if (typeof data.time !== 'string' || !data.time.trim()) return data;
+  const parsed = parseTimeRange(data.time);
+  if (!parsed) {
+    throw badRequest('Не удалось разобрать время. Примеры: 9:30, 930, 9:30-13:00',
+      { time: data.time });
+  }
+  const { time, ...rest } = data;
+  return { ...rest, startMin: parsed.startMin, endMin: parsed.endMin };
+}
+
 function scheduleRepo(db) {
   // Порядок задаёт сервер и он же его отдаёт — клиент не может разойтись с базой.
   const base = makeRowRepo(db, 'schedule_items', FIELD_MAP, DEFAULTS,
@@ -22,6 +39,14 @@ function scheduleRepo(db) {
 
   return {
     ...base,
+
+    create(userId, date, data) {
+      return base.create(userId, date, normalizeTime(data));
+    },
+
+    update(userId, id, data) {
+      return base.update(userId, id, normalizeTime(data));
+    },
 
     /**
      * Сдвигает строку на minutes. При cascade — вместе со всеми, что начинаются позже.

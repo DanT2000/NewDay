@@ -1,7 +1,7 @@
 const { entityRouter, pick } = require('./_entityRouter');
-const { wrap, badRequest } = require('../../lib/errors');
+const { wrap } = require('../../lib/errors');
 const v = require('../../lib/validate');
-const { parseTimeRange } = require('../../lib/dates');
+
 const { scheduleRepo } = require('../../repos/schedule');
 const { tasksRepo } = require('../../repos/tasks');
 const { mealsRepo } = require('../../repos/meals');
@@ -26,11 +26,9 @@ function sanitizeSchedule(body, { partial }) {
     sortOrder:       x => v.int(x, { min: 0, max: 100000, field: 'порядок', nullable: true }),
   }, partial);
 
+  // Строку time разбирает сам репозиторий — так это работает и для PUT /days/:date/full
   if (typeof body.time === 'string' && body.time.trim()) {
-    const parsed = parseTimeRange(body.time);
-    if (!parsed) throw badRequest('Не удалось разобрать время. Примеры: 9:30, 930, 9:30-13:00');
-    out.startMin = parsed.startMin;
-    out.endMin = parsed.endMin;
+    out.time = body.time;
   } else {
     if (!partial || body.startMin !== undefined) {
       out.startMin = v.int(body.startMin ?? 0, { min: 0, max: 1439, field: 'начало' });

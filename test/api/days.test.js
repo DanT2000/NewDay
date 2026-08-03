@@ -150,10 +150,39 @@ test('PUT /full заменяет день целиком', async () => {
 
     assert.strictEqual(after.title, 'План от бота');
     assert.strictEqual(after.schedule.length, 1);
+    assert.strictEqual(after.schedule[0].start_min, 360, 'строковое время разобрано');
+    assert.strictEqual(after.schedule[0].end_min, 390);
     assert.strictEqual(after.schedule[0].alarm_mode, 'alarm');
     assert.strictEqual(after.schedule[0].alarm_profile, 'wakeup');
     assert.strictEqual(after.tasks.work.length, 1);
     assert.strictEqual(after.meals[0].slot, 'breakfast');
+  } finally { await s.close(); }
+});
+
+test('PUT /full разбирает время во всех строках, а не только в первой', async () => {
+  const s = await loggedIn();
+  try {
+    const cur = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-06/full');
+    const after = await api(s.url, s.cookie, 'PUT', '/api/v1/days/2026-08-06/full', {
+      schedule: [
+        { time: '06:00-06:30', title: 'Подъём' },
+        { time: '09:00-13:00', title: 'Работа' },
+        { time: '13:00-14:00', title: 'Обед' },
+      ],
+    }, { 'If-Match': `"${cur.rev}"` });
+    assert.deepStrictEqual(after.schedule.map(r => r.start_min), [360, 540, 780]);
+    assert.deepStrictEqual(after.schedule.map(r => r.end_min), [390, 780, 840]);
+  } finally { await s.close(); }
+});
+
+test('битое время в PUT /full отвергается, а не молча превращается в полночь', async () => {
+  const s = await loggedIn();
+  try {
+    const cur = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-06/full');
+    const res = await api(s.url, s.cookie, 'PUT', '/api/v1/days/2026-08-06/full', {
+      schedule: [{ time: 'после обеда', title: 'Что-то' }],
+    }, { 'If-Match': `"${cur.rev}"` }, true);
+    assert.strictEqual(res.status, 400);
   } finally { await s.close(); }
 });
 
