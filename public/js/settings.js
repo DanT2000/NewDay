@@ -12,7 +12,8 @@ import { toast } from './toast.js';
 import { openSheet, confirmSheet } from './components/sheet.js';
 import { cycleTheme, getTheme, setTheme, THEME_ICON, THEME_LABEL } from './theme.js';
 import { qrSvg } from './qr.js';
-import { formatShort } from './dates.js';
+import { formatShort, formatMinutes, parseTimeToMinutes } from './dates.js';
+import * as push from './push.js';
 
 const TIMEZONES = [
   'Europe/Kaliningrad', 'Europe/Moscow', 'Europe/Samara', 'Asia/Yekaterinburg',
@@ -21,6 +22,7 @@ const TIMEZONES = [
 ];
 
 let profile = null;
+let pushStatus = null;
 let tokenList = [];
 let deviceList = [];
 let col;
@@ -120,6 +122,120 @@ function viewSection() {
     field('Начало недели', segmented(
       [[1, 'Понедельник'], [7, 'Воскресенье']],
       profile.weekStart, v => save({ weekStart: v }))));
+}
+
+const LEAD_TIMES = [[0, 'Ровно в срок'], [5, 'За 5 мин'], [10, 'За 10 мин'], [15, 'За 15 мин'], [30, 'За 30 мин']];
+
+function notificationsSection() {
+  const perm = push.permission();
+  const st = pushStatus;
+
+  if (!st?.enabled) {
+    return section('уведомления',
+      h('p.small', { text: 'Уведомления на сервере не настроены: не заданы VAPID-ключи. Раздел появится, когда администратор их добавит.' }));
+  }
+
+  const subscribed = (st.subscriptions?.length ?? 0) > 0;
+  const cfg = st.settings || {};
+  const quietOn = cfg.quietFrom !== null && cfg.quietTo !== null;
+
+  const state = perm === 'unsupported' ? h('p.small', { text: 'Этот браузер не умеет уведомления.' })
+    : perm === 'denied' ? h('div.form-error', {
+        text: 'Уведомления заблокированы в настройках браузера. Разрешите их для этого сайта в адресной строке — иконка слева от адреса.',
+      })
+    : subscribed ? h('div.row',
+        h('span.pill', { text: '✓ этот браузер подписан' }),
+        h('button.btn.btn-sm', { text: 'Проверить', onclick: testPush }),
+        h('button.btn.btn-sm.btn-ghost', { text: 'Отключить', onclick: disablePush }))
+    : h('button.btn.btn-primary', { text: 'Разрешить уведомления', onclick: enablePush });
+
+  return section('уведомления',
+    h('p.small', { text: 'Приходят к строкам расписания, у которых стоит колокольчик или будильник. Работают, даже когда вкладка закрыта.' }),
+    state,
+    h('div.divider'),
+    field('Предупреждать по умолчанию', segmented(
+      LEAD_TIMES.map(([v, t]) => [v, t]), cfg.notifyDefaultBeforeMin,
+      v => saveNotify({ notifyDefaultBeforeMin: v })),
+      'У отдельной строки можно задать своё время'),
+    field('Уведомления включены', segmented(
+      [[true, 'Да'], [false, 'Нет']], cfg.notifyEnabled !== false,
+      v => saveNotify({ notifyEnabled: v })),
+      'Выключатель снимает всё запланированное, отметки на строках сохраняются'),
+    quietHoursBlock(cfg, quietOn),
+    st.pending?.length
+      ? h('div',
+          h('span.eyebrow', { text: `ближайшие · ${st.pending.length}` }),
+          h('div.stack', { style: { marginTop: '6px' } },
+            ...st.pending.slice(0, 5).map(p => h('div.row',
+              h('span.mono', { text: new Date(p.fireAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) }),
+              h('span.small', { text: p.payload.body })))))
+      : h('p.small', { text: 'Пока ничего не запланировано: поставьте колокольчик на строке расписания.' }));
+}
+
+function quietHoursBlock(cfg, quietOn) {
+  const from = h('input.input.mono', {
+    value: quietOn ? formatMinutes(cfg.quietFrom) : '23:00', style: { width: '7ch' },
+    'aria-label': 'Начало тихих часов',
+  });
+  const to = h('input.input.mono', {
+    value: quietOn ? formatMinutes(cfg.quietTo) : '07:00', style: { width: '7ch' },
+    'aria-label': 'Конец тихих часов',
+  });
+
+  return h('div',
+    h('span.eyebrow', { text: 'тихие часы' }),
+    h('div.row', { style: { marginTop: '6px', flexWrap: 'wrap' } },
+      segmented([[true, 'Включены'], [false, 'Выключены']], quietOn, v => {
+        if (!v) return saveNotify({ quietFrom: null, quietTo: null });
+        saveNotify({
+          quietFrom: parseTimeToMinutes(from.value) ?? 23 * 60,
+          quietTo: parseTimeToMinutes(to.value) ?? 7 * 60,
+        });
+      }),
+      from, h('span.small', { text: '—' }), to,
+      h('button.btn.btn-sm', {
+        text: 'Применить',
+        onclick: () => {
+          const a = parseTimeToMinutes(from.value);
+          const b = parseTimeToMinutes(to.value);
+          if (a === null || b === null) { toast('Не понял время', 'error'); return; }
+          saveNotify({ quietFrom: a, quietTo: b });
+        },
+      })),
+    h('span.small', { text: 'В этот промежуток уведомления не приходят. Промежуток может пересекать полночь.' }));
+}
+
+async function saveNotify(settings) {
+  try {
+    await api.saveSettings({ settings });
+    await api.POST('/push/replan');
+    await reload();
+    toast('Сохранено');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function enablePush() {
+  const res = await push.enable();
+  if (res.ok) { await reload(); toast('Уведомления включены'); return; }
+  const why = {
+    UNSUPPORTED: 'Этот браузер не умеет уведомления',
+    SERVER_DISABLED: 'На сервере не настроены VAPID-ключи',
+    DENIED: 'Разрешение не выдано. Его можно вернуть в настройках сайта в браузере',
+  };
+  toast(why[res.reason] || 'Не получилось включить уведомления', 'error');
+}
+
+async function disablePush() {
+  await push.disable();
+  await reload();
+  toast('Уведомления отключены в этом браузере');
+}
+
+async function testPush() {
+  try {
+    await push.sendTest();
+    toast('Отправил — уведомление должно прийти через пару секунд');
+  } catch (e) { toast(e.message, 'error'); }
 }
 
 function appSection() {
@@ -320,13 +436,14 @@ function openImport() {
 // ── Загрузка ─────────────────────────────────────────────────
 
 async function reload() {
-  [profile, tokenList, deviceList] = await Promise.all([
+  [profile, tokenList, deviceList, pushStatus] = await Promise.all([
     api.getSettings(),
     api.tokens.list().catch(() => []),
     api.devices.list().catch(() => []),
+    push.status().catch(() => null),
   ]);
   replace(col,
-    profileSection(), viewSection(), appSection(),
+    profileSection(), notificationsSection(), viewSection(), appSection(),
     devicesSection(), tokensSection(), dataSection());
 }
 

@@ -28,6 +28,28 @@ if (config.dbPath !== ':memory:') scheduleDailyBackup(db, config.dbPath);
 
 const app = createApp({ db, config });
 
+/**
+ * Планировщик уведомлений.
+ * Раз в 30 секунд отправляем всё, чему пришло время; раз в 5 минут
+ * пересчитываем план на сегодня и завтра — на случай правок мимо API
+ * и смены суток в разных таймзонах.
+ */
+const notify = app.locals.notify;
+if (app.locals.push.enabled) {
+  const deliver = setInterval(() => {
+    notify.deliverDue().catch(e => console.error('[newday] отправка уведомлений:', e.message));
+  }, 30 * 1000);
+  const replan = setInterval(() => {
+    try { notify.planAll(); } catch (e) { console.error('[newday] планирование:', e.message); }
+  }, 5 * 60 * 1000);
+  deliver.unref?.();
+  replan.unref?.();
+  try { notify.planAll(); } catch { /* при первом старте таблиц может не быть данных */ }
+  console.log('NewDay push enabled');
+} else {
+  console.log('NewDay push disabled: не заданы VAPID_PUBLIC_KEY и VAPID_PRIVATE_KEY');
+}
+
 app.listen(config.port, '0.0.0.0', () => {
   console.log(`NewDay listening on port ${config.port}`);
 });

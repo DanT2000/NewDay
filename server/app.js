@@ -4,6 +4,8 @@ const path = require('node:path');
 const createSessionStore = require('./lib/session-store');
 const { errorHandler, ApiError } = require('./lib/errors');
 const { createMailer } = require('./lib/mailer');
+const { createPush } = require('./lib/push');
+const { notificationService } = require('./services/notificationService');
 const { createAuthMiddleware } = require('./middleware/auth');
 
 const healthRouter = require('./routes/health');
@@ -13,6 +15,7 @@ const daysRouter = require('./routes/v1/days');
 const habitsRouter = require('./routes/v1/habits');
 const statsRouter = require('./routes/v1/stats');
 const seriesRouter = require('./routes/v1/series');
+const pushRouter = require('./routes/v1/push');
 const settingsRouter = require('./routes/v1/settings');
 const exportRouter = require('./routes/v1/export');
 const openapiRouter = require('./routes/v1/openapi');
@@ -42,11 +45,15 @@ function createApp({ db, config }) {
   }));
 
   const mailer = createMailer(config);
+  const push = createPush(config);
+  const notify = notificationService(db, { push });
   const auth = createAuthMiddleware(db);
 
   app.locals.db = db;
   app.locals.config = config;
   app.locals.mailer = mailer;
+  app.locals.push = push;
+  app.locals.notify = notify;
 
   app.use('/api/health', healthRouter(db));
   // Спецификация и документация доступны без входа
@@ -67,10 +74,27 @@ function createApp({ db, config }) {
       : auth.requireScope('write')(req, res, next));
 
   app.use('/api/v1', tokensRouter({ db, auth }));
+  /**
+   * Правка расписания меняет то, когда должны прийти напоминания.
+   * Пересчитываем после успешного ответа, чтобы не задерживать запрос
+   * и не ломать его, если планирование почему-то упало.
+   */
+  app.use('/api/v1/days/:date', (req, res, next) => {
+    if (['GET', 'HEAD'].includes(req.method)) return next();
+    res.on('finish', () => {
+      if (res.statusCode >= 400 || !req.user) return;
+      try { notify.planDay(req.user, req.params.date); }
+      catch (e) { console.error('[newday] пересчёт уведомлений:', e.message); }
+    });
+    next();
+  });
+
   app.use('/api/v1/days', daysRouter({ db }));
   app.use('/api/v1/habits', habitsRouter({ db }));
   app.use('/api/v1/stats', statsRouter({ db }));
   app.use('/api/v1/series', seriesRouter({ db }));
+  app.use('/api/v1/push', pushRouter({ db, push }));
+
   app.use('/api/v1/settings', settingsRouter({ db }));
   app.use('/api/v1', exportRouter({ db }));
 
