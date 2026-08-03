@@ -1,0 +1,110 @@
+/* ============================================================
+   NewDay — сброс и базовая типографика
+   ============================================================ */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--ink);
+  font: var(--t-body);
+  font-variant-numeric: tabular-nums;   /* числа не прыгают при обновлении */
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;                   /* страница не должна ездить вбок */
+}
+
+h1, h2, h3, h4, p, figure, blockquote { margin: 0; }
+ul, ol { margin: 0; padding: 0; list-style: none; }
+
+button, input, select, textarea {
+  font: inherit;
+  color: inherit;
+  font-variant-numeric: inherit;
+}
+
+button { background: none; border: 0; padding: 0; cursor: pointer; }
+
+a { color: var(--c-day); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+img, svg { display: block; max-width: 100%; }
+
+/* Фокус виден только с клавиатуры, но виден всегда, когда нужен */
+:focus { outline: none; }
+:focus-visible { box-shadow: var(--focus); border-radius: var(--r-sm); }
+
+::selection { background: var(--c-day-soft); }
+
+/* ── Заголовки секций ─────────────────────────────────────── */
+.eyebrow {
+  font: var(--t-section);
+  text-transform: uppercase;
+  letter-spacing: var(--track-caps);
+  color: var(--ink-3);
+}
+
+.display { font: var(--t-display); letter-spacing: var(--track-tight); }
+.title   { font: var(--t-title);   letter-spacing: var(--track-tight); }
+.small   { font: var(--t-small);   color: var(--ink-2); }
+.micro   { font: var(--t-micro);   color: var(--ink-3); }
+
+/* Время и счётчики — моноширинные. Это опознавательный знак интерфейса */
+.mono { font: var(--t-time); letter-spacing: .02em; }
+.num  { font: var(--t-num);  letter-spacing: .01em; }
+
+.muted { color: var(--ink-3); }
+.danger { color: var(--c-danger); }
+
+/* Скрыто визуально, но доступно скринридеру */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* ── Раскладка приложения ─────────────────────────────────── */
+.app {
+  display: grid;
+  grid-template-rows: var(--header-h) 1fr;
+  grid-template-columns: minmax(0, 1fr);   /* колонка не должна раздуваться содержимым */
+  min-height: 100dvh;
+}
+
+.app-body {
+  width: 100%;
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: var(--s-5) var(--s-5) var(--s-12);
+  display: grid;
+  gap: var(--s-5);
+  grid-template-columns: minmax(0, 1fr) 340px;
+  align-items: start;
+}
+
+.col { display: grid; gap: var(--s-4); min-width: 0; }
+
+@media (max-width: 1000px) {
+  .app-body { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 720px) {
+  .app-body {
+    padding: var(--s-3) var(--s-3) calc(var(--bottomnav-h) + var(--s-8));
+    gap: var(--s-3);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
