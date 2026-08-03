@@ -1,0 +1,163 @@
+/* ============================================================
+   NewDay — дизайн-токены
+
+   Правило: поверхности нейтральные, цвет только там, где он данные.
+   Кольца прогресса, точки стриков, маркер «сейчас» — цветные.
+   Всё остальное — оттенки серого.
+   ============================================================ */
+
+:root {
+  /* ── Поверхности ────────────────────────────────────────── */
+  --bg:            #f5f6f8;  /* фон страницы */
+  --surface:       #ffffff;  /* карточки */
+  --surface-2:     #f0f2f5;  /* вложенные блоки, ховер */
+  --surface-3:     #e6e9ee;  /* нажатое состояние */
+  --hairline:      #e2e5eb;  /* разделители */
+  --hairline-firm: #cdd3dd;  /* границы полей ввода */
+
+  /* ── Текст ──────────────────────────────────────────────── */
+  --ink:        #141821;
+  --ink-2:      #4d5768;
+  --ink-3:      #79839a;
+  --ink-4:      #a3abbc;  /* прошедшее время, подсказки */
+  --ink-invert: #ffffff;
+
+  /* ── Данные. Пять секций дня + служебные ────────────────── */
+  --c-day:     #2e7be4;  /* общий прогресс, расписание */
+  --c-work:    #2e7be4;
+  --c-home:    #16a394;
+  --c-food:    #6f5df0;
+  --c-sport:   #ef8b00;
+  --c-habits:  #d4409a;
+  --c-danger:  #d93a3f;  /* срыв, просрочено, удаление */
+  --c-success: #16a394;
+  --c-warn:    #ef8b00;
+
+  /* Фоновые заливки под те же данные — 8% от цвета */
+  --c-day-soft:    rgba(46, 123, 228, .10);
+  --c-danger-soft: rgba(217, 58, 63, .10);
+  --c-success-soft:rgba(22, 163, 148, .12);
+
+  /* ── Тени. Мягкие и редкие: инструмент, а не витрина ────── */
+  --shadow-1: 0 1px 2px rgba(16, 24, 40, .05);
+  --shadow-2: 0 4px 12px rgba(16, 24, 40, .08);
+  --shadow-3: 0 12px 32px rgba(16, 24, 40, .14);
+
+  /* ── Геометрия ──────────────────────────────────────────── */
+  --r-xs: 4px;  --r-sm: 6px;  --r-md: 10px;  --r-lg: 14px;  --r-pill: 999px;
+
+  /* Шкала отступов, шаг 4 */
+  --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
+  --s-5: 20px; --s-6: 24px; --s-8: 32px; --s-10: 40px; --s-12: 48px;
+
+  /* ── Типографика ────────────────────────────────────────── */
+  /* Веб-шрифты не подключаются: ассеты должны работать офлайн в APK */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+             "Helvetica Neue", Arial, sans-serif;
+  /* Время и счётчики — моноширинным. Расписание должно читаться как прибор */
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono",
+               "Roboto Mono", Consolas, monospace;
+
+  --t-display: 700 28px/1.15 var(--font-ui);
+  --t-title:   650 20px/1.25 var(--font-ui);
+  --t-section: 600 11px/1.2  var(--font-ui);   /* + uppercase, tracking .08em */
+  --t-body:    400 15px/1.45 var(--font-ui);
+  --t-body-md: 500 15px/1.45 var(--font-ui);
+  --t-small:   400 13px/1.4  var(--font-ui);
+  --t-micro:   500 11px/1.3  var(--font-ui);
+  --t-time:    500 14px/1    var(--font-mono);
+  --t-num:     600 15px/1    var(--font-mono);
+
+  --track-tight: -.02em;
+  --track-caps:  .08em;
+
+  /* ── Прочее ─────────────────────────────────────────────── */
+  --ring-track: #e6e9ee;
+  --focus: 0 0 0 2px var(--surface), 0 0 0 4px var(--c-day);
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --dur-slow: 400ms;
+  --ease: cubic-bezier(.22, .61, .36, 1);
+  --header-h: 56px;
+  --bottomnav-h: 60px;
+  --content-max: 1240px;
+}
+
+/* ── Тёмная тема ──────────────────────────────────────────────
+   Не инверсия: отдельный набор значений. Поверхности холодные и
+   тёмные, а цвета данных подняты по светлоте, иначе они тонут.  */
+:root[data-theme="dark"] {
+  --bg:            #0e1116;
+  --surface:       #161b22;
+  --surface-2:     #1c222b;
+  --surface-3:     #242b36;
+  --hairline:      #242b36;
+  --hairline-firm: #333c49;
+
+  --ink:        #e8ecf2;
+  --ink-2:      #aab3c2;
+  --ink-3:      #7d8798;
+  --ink-4:      #5c6675;
+  --ink-invert: #0e1116;
+
+  --c-day:     #5b9dff;
+  --c-work:    #5b9dff;
+  --c-home:    #2fd0bd;
+  --c-food:    #9b8dff;
+  --c-sport:   #ffab2e;
+  --c-habits:  #f268b8;
+  --c-danger:  #ff6b6f;
+  --c-success: #2fd0bd;
+  --c-warn:    #ffab2e;
+
+  --c-day-soft:     rgba(91, 157, 255, .14);
+  --c-danger-soft:  rgba(255, 107, 111, .14);
+  --c-success-soft: rgba(47, 208, 189, .16);
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .4);
+  --shadow-2: 0 4px 12px rgba(0, 0, 0, .45);
+  --shadow-3: 0 12px 32px rgba(0, 0, 0, .55);
+
+  --ring-track: #242b36;
+  --focus: 0 0 0 2px var(--surface), 0 0 0 4px var(--c-day);
+  color-scheme: dark;
+}
+
+/* Системная тема, пока пользователь не выбрал явно */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:            #0e1116;
+    --surface:       #161b22;
+    --surface-2:     #1c222b;
+    --surface-3:     #242b36;
+    --hairline:      #242b36;
+    --hairline-firm: #333c49;
+
+    --ink:        #e8ecf2;
+    --ink-2:      #aab3c2;
+    --ink-3:      #7d8798;
+    --ink-4:      #5c6675;
+    --ink-invert: #0e1116;
+
+    --c-day:     #5b9dff;
+    --c-work:    #5b9dff;
+    --c-home:    #2fd0bd;
+    --c-food:    #9b8dff;
+    --c-sport:   #ffab2e;
+    --c-habits:  #f268b8;
+    --c-danger:  #ff6b6f;
+    --c-success: #2fd0bd;
+    --c-warn:    #ffab2e;
+
+    --c-day-soft:     rgba(91, 157, 255, .14);
+    --c-danger-soft:  rgba(255, 107, 111, .14);
+    --c-success-soft: rgba(47, 208, 189, .16);
+
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, .4);
+    --shadow-2: 0 4px 12px rgba(0, 0, 0, .45);
+    --shadow-3: 0 12px 32px rgba(0, 0, 0, .55);
+
+    --ring-track: #242b36;
+    color-scheme: dark;
+  }
+}

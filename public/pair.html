@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход по коду — NewDay</title>
+  <meta name="theme-color" content="#2E7BE4">
+  <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon.png">
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/auth.css">
+  <script>
+    try { var t = localStorage.getItem('newday.theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+  </script>
+</head>
+<body class="auth-page">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <img class="auth-logo-icon" src="/icons/logo-256.png" alt="NewDay" width="72" height="72">
+      <h1 class="auth-logo-title">NewDay</h1>
+      <p class="auth-logo-sub">Вход по коду</p>
+    </div>
+    <div id="body" class="auth-form">
+      <p class="small">Проверяю код…</p>
+    </div>
+    <p class="auth-footer"><a href="/login.html">Войти по почте и паролю</a></p>
+  </div>
+
+  <script type="module">
+    // Код приходит в хеше — так он не попадает в логи сервера и в Referer
+    const code = decodeURIComponent(location.hash.slice(1));
+    const box = document.getElementById('body');
+
+    const say = html => { box.innerHTML = html; };
+
+    if (!code) {
+      say('<p class="small">Код не передан. Откройте ссылку из QR-кода или введите код вручную в приложении на телефоне.</p>');
+    } else {
+      const res = await fetch('/api/v1/auth/pair/claim', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, deviceName: 'Браузер', platform: navigator.platform || 'web' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        say('<div class="form-error">' + (data.error?.message || 'Код недействителен или истёк') + '</div>');
+      } else {
+        // В браузере device-токен хранить негде безопаснее сессии — просто подтверждаем
+        say('<p class="small">Код принят. Этот способ входа предназначен для приложения на телефоне: '
+          + 'отсканируйте QR прямо в нём, чтобы токен сохранился на устройстве.</p>');
+      }
+    }
+  </script>
+</body>
+</html>

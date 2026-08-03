@@ -12,6 +12,7 @@ const tokensRouter = require('./routes/v1/tokens');
 const daysRouter = require('./routes/v1/days');
 const habitsRouter = require('./routes/v1/habits');
 const statsRouter = require('./routes/v1/stats');
+const seriesRouter = require('./routes/v1/series');
 const settingsRouter = require('./routes/v1/settings');
 const exportRouter = require('./routes/v1/export');
 const openapiRouter = require('./routes/v1/openapi');
@@ -69,6 +70,7 @@ function createApp({ db, config }) {
   app.use('/api/v1/days', daysRouter({ db }));
   app.use('/api/v1/habits', habitsRouter({ db }));
   app.use('/api/v1/stats', statsRouter({ db }));
+  app.use('/api/v1/series', seriesRouter({ db }));
   app.use('/api/v1/settings', settingsRouter({ db }));
   app.use('/api/v1', exportRouter({ db }));
 
@@ -76,6 +78,7 @@ function createApp({ db, config }) {
     next(new ApiError(404, 'NOT_FOUND', `Неизвестный эндпоинт: ${req.method} ${req.baseUrl}${req.path}`));
   });
 
+  app.get('/pair', (_req, res) => res.sendFile(path.join(__dirname, '../public/pair.html')));
   app.use(express.static(path.join(__dirname, '../public')));
   app.get('/', (_req, res) => res.sendFile(path.join(__dirname, '../public/index.html')));
 

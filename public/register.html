@@ -5,13 +5,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Регистрация — NewDay</title>
   <link rel="manifest" href="/manifest.webmanifest">
-  <meta name="theme-color" content="#ffffff">
-  <link rel="stylesheet" href="/styles.css">
+  <meta name="theme-color" content="#2E7BE4">
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/auth.css">
+  <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <script>
+    try { var t = localStorage.getItem('newday.theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+  </script>
 </head>
 <body class="auth-page">
   <div class="auth-card">
     <div class="auth-logo">
-      <span class="auth-logo-icon">☀️</span>
+      <img class="auth-logo-icon" src="/icons/logo-256.png" alt="NewDay" width="88" height="88">
       <h1 class="auth-logo-title">NewDay</h1>
       <p class="auth-logo-sub">Создать аккаунт</p>
     </div>

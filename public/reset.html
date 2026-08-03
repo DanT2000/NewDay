@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Восстановление пароля — NewDay</title>
+  <meta name="theme-color" content="#2E7BE4">
+  <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon.png">
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/auth.css">
+  <script>
+    try { var t = localStorage.getItem('newday.theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+  </script>
+</head>
+<body class="auth-page">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <img class="auth-logo-icon" src="/icons/logo-256.png" alt="NewDay" width="72" height="72">
+      <h1 class="auth-logo-title">NewDay</h1>
+      <p class="auth-logo-sub" id="sub">Восстановление пароля</p>
+    </div>
+
+    <form id="ask" class="auth-form">
+      <div class="form-group">
+        <label for="email">Почта</label>
+        <input type="email" id="email" autocomplete="email" placeholder="you@example.com" required>
+      </div>
+      <div id="err" class="form-error" style="display:none"></div>
+      <button type="submit" class="btn btn-primary btn-block">Прислать ссылку</button>
+    </form>
+
+    <form id="set" class="auth-form" style="display:none">
+      <div class="form-group">
+        <label for="pass">Новый пароль</label>
+        <input type="password" id="pass" autocomplete="new-password" placeholder="Минимум 8 символов" minlength="8" required>
+      </div>
+      <div id="err2" class="form-error" style="display:none"></div>
+      <button type="submit" class="btn btn-primary btn-block">Сохранить пароль</button>
+    </form>
+
+    <p class="auth-footer"><a href="/login.html">Вернуться ко входу</a></p>
+  </div>
+
+  <script type="module">
+    const token = new URLSearchParams(location.search).get('token');
+    const ask = document.getElementById('ask');
+    const set = document.getElementById('set');
+    const sub = document.getElementById('sub');
+
+    const show = (el, msg) => { el.textContent = msg; el.style.display = 'block'; };
+    const post = (path, body) => fetch(path, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    }).then(async r => ({ ok: r.ok, data: await r.json().catch(() => ({})) }));
+
+    if (token) {
+      ask.style.display = 'none';
+      set.style.display = 'grid';
+      sub.textContent = 'Задайте новый пароль';
+    }
+
+    ask.addEventListener('submit', async e => {
+      e.preventDefault();
+      const { ok, data } = await post('/api/v1/auth/forgot', { email: document.getElementById('email').value.trim() });
+      if (!ok) return show(document.getElementById('err'), data.error?.message || 'Не получилось');
+      ask.outerHTML = '<p class="auth-footer">Если такой адрес зарегистрирован, письмо со ссылкой уже отправлено. Ссылка действует час.</p>';
+    });
+
+    set.addEventListener('submit', async e => {
+      e.preventDefault();
+      const { ok, data } = await post('/api/v1/auth/reset', { token, password: document.getElementById('pass').value });
+      if (!ok) return show(document.getElementById('err2'), data.error?.message || 'Ссылка недействительна или истекла');
+      location.replace('/login.html');
+    });
+  </script>
+</body>
+</html>

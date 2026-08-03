@@ -1,0 +1,21 @@
+<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>измеряю…</title>
+<style>body{margin:0;font:12px system-ui}iframe{border:1px solid #999;height:900px;display:block}</style>
+</head><body>
+<script>
+const widths = [320, 360, 390, 430, 480, 600, 768];
+const results = [];
+(async () => {
+  for (const w of widths) {
+    const f = document.createElement('iframe');
+    f.width = w; f.src = '/app.html?diag=1';
+    document.body.append(f);
+    await new Promise(r => f.addEventListener('load', r, { once: true }));
+    await new Promise(r => setTimeout(r, 2600));
+    let t = '?';
+    try { t = f.contentDocument.title; } catch (e) { t = 'нет доступа'; }
+    results.push(w + 'px → ' + t);
+    f.remove();
+  }
+  document.title = results.join('  ||  ');
+})();
+</script></body></html>

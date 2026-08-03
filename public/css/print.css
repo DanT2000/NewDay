@@ -1,0 +1,140 @@
+/* ============================================================
+   NewDay — печать.
+
+   Цель: чёрно-белый лист A4, который можно заполнять ручкой.
+   Никаких фоновых заливок (тонер), галочки — пустые квадраты,
+   рядом с планом колонка «факт».
+   ============================================================ */
+
+@page {
+  size: A4 portrait;
+  margin: 12mm 12mm 10mm;
+}
+
+@media print {
+  /* Тема на печать не влияет: лист всегда белый */
+  :root, :root[data-theme="dark"] {
+    --bg: #fff; --surface: #fff; --surface-2: #fff; --surface-3: #fff;
+    --hairline: #bbb; --hairline-firm: #888;
+    --ink: #000; --ink-2: #222; --ink-3: #555; --ink-4: #777;
+    --c-day: #000; --ring-track: #ddd;
+    --shadow-1: none; --shadow-2: none; --shadow-3: none;
+  }
+
+  html, body { background: #fff !important; }
+
+  /* То, что существует только на бумаге */
+  .no-screen { display: block !important; }
+  .print-lines { display: block !important; }
+  body {
+    font-size: 10.5pt; line-height: 1.28;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Экранная обвязка на бумаге не нужна */
+  .tl,
+  .day-head-screen,
+  .hdr, .bottomnav, .toasts, .overlay,
+  .add-row, .row-del, .sdrag, .sshift, .sbell,
+  .icon-btn, .btn, .tabs, .datestrip, .sleft,
+  .no-print { display: none !important; }
+
+  .app { display: block; }
+  .app-body {
+    display: block; max-width: none; padding: 0; margin: 0;
+  }
+  .col { display: block; }
+
+  .card {
+    border: none; border-radius: 0; box-shadow: none;
+    break-inside: avoid;
+    margin: 0 0 3.5mm;
+  }
+  .card-hd {
+    padding: 0 0 1mm; border-bottom: 0.4pt solid #000;
+    margin-bottom: 1.5mm;
+  }
+  .card-bd, .card-bd.pad { padding: 0; }
+
+  .eyebrow { font-size: 7.5pt; letter-spacing: .1em; color: #000; }
+
+  /* ── Шапка листа ────────────────────────────────────────── */
+  .print-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    border-bottom: 1pt solid #000; padding-bottom: 1.5mm; margin-bottom: 3mm;
+  }
+  .print-head .d { font-size: 15pt; font-weight: 700; }
+  .print-head .m { font-size: 9pt; }
+
+  /* ── Строки ─────────────────────────────────────────────── */
+  .srow, .trow, .hrow {
+    break-inside: avoid;
+    padding: 0.7mm 0; min-height: 0;
+    border-bottom: 0.3pt dotted #999;
+    background: none !important; opacity: 1 !important;
+  }
+  .srow { grid-template-columns: 6.4ch 6.4ch minmax(0, 1fr) auto 4.2mm 12mm; gap: 2mm; }
+  .trow { grid-template-columns: 4.2mm minmax(0, 1fr) auto 12mm; gap: 2mm; }
+  .srail { display: none; }
+  .srow.now, .srow.past, .srow.done { background: none !important; }
+  .srow.done .stitle input, .trow.done .bare { color: #000; text-decoration: none; }
+
+  /* Поля печатаются как обычный текст, без рамок */
+  /* Поле заметок не должно резервировать пустую высоту — под запись есть линейки */
+  textarea.input { min-height: 0 !important; height: auto !important; }
+
+  .bare, .input, textarea.input {
+    border: none !important; background: none !important;
+    box-shadow: none !important; padding: 0; color: #000;
+    -webkit-appearance: none; appearance: none;
+    resize: none; overflow: visible;
+  }
+  .bare::placeholder, .input::placeholder { color: transparent; }
+
+  /* Галочка — пустой квадрат под ручку, даже если отмечена на экране */
+  .chk {
+    width: 3.6mm; height: 3.6mm; border: 0.5pt solid #000;
+    border-radius: 0.6mm; background: none !important;
+  }
+  .chk svg { display: none; }
+  .chk[aria-checked="true"]::after {
+    content: '✓'; font-size: 8pt; line-height: 1; color: #000;
+  }
+
+  /* Колонка «факт»: место, чтобы записать, как получилось на самом деле */
+  .srow::after, .trow::after {
+    content: ''; border-bottom: 0.3pt solid #000;
+    align-self: end; height: 0; width: 11mm;
+  }
+
+  /* ── Кольца и графики ───────────────────────────────────── */
+  .rings { padding: 0; gap: 2mm; }
+  .ring, .ring svg { width: 14mm !important; height: 14mm !important; }
+  .ring .val { font-size: 8pt !important; }
+  .ring .prog { stroke: #000 !important; }
+  .ring .track { stroke: #ddd !important; }
+  .chart, .wgrid, .dots, .bar { display: none; }
+
+  /* Все три корзины задач печатаются, а не только открытая вкладка */
+  .print-bucket { display: block !important; margin-top: 2mm; }
+  .print-bucket > .eyebrow { display: block; margin-bottom: 1mm; }
+
+  /* ── Привычки ───────────────────────────────────────────── */
+  .hcard { break-inside: avoid; padding: 0.8mm 0; border-bottom: 0.3pt dotted #999; }
+
+  /* ── Заметки: линейки под рукописный текст ──────────────── */
+  .print-lines { margin-top: 2mm; }
+  .print-lines .pline { height: 7.5mm; border-bottom: 0.3pt solid #999; }
+
+  /* ── Уплотнение, если день не влезает на лист ───────────── */
+  .print-dense body,
+  body.print-dense { font-size: 9pt; line-height: 1.18; }
+  body.print-dense .srow, body.print-dense .trow, body.print-dense .hrow { padding: 0.3mm 0; }
+  body.print-dense .card { margin-bottom: 2mm; }
+  body.print-dense .ring, body.print-dense .ring svg { width: 11mm !important; height: 11mm !important; }
+  body.print-dense .print-lines .pline { height: 5.5mm; }
+
+  /* Разрешить разрыв на две страницы, когда пользователь сам его выбрал */
+  body.print-two-pages .card { break-inside: auto; }
+}

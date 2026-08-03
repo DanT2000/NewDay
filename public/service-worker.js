@@ -1,45 +1,69 @@
-const CACHE = 'newday-v1';
-const STATIC = [
-  '/',
-  '/app.html',
-  '/login.html',
-  '/register.html',
-  '/install.html',
-  '/styles.css',
-  '/app.js',
+/**
+ * Service worker.
+ *
+ * Оболочка приложения кешируется и работает офлайн; данные всегда берутся
+ * из сети — показывать вчерашний день как сегодняшний хуже, чем честно
+ * сказать, что связи нет.
+ */
+
+const VERSION = 'newday-v2';
+const SHELL = [
+  '/app.html', '/habits.html', '/stats.html', '/settings.html',
+  '/login.html', '/register.html', '/index.html', '/install.html',
+  '/css/tokens.css', '/css/base.css', '/css/components.css', '/css/print.css',
+  '/js/main.js', '/js/habits.js', '/js/stats.js', '/js/settings.js',
+  '/js/api.js', '/js/store.js', '/js/dates.js', '/js/dom.js',
+  '/js/theme.js', '/js/toast.js', '/js/emoji.js', '/js/emoji-data.json', '/js/qr.js',
+  '/js/vendor/qrcode.js',
+  '/js/components/drag.js', '/js/components/sheet.js',
+  '/js/views/schedule.js', '/js/views/schedule-timeline.js', '/js/views/schedule-actions.js',
+  '/js/views/lists.js', '/js/views/progress.js', '/js/views/habits-today.js',
+  '/js/views/datestrip.js', '/js/views/print.js',
   '/manifest.webmanifest',
+  '/icons/favicon.png', '/icons/logo-256.png', '/icons/icon-192.png', '/icons/icon-512.png',
 ];
 
-self.addEventListener('install', e => {
-  e.waitUntil(
-    caches.open(CACHE).then(c => c.addAll(STATIC)).then(() => self.skipWaiting())
-  );
+self.addEventListener('install', event => {
+  event.waitUntil((async () => {
+    const cache = await caches.open(VERSION);
+    // addAll падает целиком, если хоть один файл недоступен — кешируем по одному
+    await Promise.all(SHELL.map(url =>
+      cache.add(url).catch(() => console.warn('[sw] не закешировано:', url))));
+    await self.skipWaiting();
+  })());
 });
 
-self.addEventListener('activate', e => {
-  e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-    ).then(() => self.clients.claim())
-  );
+self.addEventListener('activate', event => {
+  event.waitUntil((async () => {
+    for (const key of await caches.keys()) {
+      if (key !== VERSION) await caches.delete(key);
+    }
+    await self.clients.claim();
+  })());
 });
 
-self.addEventListener('fetch', e => {
-  const url = new URL(e.request.url);
+self.addEventListener('fetch', event => {
+  const { request } = event;
+  if (request.method !== 'GET') return;
 
-  // Never cache API calls
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/downloads/')) return;
+  const url = new URL(request.url);
+  if (url.origin !== location.origin) return;
+  if (url.pathname.startsWith('/api/')) return;      // данные — только из сети
+  if (url.pathname.startsWith('/downloads/')) return; // APK не кешируем
 
-  e.respondWith(
-    caches.match(e.request).then(cached => {
-      if (cached) return cached;
-      return fetch(e.request).then(resp => {
-        if (resp && resp.ok && e.request.method === 'GET') {
-          const clone = resp.clone();
-          caches.open(CACHE).then(c => c.put(e.request, clone));
-        }
-        return resp;
-      });
-    })
-  );
+  event.respondWith((async () => {
+    const cached = await caches.match(request, { ignoreSearch: true });
+    const network = fetch(request).then(async response => {
+      if (response.ok) {
+        const cache = await caches.open(VERSION);
+        cache.put(request, response.clone());
+      }
+      return response;
+    }).catch(() => null);
+
+    // отдаём кеш сразу, а сеть обновляет его в фоне
+    return cached || await network || new Response('Нет связи', {
+      status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+    });
+  })());
 });
