@@ -48,6 +48,26 @@
     <p class="auth-footer"><a href="/install.html">Приложение для Android</a></p>
   </div>
 
+  <script type="module">
+    /*
+     * Проверка обновления и на экране входа.
+     *
+     * Устаревшее приложение может не суметь войти вовсе, а обновиться должно —
+     * поэтому вопрос задаём до входа, а не только внутри. Адрес сервера уже
+     * известен: он либо сохранён с прошлого раза, либо стоит в поле.
+     */
+    if (window.Capacitor?.isNativePlatform?.()) {
+      const saved = localStorage.getItem('newday.apiBase');
+      if (!saved) {
+        const fallback = document.getElementById('server')?.value?.trim();
+        if (fallback) localStorage.setItem('newday.apiBase', fallback.replace(/\/+$/, ''));
+      }
+      import('/js/update.js')
+        .then(u => u.check('startup'))
+        .catch(() => { /* проверка обновления не должна мешать входу */ });
+    }
+  </script>
+
   <script>
     // Поле адреса сервера нужно только в приложении: на сайте адрес и так известен,
     // а на self-host человек указывает свой
