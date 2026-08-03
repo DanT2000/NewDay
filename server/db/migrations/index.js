@@ -1,5 +1,6 @@
 const MIGRATIONS = [
   require('./001-baseline'),
+  require('./002-normalize'),
 ];
 
 function currentVersion(db) {
