@@ -18,12 +18,12 @@
 
     <form id="register-form" class="auth-form" autocomplete="on">
       <div class="form-group">
-        <label for="username">Имя пользователя</label>
-        <input type="text" id="username" name="username" autocomplete="username" placeholder="Только буквы, цифры, _, -, ." required>
+        <label for="username">Почта</label>
+        <input type="email" id="username" name="email" autocomplete="email" placeholder="you@example.com" required>
       </div>
       <div class="form-group">
         <label for="password">Пароль</label>
-        <input type="password" id="password" name="password" autocomplete="new-password" placeholder="Минимум 4 символа" required>
+        <input type="password" id="password" name="password" autocomplete="new-password" placeholder="Минимум 8 символов" minlength="8" required>
       </div>
       <div class="form-group">
         <label for="confirmPassword">Повтор пароля</label>
@@ -42,24 +42,32 @@
       const errEl = document.getElementById('error-msg');
       errEl.style.display = 'none';
 
-      const body = {
-        username: document.getElementById('username').value.trim(),
-        password: document.getElementById('password').value,
-        confirmPassword: document.getElementById('confirmPassword').value,
-      };
+      const email = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      if (password !== document.getElementById('confirmPassword').value) {
+        errEl.textContent = 'Пароли не совпадают';
+        errEl.style.display = 'block';
+        return;
+      }
 
-      const res = await fetch('/api/auth/register', {
+      const res = await fetch('/api/v1/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ email, password }),
       });
 
-      const data = await res.json();
-      if (res.ok) {
-        window.location.replace('/app.html');
-      } else {
-        errEl.textContent = data.error || 'Ошибка регистрации';
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        errEl.textContent = data.error?.message || data.error || 'Ошибка регистрации';
         errEl.style.display = 'block';
+        return;
+      }
+      if (data.needsVerification) {
+        document.querySelector('.auth-form').outerHTML =
+          '<p class="auth-footer">Письмо отправлено на <b>' + email +
+          '</b>. Перейдите по ссылке из письма, чтобы подтвердить адрес и войти.</p>';
+      } else {
+        window.location.replace('/app.html');
       }
     });
   </script>

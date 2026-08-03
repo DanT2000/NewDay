@@ -2,7 +2,18 @@ node_modules/
 data/*.db
 data/*.db-wal
 data/*.db-shm
-public/downloads/NewDay.apk
-android/
-.DS_Store
+data/backups/
+public/downloads/*.apk
+.env
 *.log
+.DS_Store
+
+# Android: исходники коммитим, сборочный мусор — нет
+android/.gradle/
+android/.idea/
+android/build/
+android/app/build/
+android/capacitor-cordova-android-plugins/build/
+android/local.properties
+android/*.keystore
+android/*.jks

@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "nodemon server/index.js",
+    "test": "node --test \"test/**/*.test.js\"",
     "cap:init": "npx cap init NewDay ru.appswire.newday --web-dir public",
     "cap:add:android": "npx cap add android",
     "cap:sync": "npx cap sync",
@@ -16,7 +17,8 @@
     "better-sqlite3": "^9.4.3",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "express-session": "^1.18.0"
+    "express-session": "^1.18.0",
+    "nodemailer": "^6.10.1"
   },
   "devDependencies": {
     "@capacitor/android": "^6.0.0",

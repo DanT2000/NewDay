@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API — NewDay</title>
+  <link rel="icon" href="/icons/favicon.png">
+  <style>
+    :root {
+      --bg: #fff; --fg: #1a1d21; --muted: #6b7280; --line: #e5e7eb;
+      --card: #f8fafc; --accent: #2E7BE4; --code: #f1f5f9;
+      --get: #2E7BE4; --post: #16a34a; --patch: #FF9E1B; --put: #7c3aed; --delete: #dc2626;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f1216; --fg: #e6e9ee; --muted: #9aa4b2; --line: #232a33;
+        --card: #161b22; --code: #1b222c;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--fg);
+      font: 15px/1.6 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 32px 20px 80px; }
+    h1 { font-size: 28px; margin: 0 0 4px; }
+    h2 { font-size: 18px; margin: 36px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+    .lead { color: var(--muted); margin: 0 0 24px; white-space: pre-line; }
+    .op {
+      display: grid; grid-template-columns: 72px 1fr; gap: 12px;
+      align-items: baseline; padding: 10px 12px; border-radius: 8px;
+      background: var(--card); margin-bottom: 6px;
+    }
+    .m {
+      font: 600 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-transform: uppercase; letter-spacing: .04em;
+      color: #fff; padding: 2px 0; border-radius: 4px; text-align: center;
+    }
+    .m.get { background: var(--get); } .m.post { background: var(--post); }
+    .m.patch { background: var(--patch); } .m.put { background: var(--put); }
+    .m.delete { background: var(--delete); }
+    .path { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+    .sum { color: var(--muted); font-size: 13px; display: block; margin-top: 2px; }
+    pre {
+      background: var(--code); padding: 14px 16px; border-radius: 8px;
+      overflow-x: auto; font-size: 13px; line-height: 1.5;
+    }
+    a { color: var(--accent); }
+    .err { color: var(--delete); }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>NewDay API</h1>
+  <p class="lead" id="lead">Загружаю спецификацию…</p>
+
+  <h2>Быстрый старт</h2>
+  <p>Создайте токен в настройках приложения — он показывается один раз. Дальше:</p>
+  <pre id="example">curl -H "Authorization: Bearer nd_xxxxxxxx_…" \
+     https://newday.appswire.ru/api/v1/days/2026-08-03/full</pre>
+  <p>Заполнить день целиком (нужен <code>If-Match</code> с текущим <code>rev</code>):</p>
+  <pre>curl -X PUT -H "Authorization: Bearer nd_…" \
+     -H "Content-Type: application/json" -H 'If-Match: "0"' \
+     -d '{"title":"План","schedule":[{"time":"06:00-06:30","title":"Подъём","alarmMode":"alarm"}]}' \
+     https://newday.appswire.ru/api/v1/days/2026-08-04/full</pre>
+
+  <div id="groups"></div>
+  <p style="margin-top:40px"><a href="/api/v1/openapi.json">openapi.json</a></p>
+</div>
+
+<script>
+(async () => {
+  const groups = document.getElementById('groups');
+  let spec;
+  try {
+    spec = await (await fetch('/api/v1/openapi.json')).json();
+  } catch {
+    document.getElementById('lead').innerHTML =
+      '<span class="err">Не удалось загрузить спецификацию.</span>';
+    return;
+  }
+
+  document.getElementById('lead').textContent = spec.info.description;
+  const base = spec.servers?.[0]?.url || '/api/v1';
+  document.getElementById('example').textContent =
+    'curl -H "Authorization: Bearer nd_xxxxxxxx_…" \\\n     ' + base + '/days/2026-08-03/full';
+
+  const byTag = new Map();
+  for (const [path, ops] of Object.entries(spec.paths)) {
+    for (const [method, op] of Object.entries(ops)) {
+      const tag = (op.tags && op.tags[0]) || 'Прочее';
+      if (!byTag.has(tag)) byTag.set(tag, []);
+      byTag.get(tag).push({ method, path, summary: op.summary || '' });
+    }
+  }
+
+  const esc = s => String(s).replace(/[&<>"]/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  for (const [tag, ops] of byTag) {
+    const h = document.createElement('h2');
+    h.textContent = tag;
+    groups.appendChild(h);
+    ops.sort((a, b) => a.path.localeCompare(b.path));
+    for (const op of ops) {
+      const el = document.createElement('div');
+      el.className = 'op';
+      el.innerHTML =
+        '<span class="m ' + op.method + '">' + op.method + '</span>' +
+        '<span><span class="path">' + esc(base + op.path) + '</span>' +
+        (op.summary ? '<span class="sum">' + esc(op.summary) + '</span>' : '') + '</span>';
+      groups.appendChild(el);
+    }
+  }
+})();
+</script>
+</body>
+</html>
