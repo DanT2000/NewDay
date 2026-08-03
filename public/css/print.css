@@ -35,7 +35,7 @@
   /* Экранная обвязка на бумаге не нужна */
   .tl,
   .day-head-screen,
-  .hdr, .bottomnav, .toasts, .overlay,
+  .hdr, .bottomnav, .installbar, .toasts, .overlay,
   .add-row, .row-del, .sdrag, .sshift, .sbell,
   .icon-btn, .btn, .tabs, .datestrip, .sleft,
   .no-print { display: none !important; }

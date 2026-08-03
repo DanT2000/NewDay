@@ -164,7 +164,33 @@ cd android && ./gradlew assembleDebug
 ```
 
 Готовый APK: `android/app/build/outputs/apk/debug/app-debug.apk`.
-Релизную сборку по тегу `v*` делает CI и прикладывает к GitHub-релизу.
+
+### Своя релизная сборка
+
+Android не устанавливает неподписанный APK, поэтому для распространения нужен
+свой ключ. В репозитории его быть не должно — путь передаётся окружением:
+
+```bash
+keytool -genkeypair -keystore newday.keystore -storetype PKCS12 -alias newday \
+  -keyalg RSA -keysize 4096 -validity 10000
+
+export NEWDAY_KEYSTORE=/абсолютный/путь/newday.keystore
+export NEWDAY_KEYSTORE_PASSWORD=…
+cd android && ./gradlew assembleRelease
+```
+
+Без `NEWDAY_KEYSTORE` релиз подписывается отладочным ключом: поставить такой
+APK себе можно, но обновить его потом настоящим ключом уже нельзя — Android
+откажется из-за несовпадения подписи.
+
+Ключ подписи нельзя терять: без него не выпустить обновление, которое встанет
+поверх установленного приложения. Храните его отдельно от репозитория и с
+резервной копией.
+
+Релизную сборку по тегу `v*` делает CI и прикладывает к GitHub-релизу; ключ
+берётся из секретов `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEY_ALIAS`. Версия приложения берётся из тега: `v1.2.3` →
+`versionName 1.2.3`, `versionCode 10203`.
 
 ### Как устроен будильник
 
@@ -190,6 +216,11 @@ bash tools/alarm-emulator-test.sh --with-reboot
 
 Семь сценариев: заблокированный экран, беззвучный режим, «Не беспокоить», Doze,
 убитый процесс, отсутствие сети, перезагрузка устройства.
+
+Проверка ставит будильники через настоящий плагин, а для этого ей нужен доступ
+к странице по отладочному протоколу — то есть отладочная сборка. В релизе этот
+доступ закрыт намеренно: он открывает содержимое страницы любому, кто может
+выполнить `adb` на телефоне, а там лежит токен устройства.
 
 > Принудительная остановка приложения в настройках Android отключает его
 > будильники, пока приложение не запустят снова. Это поведение системы, обойти
@@ -294,8 +325,14 @@ curl -X PUT -H "Authorization: Bearer nd_..."      -H "Content-Type: application
 npm test
 ```
 
-Тесты идут на встроенном `node --test`, поднимают приложение на временной базе
-и не требуют ни сети, ни SMTP.
+148 тестов на встроенном `node --test`: миграции, арифметика дат при переходе на
+летнее время, одновременные правки одного дня, серии и челленджи привычек,
+все три способа аутентификации, области действия токенов, повторяющиеся события,
+планирование уведомлений. Ни сети, ни SMTP не требуют — база временная.
+
+Отдельно проверяется настоящая точка входа `server/index.js`: остальные тесты
+собирают приложение фабрикой из `app.js`, и однажды из-за этого синтаксическая
+ошибка в `index.js` прошла все тесты и всплыла только в контейнере.
 
 ---
 
@@ -360,10 +397,24 @@ curl -H "Authorization: Bearer nd_xxxxxxxx_..." \
 ```bash
 npm install
 npx cap sync android
+
+# Android refuses to install an unsigned APK, so bring your own key
+keytool -genkeypair -keystore newday.keystore -storetype PKCS12 -alias newday   -keyalg RSA -keysize 4096 -validity 10000
+export NEWDAY_KEYSTORE=/absolute/path/newday.keystore
+export NEWDAY_KEYSTORE_PASSWORD=…
+
 cd android && ./gradlew assembleRelease
 ```
 
-CI builds an APK on every `v*` tag and attaches it to the GitHub release.
+Without `NEWDAY_KEYSTORE` the release is signed with the debug key: installable
+for yourself, but a properly signed build can never update it — Android rejects
+a signature change. Keep the keystore outside the repository and back it up;
+losing it means never shipping an update again.
+
+CI builds an APK on every `v*` tag and attaches it to the GitHub release, taking
+the key from the `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD` and
+`ANDROID_KEY_ALIAS` secrets. The tag sets the version: `v1.2.3` becomes
+`versionName 1.2.3`, `versionCode 10203`.
 The app bundles its web assets, so it works offline; it authenticates with a
 device token, obtained either by signing in or by scanning a QR code from the
 desktop.
@@ -378,7 +429,7 @@ Google's own Clock behaves the same way.
 npm test
 ```
 
-144 tests on the built-in `node --test`: migrations, timezone maths across DST,
+148 tests on the built-in `node --test`: migrations, timezone maths across DST,
 concurrent edits to one day, habit streaks and challenges, auth in all three
 modes, token scopes, recurrence rules, notification scheduling.
 

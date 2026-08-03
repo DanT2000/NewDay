@@ -688,3 +688,44 @@ textarea.input { height: auto; min-height: 92px; padding: var(--s-3); resize: ve
   .permrow { grid-template-columns: 24px minmax(0, 1fr); }
   .permrow > :last-child { grid-column: 2; justify-self: start; }
 }
+
+/* ── Полоса «поставьте приложение» ─────────────────────────── */
+/* Появляется только в Android-браузере, поэтому раскладку считаем
+   от нижнего меню: полоса встаёт над ним, ничего не перекрывая. */
+.installbar {
+  position: fixed; z-index: 46; left: 0; right: 0;
+  bottom: calc(var(--bottomnav-h) + env(safe-area-inset-bottom));
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center; gap: var(--s-2);
+  padding: var(--s-2) var(--s-3); min-height: 46px;
+  background: var(--surface); border-top: 1px solid var(--hairline);
+  box-shadow: var(--shadow-2);
+}
+/* Без nowrap: на 320 px строка не влезала и обрывалась на полуслове,
+   а обрезанное объяснение хуже отсутствующего. Пусть переносится. */
+.installbar-t { font: var(--t-small); color: var(--ink-2); }
+.installbar-go {
+  padding: 5px 12px; border-radius: var(--r-pill);
+  background: var(--c-day-soft); color: var(--c-day);
+  font: var(--t-micro); white-space: nowrap;
+}
+.installbar-x {
+  width: 28px; height: 28px; border: 0; border-radius: 50%;
+  background: transparent; color: var(--ink-3);
+  font: 400 20px/1 var(--font-ui); cursor: pointer;
+}
+.installbar-x:hover { background: var(--surface-2); }
+/* Полоса добавляет высоту снизу — иначе она закрывает последнюю карточку.
+   Нижнее меню есть только на узком экране, поэтому запас считаем отдельно
+   для узкого и широкого. */
+@media (max-width: 720px) {
+  body.has-install-banner .app-body {
+    padding-bottom: calc(var(--bottomnav-h) + 72px + var(--s-8));
+  }
+}
+@media (min-width: 721px) {
+  .installbar { bottom: 0; }
+  body.has-install-banner .app-body { padding-bottom: calc(72px + var(--s-8)); }
+}
+.installbar { display: none; }
+body.has-install-banner .installbar { display: grid; }

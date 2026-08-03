@@ -22,6 +22,7 @@ import { renderProgress } from './views/progress.js';
 import { renderHabitsToday } from './views/habits-today.js';
 import { openPrintDialog, printHead, printLines } from './views/print.js';
 import { syncAlarms, available as nativeAvailable } from './native.js';
+import { mountInstallBanner } from './install-banner.js';
 
 const els = {};
 let taskTab = 'work';
@@ -293,6 +294,7 @@ async function boot() {
   const fromHash = location.hash.slice(1);
   await go(/^\d{4}-\d{2}-\d{2}$/.test(fromHash) ? fromHash : today());
   startClock();
+  mountInstallBanner();
   window.addEventListener('hashchange', () => {
     const d = location.hash.slice(1) || today();
     if (d !== state.date && /^\d{4}-\d{2}-\d{2}$/.test(d)) go(d);

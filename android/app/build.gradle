@@ -8,8 +8,9 @@ android {
         applicationId "ru.appswire.newday"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // Версию задаёт сборка по тегу; при локальной сборке остаются значения по умолчанию
+        versionCode Integer.parseInt(System.getenv("NEWDAY_VERSION_CODE") ?: "1")
+        versionName System.getenv("NEWDAY_VERSION_NAME") ?: "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -24,10 +25,42 @@ android {
     kotlinOptions {
         jvmTarget = '17'
     }
+    /*
+     * Подпись релиза.
+     *
+     * Android не устанавливает неподписанный APK вообще, поэтому релизная
+     * сборка обязана быть подписана хоть чем-то. Ключ берём из переменных
+     * окружения: в репозитории его быть не должно, а в CI он лежит в секретах.
+     * Если ключа нет — подписываем отладочным и громко предупреждаем: собрать
+     * себе APK так можно, но обновить его потом настоящим ключом уже нельзя,
+     * Android откажется из-за несовпадения подписи.
+     */
+    def ksPath = System.getenv("NEWDAY_KEYSTORE")
+    def hasKeystore = ksPath && file(ksPath).exists()
+
+    signingConfigs {
+        if (hasKeystore) {
+            release {
+                storeFile file(ksPath)
+                storePassword System.getenv("NEWDAY_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("NEWDAY_KEY_ALIAS") ?: "newday"
+                keyPassword System.getenv("NEWDAY_KEY_PASSWORD") ?: System.getenv("NEWDAY_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (hasKeystore) {
+                signingConfig signingConfigs.release
+            } else {
+                logger.warn("NewDay: NEWDAY_KEYSTORE не задан — релиз подписан отладочным ключом. "
+                        + "Для распространения создайте свой: keytool -genkeypair -keystore newday.keystore "
+                        + "-alias newday -keyalg RSA -keysize 4096 -validity 10000")
+                signingConfig signingConfigs.debug
+            }
         }
     }
 }
