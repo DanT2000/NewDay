@@ -128,8 +128,56 @@ function parseTimeRange(input) {
   };
 }
 
+/**
+ * Локальная дата и время пользователя → момент в UTC (мс эпохи).
+ *
+ * Готовой функции для этого в стандартной библиотеке нет: Date знает только UTC
+ * и зону машины. Считаем итерацией — берём предположение, смотрим, как оно
+ * выглядит в нужной зоне, и поправляем на разницу. Двух проходов достаточно
+ * даже на переходе летнего времени, когда смещение меняется прямо в этот час.
+ */
+function zonedTimeToUtc(dateStr, minutes, timeZone) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const h = Math.floor(minutes / 60);
+  const min = minutes % 60;
+  const wall = Date.UTC(y, m - 1, d, h, min, 0, 0);
+
+  let guess = wall;
+  for (let i = 0; i < 2; i++) {
+    const corrected = wall - zoneOffsetMs(guess, timeZone);
+    if (corrected === guess) break;
+    guess = corrected;
+  }
+  return guess;
+}
+
+/** Смещение зоны относительно UTC в миллисекундах для конкретного момента. */
+function zoneOffsetMs(instantMs, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone, hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(instantMs));
+
+  const get = type => Number(parts.find(p => p.type === type).value);
+  const hour = get('hour') % 24;   // en-GB отдаёт 24 для полуночи
+  const asUtc = Date.UTC(get('year'), get('month') - 1, get('day'), hour, get('minute'), get('second'));
+  return asUtc - instantMs;
+}
+
+/** Минуты от полуночи в указанной зоне для момента времени. */
+function minutesInZone(instantMs, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone, hour12: false, hour: '2-digit', minute: '2-digit',
+  }).formatToParts(new Date(instantMs));
+  const h = Number(parts.find(p => p.type === 'hour').value) % 24;
+  const m = Number(parts.find(p => p.type === 'minute').value);
+  return h * 60 + m;
+}
+
 module.exports = {
   MASK_ALL,
   isValidDate, isValidTimezone, todayFor, addDays, diffDays, rangeDates,
   weekdayOf, weekdayInMask, parseTimeToMinutes, formatMinutes, parseTimeRange,
+  zonedTimeToUtc, zoneOffsetMs, minutesInZone,
 };

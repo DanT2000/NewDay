@@ -101,3 +101,53 @@ test('parseTimeRange понимает дефис и тире', () => {
   assert.strictEqual(d.parseTimeRange(''), null);
   assert.strictEqual(d.parseTimeRange('9:00-мусор'), null);
 });
+
+// ── Перевод локального времени пользователя в UTC ─────────────
+
+test('zonedTimeToUtc: обычный день в Москве', () => {
+  // 3 августа 2026, 06:00 МСК = 03:00 UTC
+  const t = d.zonedTimeToUtc('2026-08-03', 6 * 60, 'Europe/Moscow');
+  assert.strictEqual(new Date(t).toISOString(), '2026-08-03T03:00:00.000Z');
+});
+
+test('zonedTimeToUtc: зона без летнего времени', () => {
+  const t = d.zonedTimeToUtc('2026-01-15', 9 * 60 + 30, 'Asia/Kamchatka'); // UTC+12
+  assert.strictEqual(new Date(t).toISOString(), '2026-01-14T21:30:00.000Z');
+});
+
+test('zonedTimeToUtc: до и после перехода на летнее время', () => {
+  // Берлин переходит на летнее время в ночь на 29 марта 2026
+  const winter = d.zonedTimeToUtc('2026-03-28', 12 * 60, 'Europe/Berlin'); // UTC+1
+  const summer = d.zonedTimeToUtc('2026-03-30', 12 * 60, 'Europe/Berlin'); // UTC+2
+  assert.strictEqual(new Date(winter).toISOString(), '2026-03-28T11:00:00.000Z');
+  assert.strictEqual(new Date(summer).toISOString(), '2026-03-30T10:00:00.000Z');
+});
+
+test('zonedTimeToUtc: в день перехода утро уже по летнему времени', () => {
+  const t = d.zonedTimeToUtc('2026-03-29', 10 * 60, 'Europe/Berlin');
+  assert.strictEqual(new Date(t).toISOString(), '2026-03-29T08:00:00.000Z');
+});
+
+test('zonedTimeToUtc: полночь', () => {
+  const t = d.zonedTimeToUtc('2026-08-03', 0, 'Europe/Moscow');
+  assert.strictEqual(new Date(t).toISOString(), '2026-08-02T21:00:00.000Z');
+});
+
+test('zonedTimeToUtc и todayFor согласованы', () => {
+  const tz = 'Europe/Moscow';
+  const at = d.zonedTimeToUtc('2026-08-03', 23 * 60 + 30, tz);
+  assert.strictEqual(d.todayFor(tz, new Date(at)), '2026-08-03');
+  const after = d.zonedTimeToUtc('2026-08-04', 30, tz);
+  assert.strictEqual(d.todayFor(tz, new Date(after)), '2026-08-04');
+});
+
+test('minutesInZone возвращает минуты от полуночи', () => {
+  const at = new Date('2026-08-03T03:15:00Z'); // 06:15 МСК
+  assert.strictEqual(d.minutesInZone(at.getTime(), 'Europe/Moscow'), 6 * 60 + 15);
+  assert.strictEqual(d.minutesInZone(at.getTime(), 'UTC'), 3 * 60 + 15);
+});
+
+test('minutesInZone на полуночи даёт 0, а не 1440', () => {
+  const at = new Date('2026-08-02T21:00:00Z'); // 00:00 МСК
+  assert.strictEqual(d.minutesInZone(at.getTime(), 'Europe/Moscow'), 0);
+});

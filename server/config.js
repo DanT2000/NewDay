@@ -9,6 +9,11 @@ function loadConfig(env = process.env) {
     sessionSecret: env.SESSION_SECRET || 'newday-dev-secret-change-in-production',
     appUrl: (env.APP_URL || 'http://localhost:3000').replace(/\/+$/, ''),
     trustProxy: env.TRUST_PROXY !== '0',
+    vapid: (env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY) ? {
+      publicKey: env.VAPID_PUBLIC_KEY,
+      privateKey: env.VAPID_PRIVATE_KEY,
+      subject: env.VAPID_SUBJECT || `mailto:${env.SMTP_FROM || 'admin@example.com'}`,
+    } : null,
     smtp: smtpHost
       ? {
           host: smtpHost,
