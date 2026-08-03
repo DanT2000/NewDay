@@ -9,6 +9,9 @@ const { createAuthMiddleware } = require('./middleware/auth');
 const healthRouter = require('./routes/health');
 const authRouter = require('./routes/v1/auth');
 const tokensRouter = require('./routes/v1/tokens');
+const daysRouter = require('./routes/v1/days');
+const habitsRouter = require('./routes/v1/habits');
+const statsRouter = require('./routes/v1/stats');
 
 function createApp({ db, config }) {
   const app = express();
@@ -51,6 +54,9 @@ function createApp({ db, config }) {
       : auth.requireScope('write')(req, res, next));
 
   app.use('/api/v1', tokensRouter({ db, auth }));
+  app.use('/api/v1/days', daysRouter({ db }));
+  app.use('/api/v1/habits', habitsRouter({ db }));
+  app.use('/api/v1/stats', statsRouter({ db }));
 
   app.use('/api', (req, _res, next) => {
     next(new ApiError(404, 'NOT_FOUND', `Неизвестный эндпоинт: ${req.method} ${req.baseUrl}${req.path}`));

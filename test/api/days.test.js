@@ -1,0 +1,190 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { loggedIn, api, getJson } = require('../helpers/client');
+
+test('PUT /full без If-Match отвергается', async () => {
+  const s = await loggedIn();
+  try {
+    const res = await api(s.url, s.cookie, 'PUT', '/api/v1/days/2026-08-03/full',
+      { title: 'X' }, {}, true);
+    assert.strictEqual(res.status, 428);
+    assert.strictEqual((await res.json()).error.code, 'IF_MATCH_REQUIRED');
+  } finally { await s.close(); }
+});
+
+test('PUT /full с устаревшим If-Match даёт 409 и отдаёт актуальный день', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'PATCH', '/api/v1/days/2026-08-03',
+      { title: 'A' }, { 'If-Match': '"0"' });
+    const res = await api(s.url, s.cookie, 'PUT', '/api/v1/days/2026-08-03/full',
+      { title: 'B' }, { 'If-Match': '"0"' }, true);
+    assert.strictEqual(res.status, 409);
+    const body = await res.json();
+    assert.strictEqual(body.error.code, 'REV_MISMATCH');
+    assert.ok(body.error.details.current.rev >= 1);
+    assert.strictEqual(body.error.details.current.title, 'A');
+  } finally { await s.close(); }
+});
+
+test('GET несуществующего дня отдаёт пустой день и НЕ создаёт его', async () => {
+  const s = await loggedIn();
+  try {
+    const body = await getJson(s.url, s.cookie, '/api/v1/days/2026-09-09/full');
+    assert.strictEqual(body.rev, 0);
+    assert.deepStrictEqual(body.schedule, []);
+    assert.deepStrictEqual(body.tasks, { work: [], home: [] });
+    assert.strictEqual(s.db.prepare('SELECT COUNT(*) AS c FROM days').get().c, 0,
+      'чтение не создаёт день');
+  } finally { await s.close(); }
+});
+
+test('добавление строки расписания создаёт день лениво', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-09-09/schedule',
+      { startMin: 540, endMin: 600, title: 'Работа' });
+    assert.strictEqual(s.db.prepare('SELECT COUNT(*) AS c FROM days').get().c, 1);
+  } finally { await s.close(); }
+});
+
+test('PATCH пустым телом ничего не стирает', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/schedule',
+      { startMin: 540, title: 'Работа' });
+    const before = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-03/full');
+    await api(s.url, s.cookie, 'PATCH', '/api/v1/days/2026-08-03', {},
+      { 'If-Match': `"${before.rev}"` });
+    const after = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-03/full');
+    assert.strictEqual(after.schedule.length, 1, 'расписание на месте');
+  } finally { await s.close(); }
+});
+
+test('два клиента правят разные строки одного дня — ничего не теряется', async () => {
+  const s = await loggedIn();
+  try {
+    const a = await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/schedule',
+      { startMin: 540, title: 'A' });
+    const b = await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/schedule',
+      { startMin: 600, title: 'B' });
+
+    await Promise.all([
+      api(s.url, s.cookie, 'PATCH', `/api/v1/days/2026-08-03/schedule/${a.id}`, { done: true }),
+      api(s.url, s.cookie, 'PATCH', `/api/v1/days/2026-08-03/schedule/${b.id}`, { title: 'B изменено' }),
+    ]);
+
+    const full = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-03/full');
+    assert.strictEqual(full.schedule.find(r => r.id === a.id).done, 1);
+    assert.strictEqual(full.schedule.find(r => r.id === b.id).title, 'B изменено');
+  } finally { await s.close(); }
+});
+
+test('время принимается строкой и нормализуется в минуты', async () => {
+  const s = await loggedIn();
+  try {
+    const row = await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/schedule',
+      { time: '9:30-13', title: 'Работа' });
+    assert.strictEqual(row.start_min, 570);
+    assert.strictEqual(row.end_min, 780);
+  } finally { await s.close(); }
+});
+
+test('список расписания всегда отсортирован по времени', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/schedule', { startMin: 780, title: 'Позже' });
+    await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/schedule', { startMin: 540, title: 'Раньше' });
+    const full = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-03/full');
+    assert.deepStrictEqual(full.schedule.map(r => r.title), ['Раньше', 'Позже']);
+  } finally { await s.close(); }
+});
+
+test('сдвиг обеда двигает всё, что после', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/schedule', { time: '9-13', title: 'Работа' });
+    const lunch = await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/schedule', { time: '13-14', title: 'Обед' });
+    await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/schedule', { time: '14-18', title: 'Работа 2' });
+
+    const rows = await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/schedule/shift',
+      { fromId: lunch.id, minutes: 15, cascade: true });
+    assert.deepStrictEqual(rows.map(r => r.start_min), [540, 795, 855]);
+  } finally { await s.close(); }
+});
+
+test('прогресс дня считается без весов по всем секциям', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/schedule', { startMin: 540, title: 'A', done: true });
+    await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/schedule', { startMin: 600, title: 'B' });
+    await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/tasks', { bucket: 'work', text: 'T', done: true });
+    const full = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-03/full');
+    assert.strictEqual(full.progress.total.done, 2);
+    assert.strictEqual(full.progress.total.possible, 3);
+    assert.strictEqual(full.progress.total.percent, 67);
+  } finally { await s.close(); }
+});
+
+test('пустая секция даёт percent = null и не тянет общий вниз', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/tasks', { bucket: 'work', text: 'T', done: true });
+    const full = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-03/full');
+    assert.strictEqual(full.progress.sport.percent, null);
+    assert.strictEqual(full.progress.total.percent, 100);
+  } finally { await s.close(); }
+});
+
+test('PUT /full заменяет день целиком', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-05/schedule', { startMin: 100, title: 'Старое' });
+    const cur = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-05/full');
+    const after = await api(s.url, s.cookie, 'PUT', '/api/v1/days/2026-08-05/full', {
+      title: 'План от бота',
+      schedule: [{ time: '06:00-06:30', title: 'Подъём', alarmMode: 'alarm', alarmProfile: 'wakeup' }],
+      tasks: { work: [{ text: 'Созвон' }], home: [] },
+      meals: [{ slot: 'breakfast', title: 'Овсянка' }],
+    }, { 'If-Match': `"${cur.rev}"` });
+
+    assert.strictEqual(after.title, 'План от бота');
+    assert.strictEqual(after.schedule.length, 1);
+    assert.strictEqual(after.schedule[0].alarm_mode, 'alarm');
+    assert.strictEqual(after.schedule[0].alarm_profile, 'wakeup');
+    assert.strictEqual(after.tasks.work.length, 1);
+    assert.strictEqual(after.meals[0].slot, 'breakfast');
+  } finally { await s.close(); }
+});
+
+test('копирование дня переносит план, но не отметки', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/schedule',
+      { time: '9-13', title: 'Работа', done: true });
+    const copy = await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/copy-to',
+      { targetDate: '2026-08-04' });
+    assert.strictEqual(copy.schedule.length, 1);
+    assert.strictEqual(copy.schedule[0].title, 'Работа');
+    assert.strictEqual(copy.schedule[0].done, 0, 'галочка не переносится');
+  } finally { await s.close(); }
+});
+
+test('чужой день недоступен', async () => {
+  const a = await loggedIn({ email: 'a@b.ru' });
+  try {
+    const b = await loggedIn({ email: 'c@d.ru', server: a.srv });
+    await api(a.url, a.cookie, 'POST', '/api/v1/days/2026-08-03/schedule',
+      { startMin: 540, title: 'Секрет' });
+    const seen = await getJson(b.url, b.cookie, '/api/v1/days/2026-08-03/full');
+    assert.deepStrictEqual(seen.schedule, []);
+  } finally { await a.close(); }
+});
+
+test('битая дата отвергается', async () => {
+  const s = await loggedIn();
+  try {
+    const res = await api(s.url, s.cookie, 'GET', '/api/v1/days/2026-13-99/full', undefined, {}, true);
+    assert.strictEqual(res.status, 400);
+  } finally { await s.close(); }
+});
