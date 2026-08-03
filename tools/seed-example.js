@@ -22,12 +22,30 @@ const headers = extra => ({
   ...extra,
 });
 
-async function call(method, path, body, extraHeaders) {
-  const res = await fetch(BASE + path, {
-    method,
-    headers: headers(extraHeaders),
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
+/**
+ * Запрос с повтором. Десятки последовательных вызовов через обратный прокси
+ * иногда получают 502/504 — это не ошибка данных, а обрыв соединения,
+ * и падать из-за него посреди наполнения бессмысленно.
+ */
+async function call(method, path, body, extraHeaders, attempt = 1) {
+  let res;
+  try {
+    res = await fetch(BASE + path, {
+      method,
+      headers: headers(extraHeaders),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  } catch (e) {
+    if (attempt >= 4) throw new Error(`${method} ${path} → нет связи: ${e.message}`);
+    await new Promise(r => setTimeout(r, 500 * attempt));
+    return call(method, path, body, extraHeaders, attempt + 1);
+  }
+
+  if (res.status >= 500 && attempt < 4) {
+    await new Promise(r => setTimeout(r, 500 * attempt));
+    return call(method, path, body, extraHeaders, attempt + 1);
+  }
+
   const text = await res.text();
   if (!res.ok) throw new Error(`${method} ${path} → ${res.status} ${text.slice(0, 200)}`);
   return text ? JSON.parse(text) : null;
@@ -153,13 +171,18 @@ await fillDay(tomorrow, DAYOFF, 'Выходной');
 console.log('Отметки привычек за две недели:');
 let marks = 0;
 for (const habit of habits) {
+  // по одной привычке за раз, но дни параллельно: последовательные 60 запросов
+  // через прокси занимали минуты и упирались в таймаут
+  const jobs = [];
   for (let back = 14; back >= 0; back--) {
     const date = localDate(tz, -back);
     // оставляем пропуски: ровные 100 % выглядят как подделка
     const status = (back % 5 === 2) ? 'missed' : 'done';
-    await call('PUT', `/habits/${habit.id}/log/${date}`, { status });
-    marks += 1;
+    jobs.push(call('PUT', `/habits/${habit.id}/log/${date}`, { status }));
   }
+  await Promise.all(jobs);
+  marks += jobs.length;
+  console.log(`  ${habit.title}: ${jobs.length}`);
 }
 console.log(`  поставлено отметок: ${marks}`);
 
