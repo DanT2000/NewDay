@@ -15,5 +15,11 @@ android/build/
 android/app/build/
 android/capacitor-cordova-android-plugins/build/
 android/local.properties
-android/*.keystore
-android/*.jks
+
+# Ключи подписи — где бы их ни создали. README предлагает запускать keytool
+# в корне проекта, и один случайный `git add -A` опубликовал бы ключ,
+# после чего им уже нельзя пользоваться.
+*.keystore
+*.jks
+*.p12
+*.pem

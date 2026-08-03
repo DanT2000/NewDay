@@ -84,7 +84,12 @@
           <pre style="background: var(--code, var(--surface-2)); padding: var(--s-3); border-radius: var(--r-md); overflow-x: auto; font-size: 12px">git clone https://github.com/DanT2000/NewDay
 cd NewDay &amp;&amp; npm install
 npx cap sync android
-cd android &amp;&amp; ./gradlew assembleRelease</pre>
+cd android &amp;&amp; ./gradlew assembleDebug</pre>
+          <p class="small">
+            Готовый файл — в <code>android/app/build/outputs/apk/debug/</code>.
+            Для раздачи другим людям нужна релизная сборка со своим ключом
+            подписи, как это делать — в README.
+          </p>
         </div>
       </section>
     </div>
