@@ -15,9 +15,12 @@ import { toast } from './toast.js';
 import { cycleTheme, getTheme, THEME_ICON, THEME_LABEL } from './theme.js';
 import { renderDateStrip, attachSwipe } from './views/datestrip.js';
 import { renderSchedule } from './views/schedule.js';
+import { renderTimeline } from './views/schedule-timeline.js';
+import { addRow } from './views/schedule-actions.js';
 import { renderTasks, renderMeals, renderSport } from './views/lists.js';
 import { renderProgress } from './views/progress.js';
 import { renderHabitsToday } from './views/habits-today.js';
+import { openPrintDialog, printHead, printLines } from './views/print.js';
 
 const els = {};
 let taskTab = 'work';
@@ -44,10 +47,10 @@ function buildLayout() {
           toast(`Тема: ${THEME_LABEL[next].toLowerCase()}`);
         },
       }),
-      h('button.icon-btn', { text: '🖨', title: 'Печать дня', 'aria-label': 'Печать дня', onclick: () => window.print() }),
+      h('button.icon-btn', { text: '🖨', title: 'Печать дня', 'aria-label': 'Печать дня', onclick: openPrintDialog }),
       h('a.icon-btn', { href: '/settings.html', text: '⚙', title: 'Настройки', 'aria-label': 'Настройки' })));
 
-  els.dayHead = h('div.card.card-bd.pad');
+  els.dayHead = h('div.card.card-bd.pad.day-head-screen');
   els.schedule = h('div.card-bd');
   els.tasks = h('div.card-bd');
   els.sport = h('div.card-bd');
@@ -57,28 +60,36 @@ function buildLayout() {
   els.tabs = h('div.tabs');
   els.schedHead = h('div.card-hd');
 
+  // На экране видна одна вкладка, на бумаге нужны все три корзины сразу
+  // На бумагу всегда идёт список, даже если на экране включён таймлайн
+  els.printSchedule = h('div.no-screen');
+  els.printHome = h('div.print-bucket.no-screen', h('span.eyebrow', { text: 'дом' }), h('div'));
+  els.printFood = h('div.print-bucket.no-screen', h('span.eyebrow', { text: 'питание' }), h('div'));
+
   const main = h('div.col',
     els.dayHead,
-    h('section.card', els.schedHead, els.schedule),
-    h('section.card',
+    h('section.card', { dataset: { print: 'schedule' } }, els.schedHead, els.schedule, els.printSchedule),
+    h('section.card', { dataset: { print: 'tasks' } },
       h('div.card-hd', els.tabs),
-      els.tasks),
-    h('section.card',
+      h('span.eyebrow.no-screen', { text: 'работа' }),
+      els.tasks, els.printHome, els.printFood),
+    h('section.card', { dataset: { print: 'sport' } },
       h('div.card-hd', h('span.eyebrow', { text: 'спорт' })),
       els.sport));
 
   const side = h('div.col',
-    h('section.card', els.progress),
-    h('section.card',
+    h('section.card', { dataset: { print: 'progress' } }, els.progress),
+    h('section.card', { dataset: { print: 'habits' } },
       h('div.card-hd',
         h('span.eyebrow', { text: 'привычки сегодня' }),
         h('a.btn.btn-sm.btn-ghost', { href: '/habits.html', text: 'Управление' })),
       els.habits),
     h('section.card',
       h('div.card-hd', h('span.eyebrow', { text: 'заметки' })),
-      els.notes));
+      els.notes, printLines()));
 
-  els.body = h('div.app-body', main, side);
+  els.printHead = h('div', { class: 'no-screen' });
+  els.body = h('div.app-body', els.printHead, main, side);
   replace(app, els.header, els.body);
   attachSwipe(els.body, () => go(addDays(state.date, -1)), () => go(addDays(state.date, 1)));
 }
@@ -169,19 +180,56 @@ function renderTaskTabs() {
 function renderTaskBody() {
   if (taskTab === 'food') renderMeals(els.tasks);
   else renderTasks(els.tasks, taskTab);
+  // печатные корзины наполняются всегда, вне зависимости от открытой вкладки
+  renderTasks(els.printHome.lastElementChild, 'home');
+  renderMeals(els.printFood.lastElementChild);
 }
 
 // ── Расписание: заголовок с переключателем вида ──────────────
 
 function renderSchedHead() {
-  replace(els.schedHead, 
+  const view = state.user?.scheduleView === 'timeline' ? 'timeline' : 'list';
+  const swap = next => {
+    state.user.scheduleView = next;
+    renderSchedHead();
+    renderScheduleBody();
+    api.saveSettings({ scheduleView: next }).catch(() => {});
+  };
+
+  replace(els.schedHead,
     h('span.eyebrow', { text: 'расписание' }),
     h('span.grow'),
     h('span.micro', {
       text: state.day?.progress?.schedule?.possible
         ? `${state.day.progress.schedule.done}/${state.day.progress.schedule.possible}`
         : '',
-    }));
+    }),
+    h('div.tabs', { style: { marginLeft: '8px' } },
+      h('button.tab', {
+        text: '☰', title: 'Списком', 'aria-label': 'Показать списком',
+        'aria-selected': view === 'list' ? 'true' : 'false',
+        onclick: () => swap('list'),
+      }),
+      h('button.tab', {
+        text: '▦', title: 'Таймлайном', 'aria-label': 'Показать таймлайном',
+        'aria-selected': view === 'timeline' ? 'true' : 'false',
+        onclick: () => swap('timeline'),
+      })),
+    view === 'timeline'
+      ? h('button.btn.btn-sm.btn-ghost', {
+          text: '+ строка', onclick: () => addRow(state.day?.schedule ?? []),
+        })
+      : null);
+}
+
+function renderScheduleBody() {
+  if (state.user?.scheduleView === 'timeline') {
+    renderTimeline(els.schedule);
+    renderSchedule(els.printSchedule);
+  } else {
+    renderSchedule(els.schedule);
+    replace(els.printSchedule);
+  }
 }
 
 // ── Отрисовка ────────────────────────────────────────────────
@@ -190,8 +238,9 @@ function renderAll() {
   renderDateStrip(els.strip, go);
   if (!state.day) return;
   renderDayHead();
+  replace(els.printHead, printHead());
   renderSchedHead();
-  renderSchedule(els.schedule);
+  renderScheduleBody();
   renderTaskTabs();
   renderTaskBody();
   renderSport(els.sport);
@@ -209,7 +258,7 @@ async function go(date) {
 
 // Минутный тик двигает маркер «сейчас» без перезагрузки данных
 function startClock() {
-  const tick = () => { if (state.date === today() && state.day) renderSchedule(els.schedule); };
+  const tick = () => { if (state.date === today() && state.day) renderScheduleBody(); };
   const msToNextMinute = 60000 - (Date.now() % 60000);
   setTimeout(() => { tick(); setInterval(tick, 60000); }, msToNextMinute);
 }

@@ -471,3 +471,64 @@ textarea.input { height: auto; min-height: 92px; padding: var(--s-3); resize: ve
   display: flex; align-items: flex-end; overflow: hidden;
 }
 .wbar i { display: block; width: 100%; border-radius: var(--r-sm); transition: height var(--dur-slow) var(--ease); }
+
+/* ── Таймлайн ─────────────────────────────────────────────── */
+.tl {
+  display: grid; grid-template-columns: 34px minmax(0, 1fr);
+  gap: var(--s-2); padding: var(--s-3) var(--s-3) var(--s-4);
+}
+.tl-gutter { position: relative; }
+.tl-hour {
+  position: absolute; right: 0; transform: translateY(-50%);
+  font: var(--t-time); color: var(--ink-4);
+}
+.tl-grid { position: relative; }
+.tl-line {
+  position: absolute; left: 0; right: 0; height: 1px;
+  background: var(--hairline);
+}
+
+.tl-block {
+  position: absolute; overflow: hidden; cursor: pointer;
+  padding: 4px 8px; border-radius: var(--r-sm);
+  background: var(--c-day-soft);
+  border-left: 3px solid var(--c-day);
+  transition: background var(--dur-fast), opacity var(--dur);
+}
+.tl-block:hover { background: color-mix(in srgb, var(--c-day) 18%, transparent); }
+.tl-block.past { opacity: .55; }
+.tl-block.past:hover { opacity: 1; }
+.tl-block.done { border-left-color: var(--c-success); background: var(--c-success-soft); }
+.tl-block.now {
+  border-left-color: var(--c-day);
+  box-shadow: 0 0 0 1.5px var(--c-day);
+  opacity: 1;
+}
+.tl-block-hd { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tl-block-hd .chk { width: 16px; height: 16px; }
+.tl-block-hd .chk svg { width: 10px; height: 10px; }
+.tl-title {
+  font: var(--t-body-md); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.tl-block.done .tl-title { color: var(--ink-3); }
+.tl-time { font: var(--t-time); color: var(--ink-3); margin-top: 2px; }
+
+.tl-now { position: absolute; left: 0; right: 0; height: 0; pointer-events: none; z-index: 2; }
+.tl-now::before {
+  content: ''; position: absolute; left: 0; right: 0; top: -1px;
+  height: 2px; background: var(--c-danger); border-radius: 1px;
+}
+.tl-now-label {
+  position: absolute; right: 0; top: -9px;
+  font: var(--t-micro); font-family: var(--font-mono);
+  background: var(--c-danger); color: #fff;
+  padding: 1px 5px; border-radius: var(--r-pill);
+}
+.tl-bell { display: inline-flex; color: var(--ink-3); flex: none; }
+.tl-bell svg { width: 14px; height: 14px; fill: none; stroke: currentColor;
+               stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.tl-bell[data-mode="alarm"] { color: var(--c-day); }
+
+/* Элементы, которые существуют только на печати */
+.no-screen, .print-lines, .print-bucket { display: none; }

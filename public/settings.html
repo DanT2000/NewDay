@@ -26,5 +26,10 @@
     <a class="bnav" href="/install.html"><span>⋯</span>Ещё</a>
   </nav>
   <script type="module" src="/js/settings.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js').catch(() => {}));
+    }
+  </script>
 </body>
 </html>

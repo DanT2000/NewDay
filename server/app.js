@@ -78,6 +78,7 @@ function createApp({ db, config }) {
     next(new ApiError(404, 'NOT_FOUND', `Неизвестный эндпоинт: ${req.method} ${req.baseUrl}${req.path}`));
   });
 
+  app.get('/pair', (_req, res) => res.sendFile(path.join(__dirname, '../public/pair.html')));
   app.use(express.static(path.join(__dirname, '../public')));
   app.get('/', (_req, res) => res.sendFile(path.join(__dirname, '../public/index.html')));
 

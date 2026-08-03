@@ -6,10 +6,17 @@
   <title>Вход — NewDay</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <meta name="theme-color" content="#2E7BE4">
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/auth.css">
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon.png">
   <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <script>
+    try { var t = localStorage.getItem('newday.theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+  </script>
 </head>
 <body class="auth-page">
   <div class="auth-card">
@@ -33,6 +40,8 @@
     </form>
 
     <p class="auth-footer">Нет аккаунта? <a href="/register.html">Зарегистрироваться</a></p>
+    <p class="auth-footer"><a href="/reset.html">Забыли пароль?</a></p>
+    <p class="auth-footer"><a href="/install.html">Приложение для Android</a></p>
   </div>
 
   <script>
