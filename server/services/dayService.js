@@ -5,6 +5,7 @@ const { tasksRepo } = require('../repos/tasks');
 const { mealsRepo } = require('../repos/meals');
 const { sportRepo } = require('../repos/sport');
 const { statsService } = require('./statsService');
+const { seriesService } = require('./seriesService');
 
 const SECTIONS = ['schedule', 'tasks', 'meals', 'sport'];
 
@@ -15,6 +16,7 @@ function dayService(db, opts = {}) {
   const meals = mealsRepo(db);
   const sport = sportRepo(db);
   const stats = statsService(db, opts);
+  const series = seriesService(db);
 
   /**
    * Читает день. Если записи нет — отдаёт валидный пустой день с rev: 0
@@ -22,6 +24,9 @@ function dayService(db, opts = {}) {
    * «пустой фолбэк», из-за которого раньше день затирался при обрыве связи.
    */
   function getFull(user, date) {
+    // Повторы достраиваются при открытии дня: человек, открывший завтра,
+    // ожидает увидеть своё расписание, а не пустоту.
+    series.materializeDay(user.id, date);
     const day = days.get(user.id, date);
     const allTasks = tasks.list(user.id, date);
     return {

@@ -5,7 +5,7 @@
  * «Не выполнил»: это разные события, и человек должен видеть именно своё.
  */
 
-import { h, checkbox, clear } from '../dom.js';
+import { h, checkbox, clear, replace, add } from '../dom.js';
 import { state, reloadDay } from '../store.js';
 import * as api from '../api.js';
 import { toast } from '../toast.js';
@@ -27,11 +27,11 @@ export function renderHabitsToday(root) {
   }
 
   if (resting.length) {
-    box.append(h('div.divider', { style: { margin: '8px 12px' } }));
+    add(box, h('div.divider', { style: { margin: '8px 12px' } }));
     for (const x of resting) box.append(row(x));
   }
 
-  clear(root).append(box);
+  replace(root, box);
 }
 
 function row(x) {
@@ -91,7 +91,7 @@ function openMenu(x) {
       style: { justifyContent: 'flex-start' },
       onclick: async () => { close(); await fn(); },
     });
-    body.append(h('div.stack',
+    add(body, h('div.stack',
       act('Отметить выполненной', () => setStatus(x, 'done')),
       act(x.polarity === 'avoid' ? 'Отметить срыв' : 'Отметить невыполненной', () => setStatus(x, 'missed')),
       act('Заморозить день (не считать)', () => setStatus(x, 'skipped')),

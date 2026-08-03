@@ -3,7 +3,7 @@
  * календарь спрятан за кнопкой, потому что для «вчера / завтра» он избыточен.
  */
 
-import { h, clear } from '../dom.js';
+import { h, clear, replace} from '../dom.js';
 import { addDays, weekdayShort, dayNumber, formatLong, rangeDates } from '../dates.js';
 import { state, today } from '../store.js';
 
@@ -39,7 +39,7 @@ export function renderDateStrip(root, onPick) {
       text: 'Сегодня', onclick: () => onPick(t),
     }) : null);
 
-  clear(root).append(strip);
+  replace(root, strip);
 }
 
 /** Свайп влево-вправо по области дня — то же, что стрелки. */

@@ -7,7 +7,7 @@
  */
 
 import './theme.js';
-import { h, clear, $ } from './dom.js';
+import { h, clear, $, replace} from './dom.js';
 import { formatLong, addDays } from './dates.js';
 import { state, subscribe, emit, loadUser, loadDay, loadDaysIndex, today, optimistic, debounce } from './store.js';
 import * as api from './api.js';
@@ -79,7 +79,7 @@ function buildLayout() {
       els.notes));
 
   els.body = h('div.app-body', main, side);
-  clear(app).append(els.header, els.body);
+  replace(app, els.header, els.body);
   attachSwipe(els.body, () => go(addDays(state.date, -1)), () => go(addDays(state.date, 1)));
 }
 
@@ -105,7 +105,7 @@ function renderDayHead() {
     .sort((a, b) => b.date.localeCompare(a.date))[0]?.weight ?? null;
   const delta = prevWeight !== null && d.weight !== null ? +(d.weight - prevWeight).toFixed(1) : null;
 
-  clear(els.dayHead).append(
+  replace(els.dayHead, 
     h('div.row',
       h('div.grow',
         h('div.eyebrow', { text: state.date === today() ? 'сегодня' : 'день' }),
@@ -142,7 +142,7 @@ function renderDayHead() {
         oninput: e => saveFocus(e.target.value),
       })));
 
-  clear(els.notes).append(h('textarea.input', {
+  replace(els.notes, h('textarea.input', {
     value: d.notes, placeholder: 'Заметки дня', 'aria-label': 'Заметки дня',
     oninput: e => saveNotes(e.target.value),
   }));
@@ -159,7 +159,7 @@ function renderTaskTabs() {
   };
   const label = { work: 'работа', home: 'дом', food: 'питание' };
 
-  clear(els.tabs).append(...Object.keys(label).map(key =>
+  replace(els.tabs, ...Object.keys(label).map(key =>
     h('button.tab', {
       role: 'tab', 'aria-selected': key === taskTab ? 'true' : 'false',
       onclick: () => { taskTab = key; renderTaskTabs(); renderTaskBody(); },
@@ -174,7 +174,7 @@ function renderTaskBody() {
 // ── Расписание: заголовок с переключателем вида ──────────────
 
 function renderSchedHead() {
-  clear(els.schedHead).append(
+  replace(els.schedHead, 
     h('span.eyebrow', { text: 'расписание' }),
     h('span.grow'),
     h('span.micro', {

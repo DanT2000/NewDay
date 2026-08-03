@@ -37,6 +37,18 @@ function scheduleRepo(db) {
   const base = makeRowRepo(db, 'schedule_items', FIELD_MAP, DEFAULTS,
     'start_min ASC, sort_order ASC, id ASC');
 
+  /**
+   * Строка, пришедшая из повтора, при правке или удалении «отцепляется»:
+   * этот день получает переопределение, а сама серия остаётся нетронутой.
+   */
+  const markOverride = (userId, seriesId, date, action) => {
+    if (!seriesId) return;
+    db.prepare(`
+      INSERT INTO series_overrides (user_id, series_id, date, action) VALUES (?,?,?,?)
+      ON CONFLICT(series_id, date) DO UPDATE SET action = excluded.action
+    `).run(userId, seriesId, date, action);
+  };
+
   return {
     ...base,
 
@@ -45,7 +57,21 @@ function scheduleRepo(db) {
     },
 
     update(userId, id, data) {
-      return base.update(userId, id, normalizeTime(data));
+      const before = db.prepare('SELECT series_id, date FROM schedule_items WHERE id = ? AND user_id = ?')
+        .get(id, userId);
+      const result = base.update(userId, id, normalizeTime(data));
+      // отметка «выполнено» серию не меняет, а правка содержимого — меняет
+      const contentChanged = Object.keys(data).some(k => k !== 'done' && k !== 'updatedAt');
+      if (before && contentChanged) markOverride(userId, before.series_id, before.date, 'modified');
+      return result;
+    },
+
+    remove(userId, id) {
+      const before = db.prepare('SELECT series_id, date FROM schedule_items WHERE id = ? AND user_id = ?')
+        .get(id, userId);
+      const row = base.remove(userId, id);
+      if (before) markOverride(userId, before.series_id, before.date, 'deleted');
+      return row;
     },
 
     /**

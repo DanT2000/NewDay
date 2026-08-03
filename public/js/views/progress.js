@@ -3,7 +3,7 @@
  * сам по себе: пять секций дня различаются оттенком, чтобы читаться с одного взгляда.
  */
 
-import { h, ring, clear } from '../dom.js';
+import { h, ring, clear, replace} from '../dom.js';
 import { state } from '../store.js';
 
 const SECTIONS = [
@@ -41,5 +41,5 @@ export function renderProgress(root) {
         ring(p[s.key]?.percent ?? null, { size: 46, stroke: 5, color: s.color, label: s.label }),
         h('div.ring-lbl', { text: s.label })))));
 
-  clear(root).append(box);
+  replace(root, box);
 }

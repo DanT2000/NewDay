@@ -6,7 +6,7 @@
  * времени, прошедшие приглушены по контрасту (но остаются кликабельными).
  */
 
-import { h, svg, checkbox, clear } from '../dom.js';
+import { h, svg, checkbox, clear, replace} from '../dom.js';
 import { formatMinutes, parseTimeToMinutes, nowMinutes, formatDuration } from '../dates.js';
 import { state, optimistic, today } from '../store.js';
 import * as api from '../api.js';
@@ -130,7 +130,7 @@ export function renderSchedule(root) {
   }, '+ строка'));
 
   attachDrag(list, '.srow', ids => reorder(ids));
-  clear(root).append(list);
+  replace(root, list);
 }
 
 // ── Действия ─────────────────────────────────────────────────

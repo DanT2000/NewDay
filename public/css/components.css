@@ -413,3 +413,49 @@ textarea.input { height: auto; min-height: 92px; padding: var(--s-3); resize: ve
 .stack { display: grid; gap: var(--s-3); }
 .row { display: flex; align-items: center; gap: var(--s-2); }
 .grow { flex: 1 1 auto; min-width: 0; }
+
+/* ── Экран привычек ───────────────────────────────────────── */
+.hcard {
+  display: grid; grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: start; gap: var(--s-3);
+  padding: var(--s-3); border-radius: var(--r-md);
+}
+.hcard + .hcard { border-top: 1px solid var(--hairline); border-radius: 0; }
+.hcard:hover { background: var(--surface-2); }
+.hcard .hemoji { padding-top: 2px; }
+.dots i.none { background: var(--hairline); }
+
+.preset {
+  display: grid; gap: 2px; text-align: left;
+  padding: var(--s-3); border-radius: var(--r-md);
+  border: 1px solid var(--hairline-firm); background: var(--surface);
+  transition: border-color var(--dur-fast), background var(--dur-fast);
+}
+.preset:hover { background: var(--surface-2); }
+.preset[aria-pressed="true"] {
+  border-color: var(--c-day);
+  background: var(--c-day-soft);
+}
+.preset b { font: var(--t-body-md); }
+
+.swatch {
+  width: 26px; height: 26px; border-radius: var(--r-pill);
+  border: 2px solid transparent;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .12);
+}
+.swatch[aria-pressed="true"] { border-color: var(--ink); }
+
+/* ── Эмодзи-пикер ─────────────────────────────────────────── */
+.emoji-btn {
+  width: 44px; height: 44px; flex: none;
+  border-radius: var(--r-md); border: 1px solid var(--hairline-firm);
+  background: var(--surface); font-size: 22px; line-height: 1;
+}
+.emoji-btn:hover { background: var(--surface-2); }
+.emoji-grid { display: grid; gap: var(--s-2); max-height: 46dvh; overflow-y: auto; }
+.emoji-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(38px, 1fr)); gap: 2px; }
+.emoji-cell {
+  height: 38px; border-radius: var(--r-sm); font-size: 20px; line-height: 1;
+  transition: background var(--dur-fast);
+}
+.emoji-cell:hover { background: var(--surface-2); }

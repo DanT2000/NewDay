@@ -59,6 +59,9 @@ export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 export function clear(el) { while (el.firstChild) el.firstChild.remove(); return el; }
 export function replace(el, ...children) { clear(el); append(el, children); return el; }
 
+/** Дописывает детей, пропуская null и false. Родной append превращает их в текст «null». */
+export function add(el, ...children) { append(el, children); return el; }
+
 /** Чекбокс: кнопка с aria-checked, галочка рисуется штрихом */
 export function checkbox(checked, onToggle, label = 'Выполнено') {
   return h('button.chk', {

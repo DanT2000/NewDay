@@ -5,7 +5,7 @@
  * полей — держу их вместе, чтобы правка поведения не расползалась по трём местам.
  */
 
-import { h, checkbox, clear } from '../dom.js';
+import { h, checkbox, clear, replace, add } from '../dom.js';
 import { formatMinutes, parseTimeToMinutes } from '../dates.js';
 import { state, optimistic } from '../store.js';
 import * as api from '../api.js';
@@ -59,7 +59,7 @@ export function renderTasks(root, bucket) {
   const get = day => day.tasks[bucket];
 
   for (const row of rows) {
-    list.append(h('div.trow', { class: row.done ? 'done' : '', dataset: { id: row.id } },
+    add(list, h('div.trow', { class: row.done ? 'done' : '', dataset: { id: row.id } },
       checkbox(row.done === 1,
         v => mutate(get, row.id, { done: v ? 1 : 0 },
           () => api.tasks.update(state.date, row.id, { done: v }), true)),
@@ -88,7 +88,7 @@ export function renderTasks(root, bucket) {
       '.trow .bare'),
   }));
 
-  clear(root).append(list);
+  replace(root, list);
 }
 
 // ── Питание ──────────────────────────────────────────────────
@@ -100,7 +100,7 @@ export function renderMeals(root) {
   const get = day => day.meals;
 
   for (const row of rows) {
-    list.append(h('div.trow', {
+    add(list, h('div.trow', {
       class: row.done ? 'done' : '',
       style: timed ? { gridTemplateColumns: '20px 6.2ch minmax(0,1fr) auto 18px' } : null,
       dataset: { id: row.id },
@@ -146,7 +146,7 @@ export function renderMeals(root) {
       '.trow .bare'),
   }));
 
-  clear(root).append(list);
+  replace(root, list);
 }
 
 function nextSlot(rows) {
@@ -163,7 +163,7 @@ export function renderSport(root) {
   const get = day => day.sport;
 
   for (const row of rows) {
-    list.append(h('div.trow', {
+    add(list, h('div.trow', {
       class: row.done ? 'done' : '',
       style: { gridTemplateColumns: '20px minmax(0,1fr) 3.5ch 3.5ch 18px' },
       dataset: { id: row.id },
@@ -207,5 +207,5 @@ export function renderSport(root) {
       '.trow .bare'),
   }));
 
-  clear(root).append(list);
+  replace(root, list);
 }
