@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
 
       - uses: actions/setup-java@v4
@@ -69,9 +69,14 @@ jobs:
       - name: Перенести веб-часть в проект Android
         run: npx cap sync android
 
+      # chmod здесь, а не только в индексе git: проект ведётся с Windows, где
+      # бит исполнения не хранится и любой `git add` его сбрасывает. Без этого
+      # сборка падает на `./gradlew: Permission denied`.
       - name: Собрать релизный APK
         working-directory: android
-        run: ./gradlew assembleRelease --no-daemon
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleRelease --no-daemon
 
       - name: Проверить, что APK подписан
         run: |

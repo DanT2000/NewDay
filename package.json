@@ -26,5 +26,8 @@
     "@capacitor/cli": "^6.0.0",
     "@capacitor/core": "^6.0.0",
     "nodemon": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }
