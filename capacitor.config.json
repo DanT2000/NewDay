@@ -2,8 +2,11 @@
   "appId": "ru.appswire.newday",
   "appName": "NewDay",
   "webDir": "public",
+  "android": {
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": true
+  },
   "server": {
-    "url": "https://newday.appswire.ru",
-    "cleartext": false
+    "androidScheme": "https"
   }
 }

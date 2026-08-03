@@ -5,6 +5,7 @@ const v = require('../../lib/validate');
 const { hashToken, randomHex } = require('../../lib/secrets');
 const { usersRepo, publicUser } = require('../../repos/users');
 const { devicesRepo } = require('../../repos/devices');
+const { generateSecret, formatToken } = require('../../lib/secrets');
 const { verifyEmailMessage, resetPasswordMessage } = require('../../lib/mailer');
 const { rateLimit } = require('../../middleware/rateLimit');
 
@@ -108,7 +109,21 @@ module.exports = function authRouter({ db, config, mailer, auth }) {
     }
 
     req.session.userId = user.id;
-    res.json({ success: true, user: publicUser(user, users.getSettings(user.id)) });
+
+    // Мобильное приложение работает кросс-доменно, где cookie не проходят,
+    // поэтому по запросу отдаём device-токен вместо опоры на сессию.
+    let deviceToken = null;
+    if (req.body.issueDeviceToken) {
+      const name = v.str(req.body.deviceName, { max: 80, field: 'устройство' }) || 'Приложение';
+      const platform = v.str(req.body.platform, { max: 40, field: 'платформа' });
+      deviceToken = devices.issueToken(user.id, { deviceName: name, platform });
+    }
+
+    res.json({
+      success: true,
+      user: publicUser(user, users.getSettings(user.id)),
+      ...(deviceToken ? { deviceToken } : {}),
+    });
   }));
 
   // ── POST /logout ──────────────────────────────────────────────────

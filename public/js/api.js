@@ -7,7 +7,34 @@
  *  - на 401 уходим на вход, а не пишем в пустоту.
  */
 
-const BASE = '/api/v1';
+/**
+ * База API и токен.
+ *
+ * В браузере на самом сайте всё относительное и работает на cookie-сессии.
+ * В приложении ассеты вшиты в APK, origin — https://localhost, поэтому нужен
+ * абсолютный адрес сервера и device-токен в заголовке: cookie кросс-доменно
+ * не пройдут, и полагаться на них было бы самообманом.
+ */
+const KEY_BASE = 'newday.apiBase';
+const KEY_TOKEN = 'newday.deviceToken';
+
+export const isNative = () => Boolean(globalThis.Capacitor?.isNativePlatform?.());
+
+export function apiBase() {
+  const stored = localStorage.getItem(KEY_BASE);
+  if (stored) return stored.replace(/\/+$/, '') + '/api/v1';
+  return '/api/v1';
+}
+
+export const deviceToken = () => localStorage.getItem(KEY_TOKEN);
+export function setApiBase(url) {
+  if (url) localStorage.setItem(KEY_BASE, url.replace(/\/+$/, ''));
+  else localStorage.removeItem(KEY_BASE);
+}
+export function setDeviceToken(token) {
+  if (token) localStorage.setItem(KEY_TOKEN, token);
+  else localStorage.removeItem(KEY_TOKEN);
+}
 
 export class ApiError extends Error {
   constructor(status, code, message, details) {
@@ -18,15 +45,23 @@ export class ApiError extends Error {
   }
 }
 
-let onUnauthorized = () => { location.replace('/login.html'); };
+let onUnauthorized = () => {
+  if (isNative()) setDeviceToken(null);
+  location.replace('/login.html');
+};
 export function setUnauthorizedHandler(fn) { onUnauthorized = fn; }
 
 async function request(method, path, body, headers = {}) {
+  const token = deviceToken();
   let res;
   try {
-    res = await fetch(BASE + path, {
+    res = await fetch(apiBase() + path, {
       method,
-      headers: { 'Content-Type': 'application/json', ...headers },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...headers,
+      },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
   } catch {
@@ -38,6 +73,14 @@ async function request(method, path, body, headers = {}) {
     throw new ApiError(401, 'UNAUTHORIZED', 'Требуется вход');
   }
   if (res.status === 204) return null;
+
+  // Локальный сервер Capacitor отдаёт index.html на неизвестные пути.
+  // Без этой проверки такой ответ выглядел бы как успешный вызов API.
+  const type = res.headers.get('content-type') || '';
+  if (!type.includes('application/json')) {
+    throw new ApiError(res.status, 'BAD_RESPONSE',
+      'Сервер ответил не по-JSON. Проверьте адрес сервера в настройках входа.');
+  }
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {

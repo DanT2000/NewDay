@@ -57,6 +57,15 @@ function devicesRepo(db) {
       return { token: formatToken('ndd', prefix, secret), device };
     },
 
+    /** Выдаёт токен устройства без кода привязки — для входа по паролю в приложении. */
+    issueToken(userId, { deviceName = '', platform = '' }) {
+      const { secret, prefix, hash } = generateSecret();
+      db.prepare(
+        'INSERT INTO devices (user_id, name, platform, prefix, token_hash) VALUES (?,?,?,?,?)'
+      ).run(userId, deviceName, platform, prefix, hash);
+      return formatToken('ndd', prefix, secret);
+    },
+
     list(userId) {
       return db.prepare(`
         SELECT id, name, platform, last_seen_at, created_at

@@ -24,6 +24,54 @@
 
         </activity>
 
+        <!--
+            Экран отключения будильника.
+            showWhenLocked и turnScreenOn поднимают его поверх локскрина,
+            excludeFromRecents не даёт смахнуть его из «недавних»,
+            singleInstance — открыть вторую копию поверх первой.
+        -->
+        <activity
+            android:name=".alarm.AlarmActivity"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:excludeFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:screenOrientation="portrait"
+            android:taskAffinity="ru.appswire.newday.alarm"
+            android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen" />
+
+        <!-- Держит звук и экран, пока будильник звонит -->
+        <service
+            android:name=".alarm.AlarmService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback|specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="alarm" />
+        </service>
+
+        <receiver
+            android:name=".alarm.AlarmReceiver"
+            android:exported="false"
+            android:directBootAware="true">
+            <intent-filter>
+                <action android:name="ru.appswire.newday.FIRE" />
+            </intent-filter>
+        </receiver>
+
+        <!-- После перезагрузки система забывает будильники — ставим заново -->
+        <receiver
+            android:name=".alarm.BootReceiver"
+            android:exported="true"
+            android:directBootAware="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -35,7 +83,29 @@
         </provider>
     </application>
 
-    <!-- Permissions -->
-
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Будильник -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!--
+        «Показывать поверх других приложений».
+        Без него Android запрещает поднять экран будильника из фона, когда
+        телефон разблокирован: full-screen intent в этом случае показывает
+        только всплывающее уведомление. Проверено на эмуляторе — система
+        отклоняла запуск с rejectTime в appops.
+    -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
 </manifest>

@@ -7,6 +7,7 @@ const { createMailer } = require('./lib/mailer');
 const { createPush } = require('./lib/push');
 const { notificationService } = require('./services/notificationService');
 const { createAuthMiddleware } = require('./middleware/auth');
+const { cors } = require('./middleware/cors');
 
 const healthRouter = require('./routes/health');
 const authRouter = require('./routes/v1/auth');
@@ -27,6 +28,7 @@ function createApp({ db, config }) {
   if (config.trustProxy) app.set('trust proxy', 1);
   app.disable('x-powered-by');
 
+  app.use(cors());   // мобильное приложение живёт на origin https://localhost
   app.use(express.json({ limit: '2mb' }));
   app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 

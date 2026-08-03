@@ -35,6 +35,10 @@
         <label for="password">Пароль</label>
         <input type="password" id="password" name="password" autocomplete="current-password" placeholder="Ваш пароль" required>
       </div>
+      <div class="form-group" id="server-group" style="display:none">
+        <label for="server">Адрес сервера</label>
+        <input type="url" id="server" value="https://newday.appswire.ru" placeholder="https://newday.example.com">
+      </div>
       <div id="error-msg" class="form-error" style="display:none"></div>
       <button type="submit" class="btn btn-primary btn-block">Войти</button>
     </form>
@@ -45,17 +49,33 @@
   </div>
 
   <script>
+    // Поле адреса сервера нужно только в приложении: на сайте адрес и так известен,
+    // а на self-host человек указывает свой
+    if (window.Capacitor?.isNativePlatform?.()) {
+      document.getElementById('server-group').style.display = 'grid';
+      const saved = localStorage.getItem('newday.apiBase');
+      if (saved) document.getElementById('server').value = saved;
+    }
+
     document.getElementById('login-form').addEventListener('submit', async e => {
       e.preventDefault();
       const errEl = document.getElementById('error-msg');
       errEl.style.display = 'none';
 
+      const native = Boolean(window.Capacitor?.isNativePlatform?.());
+      const serverInput = document.getElementById('server');
+      const base = native
+        ? (serverInput?.value || 'https://newday.appswire.ru').replace(/\/+$/, '')
+        : '';
+      if (native) localStorage.setItem('newday.apiBase', base);
+
       const body = {
         emailOrUsername: document.getElementById('username').value.trim(),
         password: document.getElementById('password').value,
+        ...(native ? { issueDeviceToken: true, deviceName: 'Android', platform: 'android' } : {}),
       };
 
-      const res = await fetch('/api/v1/auth/login', {
+      const res = await fetch(base + '/api/v1/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -63,6 +83,8 @@
 
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
+        // в приложении сессии нет — живём на токене устройства
+        if (data.deviceToken) localStorage.setItem('newday.deviceToken', data.deviceToken);
         window.location.replace('/app.html');
       } else {
         // сервер отвечает { error: { code, message } }

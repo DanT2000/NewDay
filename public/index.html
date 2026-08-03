@@ -2,30 +2,46 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>NewDay</title>
-  <link rel="manifest" href="/manifest.webmanifest">
   <meta name="theme-color" content="#2E7BE4">
-  <style>
-    body { margin: 0; font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; background: #f1f5f9; }
-    .spinner { width: 32px; height: 32px; border: 3px solid #e2e8f0; border-top-color: #3b82f6; border-radius: 50%; animation: spin .7s linear infinite; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-  </style>
+  <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon.png">
-  <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/auth.css">
+  <style>
+    .boot { display: grid; place-items: center; min-height: 100dvh; gap: var(--s-4); }
+    .spinner {
+      width: 30px; height: 30px; border: 3px solid var(--hairline);
+      border-top-color: var(--c-day); border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } }
+  </style>
+  <script>
+    try { var t = localStorage.getItem('newday.theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+  </script>
 </head>
 <body>
-  <div class="spinner"></div>
-  <script>
-    fetch('/api/auth/me')
-      .then(r => r.ok ? r.json() : Promise.reject())
-      .then(() => { window.location.replace('/app.html'); })
-      .catch(() => { window.location.replace('/login.html'); });
-
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/service-worker.js');
+  <div class="boot">
+    <img src="/icons/logo-256.png" alt="NewDay" width="64" height="64">
+    <div class="spinner" role="status" aria-label="Загрузка"></div>
+  </div>
+  <script type="module">
+    // Куда идти дальше, решает наличие рабочей авторизации.
+    // В приложении база и токен лежат локально, на сайте — cookie-сессия.
+    import { me } from '/js/api.js';
+    try {
+      await me();
+      location.replace('/app.html');
+    } catch {
+      location.replace('/login.html');
     }
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/service-worker.js').catch(() => {});
   </script>
 </body>
 </html>

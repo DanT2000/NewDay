@@ -9,7 +9,11 @@ module.exports = function pushRouter({ db, push }) {
   const repo = pushRepo(db);
   const notify = notificationService(db, { push });
 
-  /** Публичный ключ нужен браузеру до подписки, поэтому без аутентификации. */
+  /**
+   * Публичный VAPID-ключ. Секрета не содержит, но роутер смонтирован
+   * под общей аутентификацией /api/v1 — браузер запрашивает ключ уже
+   * после входа, так что отдельный публичный маршрут не нужен.
+   */
   router.get('/key', (_req, res) => {
     res.json({ enabled: push.enabled, publicKey: push.publicKey });
   });
