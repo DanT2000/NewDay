@@ -48,7 +48,15 @@ data class Alarm(
     }
 }
 
-/** Настройки экрана отключения. Приходят из веб-части вместе с расписанием. */
+/**
+ * Настройки экрана отключения. Приходят из веб-части вместе с расписанием.
+ *
+ * graceSec — «мягкое начало»: столько секунд будильник звучит тихо, и выключить
+ * его можно одной кнопкой, без задач. Случай простой: человек уже встал сам, а
+ * будильник всё равно звонит — решать в этот момент примеры незачем. Если окно
+ * кончилось, значит на будильник не отреагировали, то есть скорее всего спят:
+ * громкость идёт вверх, и появляются задачи.
+ */
 data class DismissConfig(
     val types: List<String>,   // math | code | icons
     val count: Int,
@@ -57,7 +65,12 @@ data class DismissConfig(
     val snoozeAllowed: Boolean,
     val snoozeMinutes: Int,
     val volumeRamp: Boolean,
+    val graceEnabled: Boolean,
+    val graceSec: Int,
 ) {
+    /** Сколько длится мягкое начало на самом деле: выключенное окно — это ноль. */
+    val effectiveGraceSec get() = if (graceEnabled) graceSec else 0
+
     fun toJson(): JSONObject = JSONObject().apply {
         put("types", JSONArray(types))
         put("count", count)
@@ -66,12 +79,15 @@ data class DismissConfig(
         put("snoozeAllowed", snoozeAllowed)
         put("snoozeMinutes", snoozeMinutes)
         put("volumeRamp", volumeRamp)
+        put("graceEnabled", graceEnabled)
+        put("graceSec", graceSec)
     }
 
     companion object {
         val DEFAULT = DismissConfig(
-            types = listOf("math"), count = 1, difficulty = 1,
+            types = listOf("math", "code", "icons"), count = 1, difficulty = 1,
             timeoutSec = 30, snoozeAllowed = true, snoozeMinutes = 5, volumeRamp = true,
+            graceEnabled = true, graceSec = 60,
         )
 
         fun fromJson(o: JSONObject?): DismissConfig {
@@ -87,6 +103,10 @@ data class DismissConfig(
                 snoozeAllowed = o.optBoolean("snoozeAllowed", DEFAULT.snoozeAllowed),
                 snoozeMinutes = o.optInt("snoozeMinutes", DEFAULT.snoozeMinutes).coerceIn(1, 30),
                 volumeRamp = o.optBoolean("volumeRamp", DEFAULT.volumeRamp),
+                graceEnabled = o.optBoolean("graceEnabled", DEFAULT.graceEnabled),
+                // до 15 минут: дольше — это уже не «успеть выключить»,
+                // а будильник, который звонит впустую
+                graceSec = o.optInt("graceSec", DEFAULT.graceSec).coerceIn(5, 900),
             )
         }
     }

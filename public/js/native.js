@@ -15,19 +15,40 @@ const plugin = () => globalThis.Capacitor?.Plugins?.NewDayAlarm ?? null;
 export const isNative = () => Boolean(globalThis.Capacitor?.isNativePlatform?.());
 export const available = () => isNative() && Boolean(plugin());
 
-/** Настройки экрана отключения: их задаёт человек, по умолчанию — один пример. */
+/**
+ * Значения по умолчанию для будильника.
+ * Экран настроек и мост читают их из одного места, чтобы «по умолчанию»
+ * на экране и «по умолчанию» в приложении не разъехались.
+ */
+export const ALARM_DEFAULTS = {
+  alarmTaskTypes: ['math', 'code', 'icons'],
+  alarmTaskCount: 1,
+  alarmTaskDifficulty: 1,
+  alarmTaskTimeoutSec: 30,
+  alarmSnoozeAllowed: true,
+  alarmSnoozeMinutes: 5,
+  alarmVolumeRamp: true,
+  alarmGraceEnabled: true,
+  alarmGraceSec: 60,
+};
+
+/** Настройки экрана отключения: их задаёт человек в настройках. */
 function dismissConfig(settings = {}) {
   const types = Array.isArray(settings.alarmTaskTypes) && settings.alarmTaskTypes.length
     ? settings.alarmTaskTypes
-    : ['math'];
+    : ALARM_DEFAULTS.alarmTaskTypes;
   return {
     types,
-    count: Number(settings.alarmTaskCount ?? 1),
-    difficulty: Number(settings.alarmTaskDifficulty ?? 1),
-    timeoutSec: Number(settings.alarmTaskTimeoutSec ?? 30),
+    count: Number(settings.alarmTaskCount ?? ALARM_DEFAULTS.alarmTaskCount),
+    difficulty: Number(settings.alarmTaskDifficulty ?? ALARM_DEFAULTS.alarmTaskDifficulty),
+    timeoutSec: Number(settings.alarmTaskTimeoutSec ?? ALARM_DEFAULTS.alarmTaskTimeoutSec),
     snoozeAllowed: settings.alarmSnoozeAllowed !== false,
-    snoozeMinutes: Number(settings.alarmSnoozeMinutes ?? 5),
+    snoozeMinutes: Number(settings.alarmSnoozeMinutes ?? ALARM_DEFAULTS.alarmSnoozeMinutes),
     volumeRamp: settings.alarmVolumeRamp !== false,
+    // мягкое начало: сколько секунд будильник звучит тихо и выключается
+    // одной кнопкой, без задач
+    graceEnabled: settings.alarmGraceEnabled !== false,
+    graceSec: Number(settings.alarmGraceSec ?? ALARM_DEFAULTS.alarmGraceSec),
   };
 }
 
@@ -84,6 +105,26 @@ export async function syncAlarms(profile) {
     });
   } catch (e) {
     console.warn('[newday] не удалось передать будильники в систему:', e.message);
+    return null;
+  }
+}
+
+/**
+ * Отправляет только настройки будильника.
+ * Экран настроек не должен перепланировать день из-за одного переключателя:
+ * без сети перечитать день не получится, и полная синхронизация сняла бы
+ * уже стоящие будильники.
+ */
+export async function pushAlarmConfig(profile) {
+  if (!available()) return null;
+  const settings = profile?.settings || {};
+  try {
+    return await plugin().setConfig({
+      config: dismissConfig(settings),
+      enabled: settings.alarmEnabled !== false,
+    });
+  } catch (e) {
+    console.warn('[newday] не удалось передать настройки будильника:', e.message);
     return null;
   }
 }

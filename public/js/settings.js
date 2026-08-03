@@ -70,6 +70,31 @@ function segmented(options, value, onChange) {
     })));
 }
 
+/**
+ * Несколько значений сразу. Последнюю выбранную снять нельзя: пустой набор
+ * задач означал бы будильник, который выключается сам собой.
+ */
+function multiSelect(options, values, onChange) {
+  const chosen = new Set(values);
+  const row = h('div.row', { style: { gap: '4px', flexWrap: 'wrap' } });
+  const paint = () => [...row.children].forEach(b =>
+    b.setAttribute('aria-selected', chosen.has(b.dataset.v) ? 'true' : 'false'));
+
+  add(row, ...options.map(([v, t]) => h('button.tab', {
+    type: 'button', text: t, dataset: { v },
+    onclick: () => {
+      if (chosen.has(v)) {
+        if (chosen.size === 1) { toast('Хотя бы один вид задач нужен'); return; }
+        chosen.delete(v);
+      } else chosen.add(v);
+      paint();
+      onChange([...chosen]);
+    },
+  })));
+  paint();
+  return row;
+}
+
 async function save(fields) {
   try {
     profile = await api.saveSettings(fields);
@@ -272,6 +297,78 @@ const ALARM_CHECKS = [
   },
 ];
 
+const GRACE_CHOICES = [[0, 'Сразу задачи'], [30, '30 сек'], [60, '1 мин'], [120, '2 мин'], [300, '5 мин']];
+
+/**
+ * Как ведёт себя будильник. Настройки живут на сервере и уезжают в приложение
+ * вместе с расписанием, поэтому раздел виден и в браузере: удобнее настроить
+ * с компьютера, а будит телефон.
+ *
+ * Наверху — мягкое начало, потому что это самая частая ситуация: человек уже
+ * встал сам, а будильник всё равно звонит. Остальное спрятано в «тонкой
+ * настройке»: менять его приходится один раз, а места занимает много.
+ */
+function alarmBehaviourSection() {
+  const s = profile?.settings || {};
+  const D = native.ALARM_DEFAULTS;
+  const graceOn = s.alarmGraceEnabled !== false;
+  const graceNow = graceOn ? Number(s.alarmGraceSec ?? D.alarmGraceSec) : 0;
+  const types = Array.isArray(s.alarmTaskTypes) && s.alarmTaskTypes.length
+    ? s.alarmTaskTypes : D.alarmTaskTypes;
+
+  const fine = h('details',
+    h('summary.small', { text: 'Тонкая настройка' }),
+    h('div.stack', { style: { marginTop: 'var(--s-3)' } },
+      field('Задачи для отключения', multiSelect(
+        [['math', 'Пример'], ['code', 'Код'], ['icons', 'Иконки']], types,
+        v => saveSettings({ alarmTaskTypes: v })),
+        'Из выбранных видов задача берётся случайно — привыкнуть к одной и решать её не глядя не получится'),
+      field('Сколько задач', segmented(
+        [[1, 'Одна'], [2, 'Две'], [3, 'Три']],
+        Number(s.alarmTaskCount ?? D.alarmTaskCount),
+        v => saveSettings({ alarmTaskCount: v }))),
+      field('Сложность', segmented(
+        [[1, 'Простая'], [2, 'Средняя'], [3, 'Сложная']],
+        Number(s.alarmTaskDifficulty ?? D.alarmTaskDifficulty),
+        v => saveSettings({ alarmTaskDifficulty: v }))),
+      field('Время на задачу', segmented(
+        [[20, '20 сек'], [30, '30 сек'], [60, '1 мин']],
+        Number(s.alarmTaskTimeoutSec ?? D.alarmTaskTimeoutSec),
+        v => saveSettings({ alarmTaskTimeoutSec: v })),
+        'Не успели — задача меняется на новую, звук продолжает играть'),
+      field('Нарастающая громкость', segmented(
+        [[true, 'Да'], [false, 'Нет']], s.alarmVolumeRamp !== false,
+        v => saveSettings({ alarmVolumeRamp: v })),
+        'Будильник подъёма выходит на полную громкость примерно за минуту'),
+      field('Кнопка «отложить»', segmented(
+        [[true, 'Есть'], [false, 'Нет']], s.alarmSnoozeAllowed !== false,
+        v => saveSettings({ alarmSnoozeAllowed: v })),
+        'Только для мягких будильников — встреч и дневного сна. У подъёма её нет намеренно')));
+
+  return section('поведение будильника',
+    field('Сначала просто выключить', segmented(
+      GRACE_CHOICES, graceNow,
+      v => saveSettings(v === 0
+        ? { alarmGraceEnabled: false }
+        : { alarmGraceEnabled: true, alarmGraceSec: v })),
+      'Столько времени будильник звучит тихо и выключается одной кнопкой. '
+      + 'Если вы уже встали, решать задачи незачем. Не выключили за это время — '
+      + 'громкость идёт вверх и появляются задачи.'),
+    fine,
+    !native.available()
+      ? h('p.small', { text: 'Настройки применит приложение на Android — в браузере будильника нет.' })
+      : null);
+}
+
+async function saveSettings(patch) {
+  try {
+    await api.saveSettings({ settings: patch });
+    profile = { ...profile, settings: { ...(profile.settings || {}), ...patch } };
+    await native.pushAlarmConfig(profile);
+    toast('Сохранено');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
 function alarmSection() {
   if (!native.available()) return null;
   const p = alarmPerms;
@@ -333,14 +430,16 @@ function alarmSection() {
 }
 
 function appSection() {
-  const link = `${location.origin}/downloads/NewDay.apk`;
+  // QR ведёт на страницу установки, а не на сам файл: APK лежит в релизах
+  // GitHub, и прямая ссылка на /downloads/NewDay.apk отдавала 404
+  const link = `${location.origin}/install.html`;
   return section('приложение для android',
     h('div.row', { style: { alignItems: 'flex-start', gap: 'var(--s-4)', flexWrap: 'wrap' } },
       qrSvg(link, { size: 132 }),
       h('div.stack', { style: { flex: '1 1 220px' } },
-        h('p.small', { text: 'Наведите камеру телефона или откройте ссылку — начнётся загрузка APK.' }),
-        h('a.btn.btn-primary', { href: '/downloads/NewDay.apk', text: 'Скачать APK', download: '' }),
-        h('a.btn.btn-ghost', { href: '/install.html', text: 'Как установить' }))));
+        h('p.small', { text: 'Наведите камеру телефона — откроется страница установки. '
+          + 'Приложение нужно ради будильника: в браузере его не бывает.' }),
+        h('a.btn.btn-primary', { href: '/install.html', text: 'Как поставить приложение' }))));
 }
 
 function devicesSection() {
@@ -538,8 +637,8 @@ async function reload() {
   ]);
   alarmPerms = await native.checkPermissions();
   replace(col,
-    profileSection(), alarmSection(), notificationsSection(), viewSection(), appSection(),
-    devicesSection(), tokensSection(), dataSection());
+    profileSection(), alarmSection(), alarmBehaviourSection(), notificationsSection(),
+    viewSection(), appSection(), devicesSection(), tokensSection(), dataSection());
 }
 
 async function boot() {

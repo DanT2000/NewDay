@@ -44,6 +44,21 @@ class AlarmPlugin : Plugin() {
         )
     }
 
+    /**
+     * Меняет только настройки отключения, не трогая список будильников.
+     *
+     * Нужно экрану настроек: правка «мягкого начала» не повод перечитывать день
+     * и переставлять всё заново. Раньше настройки уезжали через schedule, и
+     * сохранение настройки при отсутствии сети снимало уже стоящие будильники.
+     */
+    @PluginMethod
+    fun setConfig(call: PluginCall) {
+        val cfg = DismissConfig.fromJson(call.getObject("config") ?: JSObject())
+        AlarmStore.saveConfig(context, cfg)
+        call.getBoolean("enabled")?.let { AlarmStore.setEnabled(context, it) }
+        call.resolve(JSObject().put("config", cfg.toJson()))
+    }
+
     @PluginMethod
     fun cancelAll(call: PluginCall) {
         AlarmScheduler.cancelAll(context, AlarmStore.load(context))
@@ -152,7 +167,7 @@ class AlarmPlugin : Plugin() {
     fun testAlarm(call: PluginCall) {
         val delaySec = call.getInt("delaySec") ?: 60
         val test = Alarm(
-            id = 999_999_999L,
+            id = AlarmScheduler.TEST_ALARM_ID,
             fireAt = System.currentTimeMillis() + delaySec * 1000L,
             title = "⏰ Проверка будильника",
             body = "Если вы это видите и слышите — будильник работает.",

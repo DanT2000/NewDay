@@ -17,16 +17,35 @@ import android.util.Log
 object AlarmScheduler {
     private const val TAG = "NewDayAlarm"
 
-    fun scheduleAll(ctx: Context, alarms: List<Alarm>) {
+    /** Идентификатор проверочного будильника из настроек. */
+    const val TEST_ALARM_ID = 999_999_999L
+
+    fun scheduleAll(ctx: Context, incoming: List<Alarm>) {
+        /*
+         * Проверочный будильник переживает синхронизацию.
+         *
+         * Список из веб-части заменяет всё, что стоит на устройстве, — иначе
+         * удалённые строки продолжали бы звонить. Но проверочный будильник в
+         * этом списке никогда не приходит, и раньше его снимала первая же
+         * синхронизация: человек нажимал «тестовый будильник через минуту»,
+         * открывал день — и будильник молча не срабатывал.
+         */
+        val now = System.currentTimeMillis()
+        val keepTest = AlarmStore.load(ctx)
+            .filter { it.id == TEST_ALARM_ID && it.fireAt > now && incoming.none { n -> n.id == it.id } }
+        val alarms = incoming + keepTest
+
         cancelAll(ctx, AlarmStore.load(ctx))
         AlarmStore.save(ctx, alarms)
         if (!AlarmStore.isEnabled(ctx)) {
-            Log.i(TAG, "Будильники выключены в настройках — ничего не ставим")
+            Log.i(TAG, "SYNCED будильники выключены в настройках — ничего не ставим")
             return
         }
-        val now = System.currentTimeMillis()
         alarms.filter { it.fireAt > now }.forEach { schedule(ctx, it) }
-        Log.i(TAG, "Запланировано: ${alarms.count { it.fireAt > now }}")
+        // SYNCED — метка латиницей: по ней живые тесты понимают, что приложение
+        // уже отправило свой список и можно ставить проверочный будильник,
+        // не боясь, что следующая синхронизация его снимет
+        Log.i(TAG, "SYNCED запланировано: ${alarms.count { it.fireAt > now }}")
     }
 
     fun schedule(ctx: Context, alarm: Alarm) {

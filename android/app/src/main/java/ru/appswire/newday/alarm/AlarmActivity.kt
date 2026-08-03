@@ -66,7 +66,10 @@ class AlarmActivity : Activity() {
         Log.i("NewDayAlarm", "Экран отключения: будильник=" + id + ", задач=" + tasks.size)
 
         buildUi()
-        showTask()
+        // Время мягкого начала считает сервис — экран мог открыться с задержкой,
+        // и свой отсчёт с нуля показал бы окно длиннее настоящего
+        val graceLeftMs = AlarmService.graceUntilMs - System.currentTimeMillis()
+        if (config.graceEnabled && graceLeftMs > 0) showGrace(graceLeftMs) else showTask()
     }
 
     /** Окно поверх локскрина с включением экрана. */
@@ -162,6 +165,44 @@ class AlarmActivity : Activity() {
         setContentView(root)
     }
 
+    // ── Мягкое начало ────────────────────────────────────────
+
+    /**
+     * Пока идёт окно — одна большая кнопка «Выключить» и обратный отсчёт.
+     *
+     * Так выглядит случай «я уже встал»: будильник звучит тихо, выключается
+     * одним нажатием. Когда отсчёт дойдёт до нуля, экран сам превратится в
+     * задачи — это ровно тот момент, когда стало ясно, что человек спит.
+     */
+    private fun showGrace(leftMs: Long) {
+        progressView.text = "МОЖНО ПРОСТО ВЫКЛЮЧИТЬ"
+        promptView.text = ""
+        answerArea.removeAllViews()
+        answerArea.addView(
+            Button(this).apply {
+                text = "Выключить"
+                isAllCaps = false      // «ВЫКЛЮЧИТЬ» капсом читается как крик
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+                setOnClickListener { dismiss() }
+                layoutParams = LinearLayout.LayoutParams(MATCH, dp(76))
+            },
+        )
+
+        timer?.cancel()
+        timer = object : CountDownTimer(leftMs, 1000) {
+            override fun onTick(msLeft: Long) {
+                val s = msLeft / 1000
+                timerView.text = "через " + (s / 60) + ":" + String.format(Locale.US, "%02d", s % 60) +
+                    " придётся решать задачу"
+            }
+            override fun onFinish() {
+                Log.i("NewDayAlarm", "GRACE_EXPIRED окно простого выключения истекло")
+                timerView.text = ""
+                showTask()
+            }
+        }.start()
+    }
+
     // ── Задачи ───────────────────────────────────────────────
 
     private fun showTask() {
@@ -169,6 +210,7 @@ class AlarmActivity : Activity() {
         if (index >= tasks.size) { dismiss(); return }
 
         val task = tasks[index]
+        Log.i("NewDayAlarm", "TASK_SHOWN задача " + (index + 1) + " из " + tasks.size)
         progressView.text = "ЗАДАЧА " + (index + 1) + " ИЗ " + tasks.size
         promptView.text = task.prompt
         answerArea.removeAllViews()
@@ -285,7 +327,12 @@ class AlarmActivity : Activity() {
     // ── Выход ────────────────────────────────────────────────
 
     private fun dismiss() {
-        Log.i("NewDayAlarm", "Будильник выключен, задач решено: " + index)
+        val inGrace = AlarmService.graceUntilMs > System.currentTimeMillis()
+        Log.i(
+            "NewDayAlarm",
+            if (inGrace) "GRACE_DISMISS будильник выключен в мягком начале, без задач"
+            else "Будильник выключен, задач решено: " + index,
+        )
         timer?.cancel()
         startService(Intent(this, AlarmService::class.java).apply { action = AlarmService.ACTION_STOP })
         openApp()

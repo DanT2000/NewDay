@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Сценарии, в которых будильник обязан сработать.
+# Сценарии, в которых будильник обязан сработать, и проверка мягкого начала.
 #   bash tools/alarm-emulator-test.sh [--with-reboot]
 #
 # Требуется запущенный эмулятор или подключённый телефон и установленный APK.
@@ -16,10 +16,20 @@ set -u
 ADB="${LOCALAPPDATA}/Android/Sdk/platform-tools/adb.exe"
 PKG=ru.appswire.newday
 WITH_REBOOT=0
-[ "${1:-}" = "--with-reboot" ] && WITH_REBOOT=1
+ONLY=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --with-reboot) WITH_REBOOT=1 ;;
+    --only) shift; ONLY=",${1}," ;;   # --only 7,8,9 — гонять только эти сценарии
+  esac
+  shift
+done
 
 PASS=0
 FAIL=0
+
+# нужен ли сценарий номер N
+want() { [ -z "$ONLY" ] || [ "${ONLY#*,$1,}" != "$ONLY" ]; }
 
 # «Поверх других приложений» — без него система блокирует поднятие экрана
 # будильника из фона на разблокированном телефоне. На устройстве это
@@ -28,19 +38,159 @@ FAIL=0
 
 restart() {
   "$ADB" shell am force-stop $PKG >/dev/null 2>&1
+  "$ADB" logcat -c >/dev/null 2>&1
   "$ADB" shell am start -n $PKG/.MainActivity >/dev/null 2>&1
-  sleep 6
+  # Приложение при запуске само отправляет свои будильники в систему, и этот
+  # вызов заменяет весь список. Если он придёт после тестового будильника,
+  # тестовый будет снят. Поэтому ждём его — или сдаёмся через 25 с.
+  local waited=0
+  sleep 5
+  while [ "$waited" -lt 20 ]; do
+    if "$ADB" logcat -d -s NewDayAlarm 2>&1 | grep -q "SYNCED"; then break; fi
+    sleep 2
+    waited=$((waited + 2))
+  done
 }
 
-# fire <delaySec> — ставит тестовый будильник через настоящий плагин
-fire() {
+cdp() {
   local pid
   pid=$("$ADB" shell pidof $PKG | tr -d '\r')
   "$ADB" forward --remove-all >/dev/null 2>&1
   "$ADB" forward tcp:9222 localabstract:webview_devtools_remote_"$pid" >/dev/null 2>&1
   sleep 1
+}
+
+# fire <delaySec> [profile] — ставит тестовый будильник через настоящий плагин
+fire() {
+  cdp
   node tools/webview-eval.js \
-    "Capacitor.Plugins.NewDayAlarm.testAlarm({ delaySec: $1, profile: 'gentle' })" >/dev/null 2>&1
+    "Capacitor.Plugins.NewDayAlarm.testAlarm({ delaySec: $1, profile: '${2:-gentle}' })" >/dev/null 2>&1
+}
+
+# grace <секунды|off> — задаёт мягкое начало.
+#
+# Пишем в двух местах, и оба нужны. Настройки на сервере — источник истины,
+# приложение периодически синхронизируется и затирает локальное значение
+# серверным; без записи на сервер сценарий проверял бы значение по умолчанию,
+# думая, что проверяет заданное. setConfig — чтобы значение подействовало сразу,
+# не дожидаясь следующей синхронизации.
+grace() {
+  cdp
+  local on=true sec=${1} got
+  [ "$1" = "off" ] && { on=false; sec=60; }
+  node tools/webview-eval.js \
+    "fetch(localStorage.getItem('newday.apiBase') + '/api/v1/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('newday.deviceToken') }, body: JSON.stringify({ settings: { alarmGraceEnabled: $on, alarmGraceSec: $sec } }) }).then(r => 'settings ' + r.status)" >/dev/null 2>&1
+  got=$(node tools/webview-eval.js \
+    "Capacitor.Plugins.NewDayAlarm.setConfig({ config: { graceEnabled: $on, graceSec: $sec, types: ['math'], count: 1, difficulty: 1, timeoutSec: 30, snoozeAllowed: false, volumeRamp: false } }).then(r => 'grace=' + r.config.graceEnabled + '/' + r.config.graceSec)" 2>/dev/null | tail -1)
+  # Настройка, молча не применившаяся, — худший вид провала: сценарий пройдёт
+  # мимо того, что проверял. Поэтому печатаем, что реально записалось.
+  echo "      настройка: $got"
+}
+
+# ждёт экран будильника, НЕ трогая приложение: дальше с экраном ещё работают
+await_screen() {
+  local deadline=$1 waited=0
+  while [ "$waited" -lt "$deadline" ]; do
+    if "$ADB" shell dumpsys activity activities 2>/dev/null | grep -q "AlarmActivity"; then
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  return 1
+}
+
+# check <название> <0|1 результат>
+check() {
+  if [ "$2" = "0" ]; then
+    echo "  + $1"
+    PASS=$((PASS + 1))
+  else
+    echo "  - $1  ПРОВАЛ"
+    FAIL=$((FAIL + 1))
+    "$ADB" logcat -d -s NewDayAlarm 2>&1 | tail -6 | sed 's/^/      /'
+  fi
+  "$ADB" shell am force-stop $PKG >/dev/null 2>&1
+}
+
+# Снимок экрана в файл. Через `adb shell cat` кириллица по пути портится,
+# поэтому файл вытягиваем и читаем локально.
+#
+# MSYS_NO_PATHCONV обязателен: без него Git Bash превращает /sdcard/ui.xml
+# в windows-путь, дамп уходит мимо устройства, а проверки читают пустоту
+# и молча не находят ничего — то есть провал выглядит как настоящий.
+#
+# Путь назначения — windows-вида: adb.exe принимает только его, а posix-путь
+# из mktemp он превращает в C:\tmp\… и молча ничего не сохраняет.
+UI_POSIX=$(mktemp -t newday-ui-XXXXXX)
+UI_WIN=$(cygpath -w "$UI_POSIX" 2>/dev/null || echo "$UI_POSIX")
+dump_ui() {
+  MSYS_NO_PATHCONV=1 "$ADB" shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
+  MSYS_NO_PATHCONV=1 "$ADB" pull /sdcard/ui.xml "$UI_WIN" >/dev/null 2>&1
+}
+
+# Есть ли на экране такой текст. LC_ALL=C и -a: файл сравниваем побайтово,
+# иначе grep в msys падает на нём с Aborted.
+on_screen() {
+  dump_ui
+  LC_ALL=C grep -aqF "$1" "$UI_POSIX"
+}
+
+# ищет на экране кнопку с текстом и нажимает её
+tap_text() {
+  dump_ui
+  local bounds
+  bounds=$(tr '>' '\n' < "$UI_POSIX" \
+    | LC_ALL=C grep -aF "text=\"$1\"" \
+    | LC_ALL=C grep -ao 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | head -1)
+  if [ -z "$bounds" ]; then
+    # Запасной путь: кнопка на этом экране единственная фокусируемая, так что
+    # её можно нажать с клавиатуры, не зная координат.
+    echo "      кнопки «$1» в дампе нет, нажимаю с клавиатуры"
+    "$ADB" shell input keyevent KEYCODE_TAB >/dev/null 2>&1
+    sleep 1
+    "$ADB" shell input keyevent KEYCODE_ENTER >/dev/null 2>&1
+    return 0
+  fi
+  local nums x y
+  nums=$(echo "$bounds" | grep -o '[0-9]*' | tr '\n' ' ')
+  # shellcheck disable=SC2086
+  set -- $nums
+  x=$(( ($1 + $3) / 2 ))
+  y=$(( ($2 + $4) / 2 ))
+  "$ADB" shell input tap "$x" "$y" >/dev/null 2>&1
+}
+
+# есть ли строка в логе будильника
+logged() {
+  "$ADB" logcat -d -s NewDayAlarm 2>&1 | grep -qF "$1"
+}
+
+# Громкость потока будильника (stream 4).
+#
+# Раньше здесь было `adb shell media volume`, которого на этом образе просто
+# нет: команда молча не находилась, громкость не менялась, и сценарий
+# «беззвучный режим» проходил, ничего не проверив. Отсюда и проверка ниже —
+# что приложение действительно вывело громкость из нуля.
+alarm_volume() {
+  "$ADB" shell cmd media_session volume --stream 4 --get 2>&1 \
+    | tr -d '\r' | LC_ALL=C grep -ao 'volume is [0-9]*' | grep -o '[0-9]*' | head -1
+}
+
+# Диапазон потока будильника — «volume is 7 in range [1..7]».
+# Нижняя граница не ноль: поток будильника в Android заглушить нельзя,
+# и именно поэтому беззвучный режим на него не влияет.
+alarm_volume_range() {
+  "$ADB" shell cmd media_session volume --stream 4 --get 2>&1 \
+    | tr -d '\r' | LC_ALL=C grep -ao 'range \[[0-9]*\.\.[0-9]*\]' | head -1
+}
+
+set_alarm_volume() {
+  "$ADB" shell cmd media_session volume --stream 4 --set "$1" >/dev/null 2>&1
+}
+
+set_ring_volume() {
+  "$ADB" shell cmd media_session volume --stream 2 --set "$1" >/dev/null 2>&1
 }
 
 # await <секунд> <название> — ждёт появления экрана будильника.
@@ -66,27 +216,69 @@ await_alarm() {
   return 1
 }
 
+if want 1; then
 echo "== 1. Заблокированный экран =="
 restart; fire 10
 "$ADB" shell input keyevent KEYCODE_SLEEP
 await_alarm 45 "экран погашен и заблокирован"
 
-echo "== 2. Беззвучный режим =="
-restart
-"$ADB" shell cmd notification set_dnd off >/dev/null 2>&1
-"$ADB" shell media volume --stream 2 --set 0 >/dev/null 2>&1
-fire 10
-"$ADB" shell input keyevent KEYCODE_SLEEP
-await_alarm 45 "беззвучный режим"
+fi
 
-echo "== 3. Не беспокоить =="
+if want 2; then
+echo "== 2. Громкостью распоряжается приложение, а не система =="
+# Задать громкость снаружи на этом образе нельзя: и `cmd media_session volume
+# --set`, и `settings put`, и клавиши громкости молча ничего не меняют —
+# работает только чтение. Поэтому проверяем то, что проверяемо и что как раз
+# и означает «звук выключен, а будильник слышно»: приложение само выставляет
+# громкость потока будильника — тихо в мягком начале и на максимум после.
+# Сравнение двух замеров исключает пустую проверку «максимум равен максимуму».
+restart
+grace 12
+"$ADB" logcat -c >/dev/null 2>&1
+fire 8
+"$ADB" shell am kill $PKG >/dev/null 2>&1
+"$ADB" shell input keyevent KEYCODE_SLEEP
+if await_screen 45; then
+  sleep 2
+  quiet=$(alarm_volume)
+  sleep 14
+  loud=$(alarm_volume)
+  echo "      громкость: тихая фаза $quiet → после окна $loud, $(alarm_volume_range)"
+  if [ -n "$quiet" ] && [ -n "$loud" ] && [ "$loud" -gt "$quiet" ]; then
+    check "приложение подняло громкость с $quiet до $loud при убитом приложении" 0
+  else
+    check "приложение управляет громкостью потока будильника" 1
+  fi
+else
+  check "экран будильника поднялся" 1
+fi
+restart; grace 60
+
+fi
+
+if want 3; then
+echo "== 3. Полная тишина: «Не беспокоить» без исключений =="
 restart
 "$ADB" shell cmd notification set_dnd on >/dev/null 2>&1
+sleep 2
+# zen_mode: 0 — выключен, 2 — полная тишина. Проверяем, что режим действительно
+# включился: если команда не сработает, сценарий пройдёт, ничего не проверив.
+zen=$("$ADB" shell settings get global zen_mode 2>/dev/null | tr -d '\r')
+echo "      zen_mode=$zen (2 — полная тишина)"
+"$ADB" logcat -c >/dev/null 2>&1
 fire 10
+"$ADB" shell am kill $PKG >/dev/null 2>&1
 "$ADB" shell input keyevent KEYCODE_SLEEP
-await_alarm 45 "режим Не беспокоить"
+if [ "$zen" = "2" ] && await_screen 45; then
+  check "звонит в режиме полной тишины при убитом приложении" 0
+else
+  check "звонит в режиме полной тишины (zen_mode=$zen)" 1
+fi
 "$ADB" shell cmd notification set_dnd off >/dev/null 2>&1
 
+fi
+
+if want 4; then
 echo "== 4. Глубокий сон системы (Doze) =="
 restart; fire 14
 "$ADB" shell input keyevent KEYCODE_SLEEP
@@ -96,12 +288,18 @@ await_alarm 45 "Doze"
 "$ADB" shell dumpsys deviceidle unforce >/dev/null 2>&1
 "$ADB" shell dumpsys battery reset >/dev/null 2>&1
 
+fi
+
+if want 5; then
 echo "== 5. Процесс убит (смахнули из недавних) =="
 restart; fire 16
 "$ADB" shell am kill $PKG >/dev/null 2>&1
 "$ADB" shell input keyevent KEYCODE_SLEEP
 await_alarm 45 "процесс убит"
 
+fi
+
+if want 6; then
 echo "== 6. Без сети =="
 restart
 "$ADB" shell svc wifi disable >/dev/null 2>&1
@@ -112,8 +310,87 @@ await_alarm 45 "сети нет"
 "$ADB" shell svc wifi enable >/dev/null 2>&1
 "$ADB" shell svc data enable >/dev/null 2>&1
 
+fi
+
+# ── Мягкое начало ──────────────────────────────────────────────
+# Проверяем в самых злых условиях сразу: звук выключен, «Не беспокоить»
+# включён, приложение убито, экран погашен и заблокирован.
+
+if want 7; then
+echo "== 7. Мягкое начало: выключается одной кнопкой, без задач =="
+restart
+grace 120
+"$ADB" shell cmd notification set_dnd on >/dev/null 2>&1
+set_alarm_volume 0 >/dev/null 2>&1
+"$ADB" logcat -c >/dev/null 2>&1
+fire 10
+"$ADB" shell am kill $PKG >/dev/null 2>&1
+"$ADB" shell input keyevent KEYCODE_SLEEP
+if await_screen 60; then
+  sleep 2
+  tap_text "Выключить"
+  sleep 3
+  if logged "GRACE_DISMISS" \
+     && ! "$ADB" shell dumpsys activity activities 2>/dev/null | grep -q "AlarmActivity"; then
+    check "выключился одним нажатием при выключенном звуке и убитом приложении" 0
+  else
+    check "выключился одним нажатием при выключенном звуке и убитом приложении" 1
+  fi
+else
+  check "экран будильника поднялся (мягкое начало)" 1
+fi
+"$ADB" shell cmd notification set_dnd off >/dev/null 2>&1
+
+fi
+
+if want 8; then
+echo "== 8. Окно кончилось — громкость вверх и появляются задачи =="
+restart
+grace 10
+set_alarm_volume 0 >/dev/null 2>&1
+"$ADB" logcat -c >/dev/null 2>&1
+fire 8
+"$ADB" shell am kill $PKG >/dev/null 2>&1
+"$ADB" shell input keyevent KEYCODE_SLEEP
+if await_screen 60; then
+  sleep 14
+  vol=$(alarm_volume)
+  if logged "GRACE_END" && logged "GRACE_EXPIRED" && on_screen "ЗАДАЧА"; then
+    echo "      громкость будильника после окна: $vol"
+    check "задачи появились сами, громкость поднята" 0
+  else
+    check "задачи появились сами, громкость поднята" 1
+  fi
+else
+  check "экран будильника поднялся (эскалация)" 1
+fi
+
+fi
+
+if want 9; then
+echo "== 9. Мягкое начало выключено — задачи сразу =="
+restart
+grace off
+"$ADB" logcat -c >/dev/null 2>&1
+fire 8
+"$ADB" shell am kill $PKG >/dev/null 2>&1
+"$ADB" shell input keyevent KEYCODE_SLEEP
+if await_screen 60; then
+  sleep 2
+  if on_screen "ЗАДАЧА" && ! logged "GRACE_START"; then
+    check "без окна задачи показываются сразу" 0
+  else
+    check "без окна задачи показываются сразу" 1
+  fi
+else
+  check "экран будильника поднялся (без окна)" 1
+fi
+restart; grace 60   # возвращаем значение по умолчанию
+
+fi
+
 if [ "$WITH_REBOOT" = "1" ]; then
-  echo "== 7. Перезагрузка устройства =="
+  echo "== 10. Перезагрузка устройства =="
   restart; fire 150          # запас на перезагрузку эмулятора
   "$ADB" reboot
   "$ADB" wait-for-device

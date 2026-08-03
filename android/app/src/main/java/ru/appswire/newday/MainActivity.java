@@ -1,5 +1,6 @@
 package ru.appswire.newday;
 
+import android.content.pm.ApplicationInfo;
 import android.os.Bundle;
 import android.webkit.WebView;
 
@@ -21,9 +22,13 @@ public class MainActivity extends BridgeActivity {
          *
          * Она открывает содержимое страницы любому, кто может выполнить adb
          * на этом телефоне, а там в localStorage лежит токен устройства —
-         * то есть полный доступ к дням человека. Нужна она только тестам,
-         * поэтому в релизе выключена.
+         * то есть полный доступ к дням человека. Нужна она только живым тестам
+         * будильника, поэтому в релизе выключена.
+         *
+         * Признак берём из флага пакета, а не из BuildConfig: он не требует
+         * включать генерацию BuildConfig и означает ровно то же самое.
          */
-        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
+        boolean debuggable = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+        WebView.setWebContentsDebuggingEnabled(debuggable);
     }
 }

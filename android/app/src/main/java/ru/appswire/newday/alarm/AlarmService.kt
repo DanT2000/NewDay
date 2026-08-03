@@ -48,6 +48,18 @@ class AlarmService : Service() {
         var currentAlarmId: Long = -1
             private set
 
+        /**
+         * До какого момента идёт мягкое начало (мс эпохи), 0 — его нет.
+         *
+         * Владелец времени — сервис, а не экран: если система не даст поднять
+         * окно, тихая фаза всё равно должна закончиться и будильник — заорать.
+         * Экран только читает это значение, поэтому обратный отсчёт на экране
+         * совпадает с реальностью, даже если окно открылось с задержкой.
+         */
+        @Volatile
+        var graceUntilMs: Long = 0L
+            private set
+
         fun createChannels(ctx: Context) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
             val nm = ctx.getSystemService(NotificationManager::class.java)
@@ -97,9 +109,12 @@ class AlarmService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification(found))
 
         if (found.isAlarm) {
+            val cfg = AlarmStore.config(this)
+            val grace = cfg.effectiveGraceSec
+            graceUntilMs = if (grace > 0) System.currentTimeMillis() + grace * 1000L else 0L
             acquireWakeLock()
             startSound(found)
-            startVibration(found)
+            startVibration(found, gentle = grace > 0)
             launchDismissScreen(found)
         } else {
             // обычное напоминание: показали и ушли
@@ -166,6 +181,35 @@ class AlarmService : Service() {
             Log.e("NewDayAlarm", "Не удалось запустить звук: " + e.message)
         }
 
+        val grace = cfg.effectiveGraceSec
+        if (grace > 0) {
+            // Тихое начало: слышно, но не подбрасывает. Кто уже встал — просто
+            // выключит, кто спит — дождётся полной громкости.
+            val max = am.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+            am.setStreamVolume(
+                AudioManager.STREAM_ALARM,
+                (max * 0.15).toInt().coerceAtLeast(1), 0,
+            )
+            val handler = Handler(Looper.getMainLooper())
+            rampHandler = handler
+            handler.postDelayed({ escalate(a, cfg) }, grace * 1000L)
+            Log.i("NewDayAlarm", "GRACE_START мягкое начало: " + grace + " с тихо")
+        } else {
+            goLoud(a, cfg, am)
+        }
+    }
+
+    /** Окно кончилось: громкость вверх, вибрация настойчивее, задачи обязательны. */
+    private fun escalate(a: Alarm, cfg: DismissConfig) {
+        if (currentAlarmId != a.id) return   // будильник уже выключили
+        graceUntilMs = 0L
+        Log.i("NewDayAlarm", "GRACE_END мягкое начало кончилось — будим по-настоящему")
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        goLoud(a, cfg, am)
+        startVibration(a, gentle = false)
+    }
+
+    private fun goLoud(a: Alarm, cfg: DismissConfig, am: AudioManager) {
         val max = am.getStreamMaxVolume(AudioManager.STREAM_ALARM)
         if (cfg.volumeRamp && a.isWakeup) {
             // резкий максимум в 6 утра жесток, тихий будильник не будит —
@@ -188,14 +232,23 @@ class AlarmService : Service() {
         }
     }
 
-    private fun startVibration(a: Alarm) {
+    /**
+     * gentle — короткая деликатная вибрация мягкого начала; иначе рабочий
+     * рисунок профиля. Повторный вызов заменяет предыдущий рисунок.
+     */
+    private fun startVibration(a: Alarm, gentle: Boolean) {
+        vibrator?.cancel()
         vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
         } else {
             @Suppress("DEPRECATION")
             getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         }
-        val pattern = if (a.isWakeup) longArrayOf(0, 600, 400, 600, 400) else longArrayOf(0, 300, 300)
+        val pattern = when {
+            gentle -> longArrayOf(0, 200, 1800)
+            a.isWakeup -> longArrayOf(0, 600, 400, 600, 400)
+            else -> longArrayOf(0, 300, 300)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             vibrator?.vibrate(VibrationEffect.createWaveform(pattern, 0))
         } else {
@@ -251,6 +304,7 @@ class AlarmService : Service() {
         if (wakeLock?.isHeld == true) wakeLock?.release()
         wakeLock = null
         currentAlarmId = -1
+        graceUntilMs = 0L
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
