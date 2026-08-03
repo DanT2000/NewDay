@@ -23,6 +23,7 @@ import { renderHabitsToday } from './views/habits-today.js';
 import { openPrintDialog, printHead, printLines } from './views/print.js';
 import { syncAlarms, available as nativeAvailable } from './native.js';
 import { mountInstallBanner } from './install-banner.js';
+import * as appUpdate from './update.js';
 
 const els = {};
 let taskTab = 'work';
@@ -295,6 +296,9 @@ async function boot() {
   await go(/^\d{4}-\d{2}-\d{2}$/.test(fromHash) ? fromHash : today());
   startClock();
   mountInstallBanner();
+  // Проверка обновления — после того, как день отрисован: вопрос об обновлении
+  // не должен задерживать показ расписания
+  appUpdate.check('startup').catch(() => { /* фоновая проверка молчит */ });
   window.addEventListener('hashchange', () => {
     const d = location.hash.slice(1) || today();
     if (d !== state.date && /^\d{4}-\d{2}-\d{2}$/.test(d)) go(d);

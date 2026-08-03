@@ -2,4 +2,11 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <external-path name="my_images" path="." />
     <cache-path name="my_cache_images" path="." />
+
+    <!--
+        Скачанное обновление. Установщику пакетов нужен content://-адрес:
+        file:// он с Android 7 не принимает вовсе. Каталог внутри приложения,
+        поэтому разрешения на внешнюю память не нужны.
+    -->
+    <files-path name="updates" path="updates/" />
 </paths>

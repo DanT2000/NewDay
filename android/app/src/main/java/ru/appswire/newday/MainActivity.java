@@ -8,12 +8,14 @@ import com.getcapacitor.BridgeActivity;
 
 import ru.appswire.newday.alarm.AlarmPlugin;
 import ru.appswire.newday.alarm.AlarmService;
+import ru.appswire.newday.update.UpdatePlugin;
 
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
-        // Плагин регистрируется до super: иначе мост его не увидит
+        // Плагины регистрируются до super: иначе мост их не увидит
         registerPlugin(AlarmPlugin.class);
+        registerPlugin(UpdatePlugin.class);
         super.onCreate(savedInstanceState);
         AlarmService.Companion.createChannels(this);
 

@@ -20,7 +20,10 @@ const pushRouter = require('./routes/v1/push');
 const settingsRouter = require('./routes/v1/settings');
 const exportRouter = require('./routes/v1/export');
 const openapiRouter = require('./routes/v1/openapi');
+const appVersionRouter = require('./routes/v1/app');
 const legacyRouter = require('./routes/legacy');
+const { apkStore } = require('./services/apkStore');
+const { updateService } = require('./services/updateService');
 
 function createApp({ db, config }) {
   const app = express();
@@ -57,11 +60,23 @@ function createApp({ db, config }) {
   app.locals.push = push;
   app.locals.notify = notify;
 
+  const store = apkStore({ dir: config.apkDir });
+  const update = updateService(config, { store });
+  app.locals.apkStore = store;
+  app.locals.update = update;
+
   app.use('/api/health', healthRouter(db));
   // Спецификация и документация доступны без входа
   app.use('/api/v1', openapiRouter({ config }));
   app.get('/api/docs', (_req, res) => res.sendFile(path.join(__dirname, '../public/api-docs.html')));
   app.use('/api/v1/auth', authRouter({ db, config, mailer, auth }));
+
+  /**
+   * Версия и раздача приложения — до требования входа: приложение узнаёт
+   * о новой версии ещё на экране входа, а ссылку на скачивание человек
+   * открывает в браузере телефона, где сессии этого сайта нет.
+   */
+  app.use('/api/v1/app', appVersionRouter({ config, store, update }));
 
   // Старые пути — до конца этапа 2, пока фронтенд не переписан.
   app.use('/api/auth', authRouter({ db, config, mailer, auth }));

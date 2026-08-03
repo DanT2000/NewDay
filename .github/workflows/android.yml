@@ -86,12 +86,47 @@ jobs:
           mv "$APK" "android/app/build/outputs/apk/release/NewDay-$NEWDAY_VERSION_NAME.apk"
           rm -f "$NEWDAY_KEYSTORE"
 
+      # Главный адрес раздачи — сам сайт: приложение обновляется со своего
+      # сервера, и человеку не нужен доступ к репозиторию. Выкладываем сразу
+      # после сборки, чтобы «новая версия» и «новая версия на сайте» были
+      # одним событием.
+      - name: Выложить APK на сайт
+        env:
+          SITE: ${{ secrets.APK_UPLOAD_URL }}
+          TOKEN: ${{ secrets.APK_UPLOAD_TOKEN }}
+        run: |
+          if [ -z "$SITE" ] || [ -z "$TOKEN" ]; then
+            echo "::warning::APK_UPLOAD_URL или APK_UPLOAD_TOKEN не заданы — APK останется только в релизе"
+            exit 0
+          fi
+          APK="android/app/build/outputs/apk/release/NewDay-$NEWDAY_VERSION_NAME.apk"
+          CODE=$(curl -sS -o /tmp/upload.json -w '%{http_code}' \
+            -X POST "$SITE/api/v1/app/upload?versionName=$NEWDAY_VERSION_NAME" \
+            -H "X-Upload-Token: $TOKEN" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary "@$APK")
+          cat /tmp/upload.json; echo
+          # 409 — на сайте уже лежит версия не старше этой. Это не авария
+          # сборки: перезапуск того же тега не должен ронять workflow.
+          if [ "$CODE" = "200" ]; then
+            echo "выложено на $SITE"
+          elif [ "$CODE" = "409" ]; then
+            echo "::warning::на сайте уже версия не старше — оставляем как есть"
+          else
+            echo "::error::выкладка не удалась, код $CODE"
+            exit 1
+          fi
+
+      # Релиз на GitHub — альтернатива: удобно, когда репозиторий открыт,
+      # но приложение обновляется не отсюда.
       - name: Приложить APK к релизу
         uses: softprops/action-gh-release@v2
         with:
           files: android/app/build/outputs/apk/release/NewDay-*.apk
           body: |
-            Скачайте APK ниже или соберите сами.
+            Приложение обновляется само: при запуске оно спрашивает сервер,
+            нет ли версии новее. Этот файл — на случай первой установки
+            или установки вручную.
 
             Установка: разрешите установку из неизвестных источников,
             затем откройте файл. При первом запуске укажите адрес своего

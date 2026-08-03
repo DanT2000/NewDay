@@ -85,6 +85,13 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!--
+        Установка обновления. Без этого разрешения система не даст приложению
+        даже предложить установку скачанного APK. Само разрешение установку
+        не выполняет: человек всё равно подтверждает её в системном окне.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- Будильник -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />

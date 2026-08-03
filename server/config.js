@@ -1,11 +1,21 @@
 const path = require('node:path');
+const os = require('node:os');
 
 function loadConfig(env = process.env) {
   const smtpHost = env.SMTP_HOST || '';
+  const dbPath = env.DB_PATH || path.join(__dirname, '../data/newday.db');
+  // APK лежит рядом с базой — в том же постоянном томе, чтобы переживать
+  // пересборку контейнера. Для базы в памяти (тесты) кладём в temp.
+  const apkDir = env.APK_DIR || (dbPath === ':memory:'
+    ? path.join(os.tmpdir(), 'newday-apk')
+    : path.join(path.dirname(dbPath), 'apk'));
   return {
     nodeEnv: env.NODE_ENV || 'development',
     port: Number(env.PORT || 3000),
-    dbPath: env.DB_PATH || path.join(__dirname, '../data/newday.db'),
+    dbPath,
+    apkDir,
+    // Токен для выкладки APK из CI. Пока не задан — эндпоинт выкладки закрыт.
+    apkUploadToken: env.APK_UPLOAD_TOKEN || '',
     sessionSecret: env.SESSION_SECRET || 'newday-dev-secret-change-in-production',
     appUrl: (env.APP_URL || 'http://localhost:3000').replace(/\/+$/, ''),
     trustProxy: env.TRUST_PROXY !== '0',
@@ -14,6 +24,22 @@ function loadConfig(env = process.env) {
       privateKey: env.VAPID_PRIVATE_KEY,
       subject: env.VAPID_SUBJECT || `mailto:${env.SMTP_FROM || 'admin@example.com'}`,
     } : null,
+    /**
+     * Обновление Android-приложения.
+     *
+     * Основной путь — APK, выложенный на этот же сайт: приложение обновляется
+     * со своего сервера, и ничей чужой репозиторий для этого не нужен.
+     * UPDATE_APK_URL — если файл раздаётся откуда-то ещё, UPDATE_REPO —
+     * запасной вариант через релизы GitHub (по умолчанию выключен).
+     */
+    update: {
+      enabled: env.UPDATE_DISABLED !== '1',
+      repo: env.UPDATE_REPO || '',
+      apkUrl: env.UPDATE_APK_URL || '',
+      versionName: env.UPDATE_VERSION_NAME || '',
+      versionCode: env.UPDATE_VERSION_CODE ? Number(env.UPDATE_VERSION_CODE) : 0,
+      notes: env.UPDATE_NOTES || '',
+    },
     smtp: smtpHost
       ? {
           host: smtpHost,

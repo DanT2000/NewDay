@@ -35,9 +35,16 @@
               звонит в беззвучном режиме и при «Не беспокоить», поднимает экран поверх
               блокировки и требует решить задачу, чтобы выключиться.
             </p>
-            <a class="btn btn-primary" id="apk-link" href="#" target="_blank" rel="noopener">
-              Скачать APK из релизов
+            <a class="btn btn-primary" id="apk-link" href="/api/v1/app/download">
+              Скачать APK
             </a>
+            <p class="small" id="apk-version"></p>
+            <p class="small">
+              Дальше приложение обновляется само: при запуске оно спрашивает сервер,
+              нет ли версии новее, и предлагает обновиться. Отложить можно —
+              вопрос вернётся на следующий день, а проверить вручную получится
+              в <b>Настройках</b> в любой момент.
+            </p>
             <p class="small">
               После установки при первом запуске укажите адрес сервера — по умолчанию
               подставлен этот сайт. Затем зайдите в <b>Настройки → Будильник</b>
@@ -98,9 +105,28 @@ cd android &amp;&amp; ./gradlew assembleDebug</pre>
   </div>
 
   <script>
-    // Ссылка ведёт в релизы GitHub: держать пятимегабайтный бинарник
-    // в открытом репозитории смысла нет, а собирает его CI по тегу
-    document.getElementById('apk-link').href = 'https://github.com/DanT2000/NewDay/releases/latest';
+    /*
+     * Файл раздаёт сам сайт: приложению не нужен доступ к репозиторию, а
+     * человеку — учётная запись на GitHub. Если на сервере APK ещё не выложен,
+     * честно говорим об этом и гасим кнопку, а не отправляем в 404.
+     */
+    fetch('/api/v1/app/version', { headers: { Accept: 'application/json' } })
+      .then(r => r.json())
+      .then(({ latest }) => {
+        const note = document.getElementById('apk-version');
+        const link = document.getElementById('apk-link');
+        if (!latest) {
+          note.textContent = 'На этом сервере APK пока не выложен — соберите приложение сами, как ниже.';
+          link.setAttribute('aria-disabled', 'true');
+          link.style.opacity = '.5';
+          link.style.pointerEvents = 'none';
+          return;
+        }
+        const mb = latest.sizeBytes ? ' · ' + (latest.sizeBytes / 1048576).toFixed(1).replace('.', ',') + ' МБ' : '';
+        note.textContent = 'Версия ' + latest.versionName + mb;
+        if (latest.apkUrl && /^https?:/i.test(latest.apkUrl)) link.href = latest.apkUrl;
+      })
+      .catch(() => {});
   </script>
 </body>
 </html>

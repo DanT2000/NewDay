@@ -15,6 +15,7 @@ import { qrSvg } from './qr.js';
 import { formatShort, formatMinutes, parseTimeToMinutes } from './dates.js';
 import * as push from './push.js';
 import * as native from './native.js';
+import * as appUpdate from './update.js';
 
 const TIMEZONES = [
   'Europe/Kaliningrad', 'Europe/Moscow', 'Europe/Samara', 'Asia/Yekaterinburg',
@@ -430,8 +431,8 @@ function alarmSection() {
 }
 
 function appSection() {
-  // QR ведёт на страницу установки, а не на сам файл: APK лежит в релизах
-  // GitHub, и прямая ссылка на /downloads/NewDay.apk отдавала 404
+  // QR ведёт на страницу установки, а не на сам файл: там объяснено, чем
+  // приложение отличается от ярлыка и какие разрешения понадобятся
   const link = `${location.origin}/install.html`;
   return section('приложение для android',
     h('div.row', { style: { alignItems: 'flex-start', gap: 'var(--s-4)', flexWrap: 'wrap' } },
@@ -439,7 +440,57 @@ function appSection() {
       h('div.stack', { style: { flex: '1 1 220px' } },
         h('p.small', { text: 'Наведите камеру телефона — откроется страница установки. '
           + 'Приложение нужно ради будильника: в браузере его не бывает.' }),
-        h('a.btn.btn-primary', { href: '/install.html', text: 'Как поставить приложение' }))));
+        h('a.btn.btn-primary', { href: '/install.html', text: 'Как поставить приложение' }),
+        h('a.btn', { href: '/api/v1/app/download', text: 'Скачать APK' }))),
+    versionBlock());
+}
+
+/**
+ * Версия и обновление.
+ *
+ * В приложении показываем установленную версию и даём проверить обновление
+ * руками: при запуске вопрос можно было отложить, и должен быть способ
+ * вернуться к нему раньше следующего дня. В браузере версии приложения нет,
+ * поэтому там просто пишем, что лежит на сервере.
+ */
+function versionBlock() {
+  const line = h('div.small', { text: 'Проверяю…' });
+  const btn = h('button.btn.btn-sm', { text: 'Проверить обновление' });
+
+  const refresh = async (manual = false) => {
+    line.textContent = 'Проверяю…';
+    const [me, top] = await Promise.all([appUpdate.installed(), appUpdate.latest()]);
+    const parts = [];
+    if (me) parts.push(`установлена ${me.versionName}`);
+    parts.push(top ? `на сервере ${top.versionName}` : 'на сервере версия не выложена');
+    line.textContent = parts.join(' · ');
+
+    if (!me) return;
+    if (top && Number(top.versionCode) > Number(me.versionCode)) {
+      btn.textContent = `Обновить до ${top.versionName}`;
+      btn.classList.add('btn-primary');
+      btn.onclick = () => appUpdate.offer(me, top);
+      if (manual) appUpdate.offer(me, top);
+    } else {
+      btn.textContent = 'Проверить обновление';
+      btn.classList.remove('btn-primary');
+      btn.onclick = () => refresh(true);
+      if (manual) toast('Установлена последняя версия');
+    }
+  };
+
+  btn.onclick = () => refresh(true);
+  refresh();
+
+  return h('div',
+    h('div.divider', { style: { margin: 'var(--s-3) 0' } }),
+    h('span.eyebrow', { text: 'версия' }),
+    h('div.row', { style: { marginTop: '6px', gap: 'var(--s-2)', flexWrap: 'wrap' } }, line),
+    h('div.row', { style: { marginTop: 'var(--s-2)' } }, btn),
+    appUpdate.available()
+      ? h('span.small', { text: 'При запуске приложение само предложит обновиться. '
+          + '«Позже» отложит вопрос до следующего дня.' })
+      : null);
 }
 
 function devicesSection() {
