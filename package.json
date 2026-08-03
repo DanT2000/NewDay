@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "nodemon server/index.js",
+    "test": "node --test \"test/**/*.test.js\"",
     "cap:init": "npx cap init NewDay ru.appswire.newday --web-dir public",
     "cap:add:android": "npx cap add android",
     "cap:sync": "npx cap sync",
