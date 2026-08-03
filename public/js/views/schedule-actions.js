@@ -91,12 +91,12 @@ export function setRowTime(row, field, raw, input) {
 }
 
 export async function addRow(rows) {
+  // Новая строка продолжает предыдущую: окончание прошлой становится началом
+  // этой, а длительность человек выбирает сам — угадывать её неправильно
   const last = rows[rows.length - 1];
-  const startMin = last ? Math.min((last.end_min ?? last.start_min) || 0, 1380) : 9 * 60;
+  const startMin = last ? Math.min((last.end_min ?? last.start_min) || 0, 1439) : 9 * 60;
   try {
-    await api.schedule.create(state.date, {
-      startMin, endMin: Math.min(startMin + 60, 1439), title: '',
-    });
+    await api.schedule.create(state.date, { startMin, endMin: null, title: '' });
     await reloadDay();
     const inputs = document.querySelectorAll('.srow .stitle input');
     inputs[inputs.length - 1]?.focus();
@@ -146,12 +146,12 @@ export function openShift(row) {
 /** Полное меню строки. На таймлайне это единственный способ её править. */
 export function openRowMenu(row) {
   openSheet(row.title || 'Строка расписания', (body, { close }) => {
-    const timeStart = h('input.input.mono', {
-      value: formatMinutes(row.start_min), 'aria-label': 'Начало',
+    const timeStart = h('input.input.time-field', {
+      value: formatMinutes(row.start_min), 'aria-label': 'Начало', inputMode: 'numeric',
     });
-    const timeEnd = h('input.input.mono', {
+    const timeEnd = h('input.input.time-field', {
       value: row.end_min === null ? '' : formatMinutes(row.end_min),
-      placeholder: '—', 'aria-label': 'Окончание',
+      placeholder: '—', 'aria-label': 'Окончание', inputMode: 'numeric',
     });
     const title = h('input.input', { value: row.title, placeholder: 'Что делаем' });
 

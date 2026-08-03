@@ -21,6 +21,7 @@ import { renderTasks, renderMeals, renderSport } from './views/lists.js';
 import { renderProgress } from './views/progress.js';
 import { renderHabitsToday } from './views/habits-today.js';
 import { openPrintDialog, printHead, printLines } from './views/print.js';
+import { syncAlarms, available as nativeAvailable } from './native.js';
 
 const els = {};
 let taskTab = 'work';
@@ -30,12 +31,15 @@ let taskTab = 'work';
 function buildLayout() {
   const app = $('#app');
 
-  els.strip = h('div.grow');
+  // Полоска дней живёт в карточке дня, а не в верхней панели: всё,
+  // что относится к «какой это день», должно быть в одном месте,
+  // прямо над расписанием
+  els.strip = h('div.daynav');
   els.header = h('header.hdr',
     h('a.hdr-brand', { href: '/app.html' },
       h('img', { src: '/icons/logo-256.png', alt: '', width: 26, height: 26 }),
       h('b', { text: 'NewDay' })),
-    els.strip,
+    h('span.grow'),
     h('div.hdr-actions',
       h('button.icon-btn', {
         id: 'btn-theme', text: THEME_ICON[getTheme()],
@@ -67,6 +71,7 @@ function buildLayout() {
   els.printFood = h('div.print-bucket.no-screen', h('span.eyebrow', { text: 'питание' }), h('div'));
 
   const main = h('div.col',
+    els.strip,
     els.dayHead,
     h('section.card', { dataset: { print: 'schedule' } }, els.schedHead, els.schedule, els.printSchedule),
     h('section.card', { dataset: { print: 'tasks' } },
@@ -78,7 +83,8 @@ function buildLayout() {
       els.sport));
 
   const side = h('div.col',
-    h('section.card', { dataset: { print: 'progress' } }, els.progress),
+    // прогресс на бумаге не нужен: печатают план, а не итоги
+    h('section.card.no-print', { dataset: { print: 'progress' } }, els.progress),
     h('section.card', { dataset: { print: 'habits' } },
       h('div.card-hd',
         h('span.eyebrow', { text: 'привычки сегодня' }),
@@ -119,9 +125,8 @@ function renderDayHead() {
   replace(els.dayHead, 
     h('div.row',
       h('div.grow',
-        h('div.eyebrow', { text: state.date === today() ? 'сегодня' : 'день' }),
         h('input.bare.title', {
-          value: d.title, placeholder: formatLong(state.date),
+          value: d.title, placeholder: 'Заголовок дня',
           'aria-label': 'Заголовок дня',
           style: { marginTop: '2px' },
           oninput: e => saveTitle(e.target.value),
@@ -246,9 +251,23 @@ function renderAll() {
   renderSport(els.sport);
   renderProgress(els.progress);
   renderHabitsToday(els.habits);
+  scheduleNativeSync();
 }
 
 // ── Навигация ────────────────────────────────────────────────
+
+/**
+ * Будильники живут на устройстве, поэтому после каждой правки расписания
+ * список надо переотдать в систему. Делаем это не мешая интерфейсу.
+ */
+let syncTimer = null;
+function scheduleNativeSync() {
+  if (!nativeAvailable()) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => {
+    syncAlarms(state.user).catch(() => {});
+  }, 1200);
+}
 
 async function go(date) {
   location.hash = date === today() ? '' : `#${date}`;

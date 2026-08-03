@@ -51,6 +51,7 @@ const sanitizeTask = (body, { partial }) => pick(body, {
 const sanitizeMeal = (body, { partial }) => pick(body, {
   slot:      x => v.oneOf(x, SLOTS, { field: 'приём пищи', fallback: 'other' }),
   timeMin:   x => v.int(x, { min: 0, max: 1439, field: 'время', nullable: true }),
+  calories:  x => v.int(x, { min: 0, max: 20000, field: 'калории', nullable: true }),
   title:     x => v.str(x, { max: 200, field: 'название' }),
   note:      x => v.str(x, { max: 1000, field: 'заметка' }),
   done:      x => v.bool(x),

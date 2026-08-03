@@ -2,20 +2,21 @@
 <style>body{margin:0;font:12px system-ui}iframe{border:1px solid #999;height:900px;display:block}</style>
 </head><body>
 <script>
-const widths = [320, 360, 390, 430, 480, 600, 768];
+const widths = [320, 360, 390, 430, 480, 600, 768, 1024];
+const pages = ['app', 'habits', 'stats', 'settings'];
 const results = [];
 (async () => {
-  for (const w of widths) {
+  for (const page of pages) for (const w of widths) {
     const f = document.createElement('iframe');
-    f.width = w; f.src = '/app.html?diag=1';
+    f.width = w; f.src = '/' + page + '.html?diag=1';
     document.body.append(f);
     await new Promise(r => f.addEventListener('load', r, { once: true }));
     await new Promise(r => setTimeout(r, 2600));
     let t = '?';
     try { t = f.contentDocument.title; } catch (e) { t = 'нет доступа'; }
-    results.push(w + 'px → ' + t);
+    if (!t.includes(' OK')) results.push(page + ' ' + w + 'px → ' + t);
     f.remove();
   }
-  document.title = results.join('  ||  ');
+  document.title = results.length ? results.join('  ||  ') : 'ВСЁ ЧИСТО';
 })();
 </script></body></html>

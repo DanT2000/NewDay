@@ -4,7 +4,7 @@
  */
 
 import { h, clear, replace} from '../dom.js';
-import { addDays, weekdayShort, dayNumber, formatLong, rangeDates } from '../dates.js';
+import { addDays, weekdayShort, dayNumber, formatLong, formatShort, rangeDates, weekdayLong } from '../dates.js';
 import { state, today } from '../store.js';
 
 const SPAN = 3; // сколько дней показывать в каждую сторону
@@ -19,6 +19,11 @@ export function renderDateStrip(root, onPick) {
       text: '‹', title: 'Предыдущий день', 'aria-label': 'Предыдущий день',
       onclick: () => onPick(addDays(cur, -1)),
     }),
+    // Дата словами рядом со стрелками: без неё приходилось искать,
+    // какой из номеров выделен
+    h('div.daynav-label',
+      h('b', { text: `${weekdayLong(cur)}, ${formatShort(cur)}` }),
+      cur === t ? h('span.pill', { text: 'сегодня' }) : null),
     h('div.datestrip-scroll',
       ...rangeDates(addDays(cur, -SPAN), addDays(cur, SPAN)).map(d => {
         const info = index.get(d);

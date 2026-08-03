@@ -22,7 +22,7 @@ module.exports = function exportRouter({ db }) {
                                alarm_mode, alarm_profile, remind_before_min
                           FROM schedule_items WHERE user_id = ? ORDER BY date, start_min`),
       tasks: q('SELECT date, bucket, text, done, sort_order, carried_from FROM tasks WHERE user_id = ? ORDER BY date'),
-      meals: q('SELECT date, slot, time_min, title, note, done, sort_order FROM meals WHERE user_id = ? ORDER BY date'),
+      meals: q('SELECT date, slot, time_min, title, note, calories, done, sort_order FROM meals WHERE user_id = ? ORDER BY date'),
       sportSets: q('SELECT date, exercise, sets, reps, weight, done, sort_order FROM sport_sets WHERE user_id = ? ORDER BY date'),
       habits: q(`SELECT id, title, description, emoji, color, type, target_per_day, unit,
                         schedule_mask, polarity, mode, challenge_target_days, challenge_start_date,
@@ -90,9 +90,10 @@ module.exports = function exportRouter({ db }) {
       }
       for (const r of data.meals || []) {
         if (skip(r.date)) continue;
-        db.prepare(`INSERT INTO meals (user_id, date, slot, time_min, title, note, done, sort_order)
-                    VALUES (?,?,?,?,?,?,?,?)`)
-          .run(uid, r.date, r.slot ?? 'other', r.time_min ?? null, r.title ?? '', r.note ?? '', r.done ?? 0, r.sort_order ?? 0);
+        db.prepare(`INSERT INTO meals (user_id, date, slot, time_min, title, note, calories, done, sort_order)
+                    VALUES (?,?,?,?,?,?,?,?,?)`)
+          .run(uid, r.date, r.slot ?? 'other', r.time_min ?? null, r.title ?? '', r.note ?? '',
+               r.calories ?? null, r.done ?? 0, r.sort_order ?? 0);
       }
       for (const r of data.sportSets || []) {
         if (skip(r.date)) continue;

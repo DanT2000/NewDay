@@ -87,43 +87,90 @@ async function render(col) {
   for (const x of active) loadStats(x.id, col);
 }
 
+/**
+ * Карточка привычки.
+ *
+ * Главное число справа — одно: либо счётчик челленджа, либо процент.
+ * Раньше они конкурировали, и было непонятно, на что смотреть.
+ * Цвет здесь уместен: он опознавательный знак самой привычки.
+ */
 function card(x) {
   const color = COLOR_VAR[x.color] || 'var(--c-work)';
   const s = statsCache.get(x.id);
+  const challenge = s?.challenge;
+
+  const headline = challenge
+    ? { value: `${challenge.day}`, of: `из ${challenge.target}`, label: 'день' }
+    : { value: s && s.percent !== null ? `${s.percent}%` : '—', of: null, label: 'за период' };
+
+  const barPct = challenge
+    ? Math.round((challenge.day / challenge.target) * 100)
+    : (s?.percent ?? 0);
 
   return h('div.hcard', { dataset: { id: x.id } },
-    h('span.hemoji', { text: x.emoji || '•', style: { fontSize: '20px' } }),
-    h('div', { style: { minWidth: 0 } },
+    h('span.hbadge', {
+      text: x.emoji || '•',
+      style: { background: `color-mix(in srgb, ${color} 16%, transparent)` },
+    }),
+
+    h('div.hbody',
       h('div.row',
-        h('b', { text: x.title }),
-        x.archived_at ? h('span.pill', { text: 'в архиве' }) : null),
-      h('div.hmeta', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap' } },
-        h('span', { text: describe(x) }),
-        s ? h('span', { text: `серия ${plDays(s.currentStreak)}` }) : null,
-        s && s.percent !== null ? h('span', { text: `${s.percent}%` }) : null),
-      s ? h('div.dots', { style: { marginTop: '6px' } },
-            ...s.last14.map(d => h('i', { class: d.status || 'none', title: d.date })))
+        h('b.htitle', { text: x.title }),
+        x.archived_at ? h('span.pill', { text: 'в архиве' }) : null,
+        h('span.grow'),
+        // меню рядом с названием, а не под числом: иначе между ними зияла дыра
+        x.archived_at
+          ? h('button.btn.btn-sm', { text: 'Вернуть', onclick: () => restore(x) })
+          : h('button.icon-btn.hmenu', { text: '⋯', 'aria-label': 'Действия', onclick: () => openMenu(x) })),
+      h('div.hmeta', { text: describe(x, challenge) }),
+
+      h('div.hbar', { title: `${barPct}%` },
+        h('i', { style: { width: `${Math.min(100, barPct)}%`, background: color } })),
+
+      s ? h('div.hdots',
+            h('div.dots', ...s.last14.map(d => h('i', { class: d.status || 'none', title: d.date }))),
+            h('span.micro', { text: streakLine(s) }))
         : null),
-    h('div.row',
-      s?.challenge
-        ? h('span.hchal', { text: `${s.challenge.day}/${s.challenge.target}`, style: { color } })
-        : null,
-      x.archived_at
-        ? h('button.btn.btn-sm', { text: 'Вернуть', onclick: () => restore(x) })
-        : h('button.icon-btn', { text: '⋯', 'aria-label': 'Действия', onclick: () => openMenu(x) })));
+
+    // Порядок зависит от типа: «день 46 из 300», но «41% за период»
+    h('div.hright',
+      challenge ? h('div.micro', { text: headline.label }) : null,
+      h('div.hvalue', { text: headline.value, style: challenge ? { color } : null }),
+      headline.of ? h('div.micro', { text: headline.of }) : null,
+      challenge ? null : h('div.micro', { text: headline.label })));
 }
 
-function describe(x) {
+const streakLine = s => s.currentStreak > 0
+  ? `серия ${plDays(s.currentStreak)}, лучшая ${plDays(s.bestStreak)}`
+  : s.bestStreak > 0 ? `серия прервана, лучшая была ${plDays(s.bestStreak)}` : 'серии пока нет';
+
+/** Человеческая фраза вместо перечисления полей через точку. */
+function describe(x, challenge) {
   const parts = [];
-  if (x.mode === 'challenge') {
-    parts.push(x.break_policy === 'reset' ? 'подряд' : 'накопительно');
-    if (x.challenge_target_days) parts.push(`${x.challenge_target_days} дней`);
-  } else parts.push('бессрочно');
-  if (x.polarity === 'avoid') parts.push('удерживаюсь');
-  if (x.schedule_mask !== 127) {
-    parts.push(WEEKDAYS.filter((_, i) => x.schedule_mask & (1 << i)).join(' '));
+
+  if (x.polarity === 'avoid') {
+    parts.push(x.break_policy === 'reset' ? 'Удерживаюсь, срыв обнулит счётчик' : 'Удерживаюсь');
+  } else if (x.mode === 'challenge') {
+    parts.push(x.break_policy === 'reset' ? 'Подряд, без пропусков' : 'Накопительно, пропуски не обнуляют');
+  } else {
+    parts.push('Бессрочно');
   }
-  if (x.allowed_skips_per_week > 0) parts.push(`заморозок ${x.allowed_skips_per_week}/нед`);
+
+  if (x.schedule_mask !== 127) {
+    const days = WEEKDAYS.filter((_, i) => x.schedule_mask & (1 << i));
+    parts.push(days.length === 5 && x.schedule_mask === 0b0011111 ? 'по будням' : days.join(', '));
+  } else {
+    parts.push('каждый день');
+  }
+
+  if (x.allowed_skips_per_week > 0) {
+    parts.push(`${x.allowed_skips_per_week} заморозки в неделю`);
+  }
+  if (challenge?.complete) parts.push('цель взята');
+  else if (challenge && challenge.breaks > 0 && x.break_policy === 'keep') {
+    parts.push(`срывов ${challenge.breaks}`);
+  }
+
   return parts.join(' · ');
 }
 

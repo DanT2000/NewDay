@@ -14,6 +14,7 @@ import { cycleTheme, getTheme, setTheme, THEME_ICON, THEME_LABEL } from './theme
 import { qrSvg } from './qr.js';
 import { formatShort, formatMinutes, parseTimeToMinutes } from './dates.js';
 import * as push from './push.js';
+import * as native from './native.js';
 
 const TIMEZONES = [
   'Europe/Kaliningrad', 'Europe/Moscow', 'Europe/Samara', 'Asia/Yekaterinburg',
@@ -23,6 +24,7 @@ const TIMEZONES = [
 
 let profile = null;
 let pushStatus = null;
+let alarmPerms = null;
 let tokenList = [];
 let deviceList = [];
 let col;
@@ -173,13 +175,13 @@ function notificationsSection() {
 }
 
 function quietHoursBlock(cfg, quietOn) {
-  const from = h('input.input.mono', {
-    value: quietOn ? formatMinutes(cfg.quietFrom) : '23:00', style: { width: '7ch' },
-    'aria-label': 'Начало тихих часов',
+  const from = h('input.input.time-field', {
+    value: quietOn ? formatMinutes(cfg.quietFrom) : '23:00',
+    'aria-label': 'Начало тихих часов', inputMode: 'numeric',
   });
-  const to = h('input.input.mono', {
-    value: quietOn ? formatMinutes(cfg.quietTo) : '07:00', style: { width: '7ch' },
-    'aria-label': 'Конец тихих часов',
+  const to = h('input.input.time-field', {
+    value: quietOn ? formatMinutes(cfg.quietTo) : '07:00',
+    'aria-label': 'Конец тихих часов', inputMode: 'numeric',
   });
 
   return h('div',
@@ -236,6 +238,98 @@ async function testPush() {
     await push.sendTest();
     toast('Отправил — уведомление должно прийти через пару секунд');
   } catch (e) { toast(e.message, 'error'); }
+}
+
+/**
+ * Проверка будильника.
+ *
+ * Разрешения не выпрашиваются пачкой при запуске: человек, не понимающий,
+ * зачем его спросили, жмёт «запретить» навсегда. Здесь каждый пункт объяснён
+ * и чинится кнопкой, которая ведёт ровно в нужный системный экран.
+ * Внизу — тестовый будильник: убедиться, что он сработает на этом телефоне,
+ * можно только дав ему сработать.
+ */
+const ALARM_CHECKS = [
+  {
+    key: 'notifications', what: 'notifications', title: 'Уведомления разрешены',
+    why: 'Без них система не покажет ни напоминание, ни экран будильника.',
+  },
+  {
+    key: 'exactAlarm', what: 'exactAlarm', title: 'Точные будильники',
+    why: 'Иначе Android разбудит «примерно когда-нибудь», а не в 6:00.',
+  },
+  {
+    key: 'overlay', what: 'overlay', title: 'Показ поверх других приложений',
+    why: 'Без этого экран будильника не поднимется, если телефон разблокирован и им пользуются.',
+  },
+  {
+    key: 'fullScreenIntent', what: 'fullScreenIntent', title: 'Экран поверх блокировки',
+    why: 'Нужно, чтобы будильник появился на заблокированном телефоне.',
+  },
+  {
+    key: 'batteryUnrestricted', what: 'battery', title: 'Без ограничений батареи',
+    why: 'С ограничениями система может задержать будильник или не дать ему звучать.',
+  },
+];
+
+function alarmSection() {
+  if (!native.available()) return null;
+  const p = alarmPerms;
+  if (!p) {
+    return section('будильник',
+      h('p.small', { text: 'Не удалось получить состояние разрешений. Перезапустите приложение.' }));
+  }
+
+  const rows = ALARM_CHECKS.map(c => {
+    const ok = Boolean(p[c.key]);
+    return h('div.permrow', { class: ok ? 'ok' : 'bad' },
+      h('span.permmark', { text: ok ? '✓' : '!' }),
+      h('div',
+        h('b', { text: c.title }),
+        h('div.hmeta', { text: c.why })),
+      ok
+        ? h('span.pill', { text: 'готово' })
+        : h('button.btn.btn-sm.btn-primary', {
+            text: 'Исправить',
+            onclick: async () => { await native.openSystemSettings(c.what); },
+          }));
+  });
+
+  const problems = ALARM_CHECKS.filter(c => !p[c.key]).length;
+
+  return section('будильник',
+    problems === 0
+      ? h('p.small', { text: 'Все разрешения на месте. Будильник сработает даже в беззвучном режиме и при «Не беспокоить».' })
+      : h('div.form-error', { text: `Не хватает разрешений: ${problems}. Пока они не выданы, будильник может не сработать.` }),
+    ...rows,
+    p.needsVendorAutostart
+      ? h('div',
+          h('span.eyebrow', { text: 'оболочка ' + p.manufacturer }),
+          h('p.small', { text: 'На этой прошивке автозапуск приложений отключается отдельно от системных разрешений. '
+            + 'Найдите NewDay в списке автозапуска и разрешите его, иначе будильник может не сработать после перезагрузки.' }),
+          h('button.btn.btn-sm', {
+            text: 'Открыть настройки приложения',
+            onclick: () => native.openSystemSettings('app'),
+          }))
+      : null,
+    h('div.divider'),
+    h('div.row', { style: { flexWrap: 'wrap' } },
+      h('button.btn.btn-primary', {
+        text: 'Тестовый будильник через минуту',
+        onclick: async () => {
+          await native.testAlarm(60, 'wakeup');
+          toast('Заблокируйте экран и подождите минуту');
+        },
+      }),
+      h('button.btn', {
+        text: 'Проверить сейчас',
+        onclick: async () => {
+          await native.testAlarm(5, 'gentle');
+          toast('Через 5 секунд');
+        },
+      })),
+    h('p.small', { text: 'Если приложение принудительно остановить в настройках Android, будильники перестанут '
+      + 'приходить, пока приложение не запустят снова — так работает система, обойти это нельзя.' }));
 }
 
 function appSection() {
@@ -442,8 +536,9 @@ async function reload() {
     api.devices.list().catch(() => []),
     push.status().catch(() => null),
   ]);
+  alarmPerms = await native.checkPermissions();
   replace(col,
-    profileSection(), notificationsSection(), viewSection(), appSection(),
+    profileSection(), alarmSection(), notificationsSection(), viewSection(), appSection(),
     devicesSection(), tokensSection(), dataSection());
 }
 

@@ -15,14 +15,19 @@ const MARGINS_MM = 22;
 const MM_TO_PX = 96 / 25.4;
 const PAGE_PX = (A4_HEIGHT_MM - MARGINS_MM) * MM_TO_PX;
 
+/*
+ * Лист печатают утром, чтобы заполнять его в течение дня. Поэтому по умолчанию
+ * на бумагу идёт план и место под отметки, а не итоги: прогресс дня на момент
+ * печати всегда нулевой, печатать его незачем. Включить всё равно можно.
+ */
 const SECTIONS = [
   { id: 'schedule', label: 'Расписание', on: true },
   { id: 'tasks',    label: 'Задачи',     on: true },
   { id: 'meals',    label: 'Питание',    on: true },
   { id: 'sport',    label: 'Спорт',      on: true },
   { id: 'habits',   label: 'Привычки',   on: true },
-  { id: 'progress', label: 'Кольца прогресса', on: true },
   { id: 'lines',    label: 'Линейки для заметок', on: true },
+  { id: 'progress', label: 'Кольца прогресса', on: false },
 ];
 
 /** Шапка листа: дата и фокус дня — то, ради чего лист и печатают. */
@@ -135,7 +140,9 @@ export function openPrintDialog() {
 
 function restore() {
   document.body.classList.remove('print-dense', 'print-two-pages');
-  for (const el of document.querySelectorAll('.no-print')) el.classList.remove('no-print');
+  // возвращаем набор по умолчанию, а не «печатать всё»: иначе прогресс,
+  // скрытый в разметке, после первой печати начинал бы попадать на лист
+  applySelection(new Set(SECTIONS.filter(s => s.on).map(s => s.id)));
 }
 
 /**

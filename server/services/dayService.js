@@ -131,7 +131,8 @@ function dayService(db, opts = {}) {
       if (want.has('meals')) {
         meals.removeAllForDate(user.id, targetDate);
         src.meals.forEach((r, i) => meals.create(user.id, targetDate, {
-          slot: r.slot, timeMin: r.time_min, title: r.title, note: r.note, done: 0, sortOrder: i,
+          slot: r.slot, timeMin: r.time_min, title: r.title, note: r.note,
+          calories: r.calories, done: 0, sortOrder: i,
         }));
       }
       if (want.has('sport')) {

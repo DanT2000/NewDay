@@ -98,11 +98,18 @@ export function renderMeals(root) {
   const timed = state.user?.foodMode === 'timed';
   const list = h('div');
   const get = day => day.meals;
+  // Поле калорий видно всегда: иначе первое значение просто некуда ввести.
+  // Оно узкое, с приглушённой подсказкой — тем, кто не считает, не мешает.
+  const total = rows.reduce((sum, r) => sum + (r.calories || 0), 0);
 
   for (const row of rows) {
     add(list, h('div.trow', {
       class: row.done ? 'done' : '',
-      style: timed ? { gridTemplateColumns: '20px 6.2ch minmax(0,1fr) auto 18px' } : null,
+      style: {
+        gridTemplateColumns: [
+          '20px', timed ? '6.2ch' : null, 'minmax(0,1fr)', '5.5ch', 'auto', '18px',
+        ].filter(Boolean).join(' '),
+      },
       dataset: { id: row.id },
     },
       checkbox(row.done === 1,
@@ -124,6 +131,15 @@ export function renderMeals(root) {
         onchange: e => mutate(get, row.id, { title: e.target.value.trim() },
           () => api.meals.update(state.date, row.id, { title: e.target.value.trim() })),
       }),
+      h('input.bare.num', {
+        value: row.calories ?? '', placeholder: 'ккал', inputMode: 'numeric',
+        'aria-label': 'Калории', style: { textAlign: 'right' },
+        onchange: e => {
+          const val = e.target.value === '' ? null : Number(e.target.value);
+          mutate(get, row.id, { calories: val },
+            () => api.meals.update(state.date, row.id, { calories: val }));
+        },
+      }),
       h('select.bare', {
         value: row.slot, 'aria-label': 'Приём пищи',
         style: { width: 'auto', color: 'var(--ink-3)', fontSize: '13px' },
@@ -138,6 +154,12 @@ export function renderMeals(root) {
   }
 
   if (!rows.length) list.append(h('p.empty', { text: 'Приёмы пищи не запланированы.' }));
+
+  if (total > 0) {
+    add(list, h('div.trow', { style: { gridTemplateColumns: 'minmax(0,1fr) auto' } },
+      h('span.eyebrow', { text: 'всего за день' }),
+      h('span.num', { text: `${total} ккал` })));
+  }
 
   list.append(h('button.add-row', {
     text: '+ приём пищи',

@@ -76,6 +76,34 @@ export function formatShort(dateStr) {
   return `${d} ${MONTH_GEN[m - 1].slice(0, 3)}`;
 }
 
+/**
+ * Локальная дата и время пользователя → момент в UTC (мс эпохи).
+ * Тот же алгоритм, что на сервере: Date знает только UTC и зону машины,
+ * поэтому смещение находим итерацией через Intl.
+ */
+export function zonedTimeToUtc(dateStr, minutes, timeZone) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const wall = Date.UTC(y, m - 1, d, Math.floor(minutes / 60), minutes % 60, 0, 0);
+  let guess = wall;
+  for (let i = 0; i < 2; i++) {
+    const corrected = wall - zoneOffsetMs(guess, timeZone);
+    if (corrected === guess) break;
+    guess = corrected;
+  }
+  return guess;
+}
+
+export function zoneOffsetMs(instantMs, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone, hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(instantMs));
+  const get = t => Number(parts.find(p => p.type === t).value);
+  const asUtc = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour') % 24, get('minute'), get('second'));
+  return asUtc - instantMs;
+}
+
 /** Понимает 9, 9:30, 930, 9.30. Возвращает минуты или null. */
 export function parseTimeToMinutes(input) {
   if (typeof input !== 'string') return null;
@@ -95,13 +123,14 @@ export function formatMinutes(min) {
   return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 }
 
-/** «23 мин», «1 ч 05», «—» */
+/** «23 мин», «1 ч 5 мин», «2 ч», «—» */
 export function formatDuration(min) {
   if (min === null || min === undefined || min < 0) return '—';
   if (min < 60) return `${min} мин`;
   const h = Math.floor(min / 60);
   const m = min % 60;
-  return m ? `${h} ч ${String(m).padStart(2, '0')}` : `${h} ч`;
+  // без «мин» строка «2 ч 07» читалась как время, а не как длительность
+  return m ? `${h} ч ${m} мин` : `${h} ч`;
 }
 
 /** Русское склонение: 1 день, 2 дня, 5 дней */

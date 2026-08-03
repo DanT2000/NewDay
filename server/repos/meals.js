@@ -2,10 +2,10 @@ const { makeRowRepo } = require('./_rowRepo');
 
 const FIELD_MAP = {
   slot: 'slot', timeMin: 'time_min', title: 'title', note: 'note',
-  done: 'done', sortOrder: 'sort_order',
+  calories: 'calories', done: 'done', sortOrder: 'sort_order',
 };
 
-const DEFAULTS = { slot: 'other', timeMin: null, title: '', note: '', done: 0 };
+const DEFAULTS = { slot: 'other', timeMin: null, title: '', note: '', calories: null, done: 0 };
 
 /**
  * Питание хранится одинаково в обоих режимах интерфейса (checklist и timed):
