@@ -18,8 +18,8 @@
 
     <form id="login-form" class="auth-form" autocomplete="on">
       <div class="form-group">
-        <label for="username">Имя пользователя</label>
-        <input type="text" id="username" name="username" autocomplete="username" placeholder="Ваш логин" required>
+        <label for="username">Почта</label>
+        <input type="text" id="username" name="username" autocomplete="username" placeholder="you@example.com" required>
       </div>
       <div class="form-group">
         <label for="password">Пароль</label>
@@ -39,21 +39,22 @@
       errEl.style.display = 'none';
 
       const body = {
-        username: document.getElementById('username').value.trim(),
+        emailOrUsername: document.getElementById('username').value.trim(),
         password: document.getElementById('password').value,
       };
 
-      const res = await fetch('/api/auth/login', {
+      const res = await fetch('/api/v1/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         window.location.replace('/app.html');
       } else {
-        errEl.textContent = data.error || 'Ошибка входа';
+        // сервер отвечает { error: { code, message } }
+        errEl.textContent = data.error?.message || data.error || 'Ошибка входа';
         errEl.style.display = 'block';
       }
     });
