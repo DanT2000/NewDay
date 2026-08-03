@@ -1,0 +1,68 @@
+name: Сборка APK
+
+# APK собирается по тегу и попадает в релиз: держать бинарник в репозитории
+# смысла нет, а скачивать его людям нужно.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - run: npm ci
+
+      - name: Собрать иконки из brand-icon.png
+        run: |
+          python -m pip install --quiet Pillow
+          python tools/make-icons.py
+
+      - name: Перенести веб-часть в проект Android
+        run: npx cap sync android
+
+      - name: Собрать релизный APK
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon
+
+      # Без keystore APK выходит неподписанным: подписать его можно только
+      # ключом владельца, и держать этот ключ в открытом репозитории нельзя.
+      - name: Подписать, если задан keystore
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE" | base64 -d > /tmp/release.keystore
+          "$ANDROID_HOME"/build-tools/34.0.0/apksigner sign \
+            --ks /tmp/release.keystore --ks-pass env:KS_PASS \
+            --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASS \
+            --out android/app/build/outputs/apk/release/NewDay.apk \
+            android/app/build/outputs/apk/release/app-release-unsigned.apk
+          rm -f /tmp/release.keystore
+
+      - name: Приложить APK к релизу
+        uses: softprops/action-gh-release@v2
+        with:
+          files: android/app/build/outputs/apk/release/*.apk
+          body: |
+            Соберите сами или скачайте APK ниже.
+
+            Установка: разрешите установку из неизвестных источников,
+            затем откройте файл. При первом запуске укажите адрес своего сервера.

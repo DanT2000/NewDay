@@ -1,12 +1,29 @@
-# NewDay — Личный планировщик
+# NewDay — планировщик дня и трекер привычек
 
-Веб-приложение для планирования дня, отслеживания привычек, задач, веса и прогресса.
+Веб-приложение и Android-приложение для планирования дня, контроля привычек
+и печати дневного листа. Работает у себя на сервере одной командой.
 
-- **Сайт**: https://newday.appswire.ru
-- **Стек**: Node.js · Express · SQLite · Vanilla JS
-- **Развёртывание**: один Docker-контейнер
+**Сайт-пример:** https://newday.appswire.ru · **Лицензия:** MIT ·
+[English](#english)
 
 ---
+
+## Что это
+
+Инструмент, чтобы держать день под контролем, а не список задач.
+
+- **Расписание дня** двумя видами: списком и таймлайном. Слева рельс, по которому
+  движется настоящее: текущая строка подсвечена и показывает, сколько до её конца,
+  прошедшее приглушено.
+- **Будильник в Android-приложении**, который действительно будит: звучит
+  в беззвучном режиме и при «Не беспокоить», поднимает экран поверх блокировки,
+  переживает перезагрузку и требует решить задачу, чтобы выключиться.
+- **Привычки** с челленджами: «30 дней подряд», «марафон 300 дней», «бросаю».
+  Три независимые настройки — цель, поведение при срыве, что именно отмечается.
+- **Печать на лист A4** под ручку: план слева, колонка «факт» справа, линейки
+  для заметок. Не влезло — приложение спросит, уменьшить шрифт или разбить на два листа.
+- **API с персональными токенами**, чтобы заполнять день из бота или нейросети.
+- Светлая и тёмная темы, работа с телефона и с компьютера, экспорт и импорт данных.
 
 ## Быстрый старт (локально)
 
@@ -117,67 +134,66 @@ docker compose up -d
 
 ---
 
-## Подготовка иконки
+## Иконки
 
-Положите иконки в `public/icons/`:
-- `icon-192.png` — 192×192 пикселей
-- `icon-512.png` — 512×512 пикселей
+Все иконки — веб, PWA, Android adaptive icon, splash — генерируются из одного
+файла `brand-icon.png` (квадратный PNG, лучше 1024×1024 и больше):
 
-Рекомендуемые онлайн-инструменты: https://realfavicongenerator.net
+```bash
+pip install Pillow
+python tools/make-icons.py
+```
+
+Скрипт сам подберёт плотности, вырежет maskable-версию с полями под safe-zone
+и подставит фоновый цвет adaptive-иконки, взятый из краёв самого изображения.
+Чтобы поменять иконку, достаточно заменить `brand-icon.png` и запустить скрипт.
 
 ---
 
-## Сборка Android APK (через Capacitor)
+## Android-приложение
 
-Capacitor создаёт Android-приложение, которое открывает сайт `newday.appswire.ru` внутри WebView.
-
-**Требования**: Android Studio, JDK 17+
-
-### Шаги сборки
+Приложение — это Capacitor: та же веб-часть, вшитая в APK, плюс нативный модуль
+будильника на Kotlin. Веб-ассеты внутри пакета, поэтому приложение открывается
+без интернета, а к серверу обращается по абсолютному адресу с токеном устройства.
 
 ```bash
-# 1. Установить все зависимости (включая devDependencies)
 npm install
-
-# 2. Добавить Android-платформу (первый раз)
-npx cap add android
-
-# 3. Синхронизировать (после любых изменений)
-npx cap sync
-
-# 4. Открыть проект в Android Studio
-npx cap open android
+python tools/make-icons.py     # если менялась иконка
+npx cap sync android           # переносит public/ в проект Android
+cd android && ./gradlew assembleDebug
 ```
 
-В Android Studio:
-- **Build → Generate Signed Bundle / APK → APK**
-- Выберите или создайте keystore
-- Build Variant: **release**
-- Соберите APK
+Готовый APK: `android/app/build/outputs/apk/debug/app-debug.apk`.
+Релизную сборку по тегу `v*` делает CI и прикладывает к GitHub-релизу.
 
-### Куда положить APK
+### Как устроен будильник
 
-После сборки скопируйте файл APK:
+| Механизм | Зачем |
+|---|---|
+| `AlarmManager.setAlarmClock()` | точный запуск, переживает Doze и энергосбережение |
+| `STREAM_ALARM` + канал с `bypassDnd` | звучит в беззвучном режиме и при «Не беспокоить» |
+| Full-screen intent + `showWhenLocked` | экран включается и открывается поверх блокировки |
+| Foreground-сервис + `WakeLock` | процесс не убьют и экран не погаснет во время звонка |
+| `BOOT_COMPLETED` | будильники восстанавливаются после перезагрузки |
+| `SYSTEM_ALERT_WINDOW` | без него система не даёт поднять экран из фона на разблокированном телефоне |
+
+Все разрешения видны в приложении в **Настройки → Будильник**: у каждого
+объяснено, зачем оно нужно, и есть кнопка, ведущая ровно в нужный системный
+экран. Там же тестовый будильник — убедиться, что он сработает на конкретном
+телефоне, можно только дав ему сработать.
+
+Живая проверка на эмуляторе или телефоне:
+
+```bash
+bash tools/alarm-emulator-test.sh --with-reboot
 ```
-app/build/outputs/apk/release/app-release.apk
-→ public/downloads/NewDay.apk
-```
 
-После этого кнопка «📱 Android» → «Скачать NewDay.apk» на сайте заработает.
+Семь сценариев: заблокированный экран, беззвучный режим, «Не беспокоить», Doze,
+убитый процесс, отсутствие сети, перезагрузка устройства.
 
-### Как заменить иконку в Android-приложении
-
-После `npx cap add android`:
-- Откройте Android Studio
-- **Tools → Resource Manager → + → Image Asset**
-- Выберите свой файл иконки
-- Android Studio сгенерирует все размеры автоматически
-
-### Примечания
-
-- APK-приложение требует доступа к интернету (открывает сайт через WebView).
-- Для установки APK на Android нужно разрешить «Установку из неизвестных источников».
-- **Альтернатива без сборки**: установить сайт как PWA через Chrome → «Добавить на главный экран».
+> Принудительная остановка приложения в настройках Android отключает его
+> будильники, пока приложение не запустят снова. Это поведение системы, обойти
+> его нельзя — штатный будильник Google ведёт себя так же.
 
 ---
 
@@ -186,38 +202,32 @@ app/build/outputs/apk/release/app-release.apk
 ```
 newday/
 ├── server/
-│   ├── index.js          # Express-сервер
-│   ├── db.js             # SQLite, создание таблиц
-│   ├── auth.js           # Middleware авторизации
-│   ├── validation.js     # Валидация входных данных
-│   └── routes/
-│       ├── auth.js       # /api/auth/*
-│       ├── days.js       # /api/days/*
-│       └── habits.js     # /api/habits/*
+│   ├── index.js              запуск, бэкап перед миграциями, планировщик уведомлений
+│   ├── app.js                сборка Express-приложения (фабрика — для тестов)
+│   ├── config.js             чтение окружения
+│   ├── db/migrations/        нумерованные миграции, применяются при старте
+│   ├── lib/                  даты и таймзоны, ошибки, валидация, почта, push, бэкап
+│   ├── middleware/           аутентификация (сессия / токен / устройство), CORS, rate limit
+│   ├── repos/                доступ к данным, по одному файлу на сущность
+│   ├── services/             день, статистика, повторы, уведомления
+│   └── routes/v1/            REST API + OpenAPI; routes/legacy.js — старые пути
 ├── public/
-│   ├── index.html        # Редирект (auth check)
-│   ├── login.html        # Страница входа
-│   ├── register.html     # Регистрация
-│   ├── app.html          # Основное приложение
-│   ├── install.html      # Установка Android
-│   ├── styles.css        # Стили + @media print
-│   ├── app.js            # Логика приложения
-│   ├── manifest.webmanifest
-│   ├── service-worker.js
-│   ├── icons/            # Иконки PWA (положите сюда PNG)
-│   └── downloads/        # Положите сюда NewDay.apk
-├── samples/
-│   └── sample-day.json   # Пример формата дня
-├── data/                 # SQLite-база (создаётся автоматически)
-├── Dockerfile
-├── docker-compose.yaml
-├── capacitor.config.json # Настройки Capacitor (Android)
-├── package.json
-├── .env.example
-└── README.md
+│   ├── css/                  токены, база, компоненты, печать
+│   ├── js/
+│   │   ├── api.js store.js dates.js dom.js        ядро
+│   │   ├── views/            день, расписание (список и таймлайн), списки, привычки, итоги, печать
+│   │   ├── components/       перетаскивание, модалка, выбор времени
+│   │   ├── native.js         мост в нативные будильники
+│   │   └── vendor/qrcode.js  вендоренный генератор QR (MIT)
+│   └── *.html                страницы: день, привычки, итоги, настройки, вход
+├── android/
+│   └── app/src/main/java/ru/appswire/newday/alarm/    Kotlin-модуль будильника
+├── test/                     тесты на node --test
+├── tools/                    генератор иконок, локальный стенд, наполнение примером,
+│                             живые тесты будильника, проверка вёрстки
+├── docs/superpowers/         спецификация и планы этапов
+└── brand-icon.png            исходник всех иконок
 ```
-
----
 
 ## API
 
@@ -294,3 +304,87 @@ npm test
 Снимок базы делается автоматически перед применением миграций и раз в сутки,
 в `<каталог базы>/backups/`, хранятся последние 14 копий. Выгрузка своих данных
 в JSON — `GET /api/v1/export`, загрузка обратно — `POST /api/v1/import`.
+
+---
+
+<a name="english"></a>
+
+## English
+
+**NewDay** is a self-hosted day planner and habit tracker: a web app plus an
+Android app whose alarm actually wakes you up.
+
+### Highlights
+
+- **Day schedule** in two views — list and timeline. A rail on the left tracks the
+  present moment: the current row is highlighted with time remaining, past rows dim.
+- **A real Android alarm.** Rings through silent mode and Do Not Disturb, shows a
+  full-screen screen over the lock screen, survives reboot, and refuses to stop until
+  you solve a task (math, code or icon sequence). Verified on an emulator across seven
+  scenarios: locked screen, silent mode, DND, Doze, killed process, no network, reboot.
+- **Habits with challenges** — "30 days in a row", "300-day marathon", "quitting".
+  Three independent axes: goal, what happens on a miss, and what you actually mark.
+- **A4 print** designed for a pen: plan on the left, an "actual" column on the right,
+  ruled lines for notes. If the day does not fit, the app asks whether to shrink the
+  type or split across two sheets instead of silently cutting it off.
+- **REST API with personal tokens** so a bot or an LLM can fill in your day.
+- Light and dark themes, works on phone and desktop, JSON export and import.
+
+### Run it
+
+```bash
+git clone https://github.com/DanT2000/NewDay
+cd NewDay
+cp .env.example .env      # change SESSION_SECRET
+docker compose up -d
+```
+
+Open http://localhost:3000 and register. The first account becomes the admin.
+
+Email confirmation and web push are optional: without `SMTP_HOST` the app skips
+address verification, and without VAPID keys it simply does not send push. Nothing
+else is required to run.
+
+### API
+
+Full spec at `/api/v1/openapi.json`, human-readable page at `/api/docs`.
+Authenticate with a cookie session (web) or a personal token:
+
+```bash
+curl -H "Authorization: Bearer nd_xxxxxxxx_..." \
+     https://your-server/api/v1/days/2026-08-03/full
+```
+
+### Android
+
+```bash
+npm install
+npx cap sync android
+cd android && ./gradlew assembleRelease
+```
+
+CI builds an APK on every `v*` tag and attaches it to the GitHub release.
+The app bundles its web assets, so it works offline; it authenticates with a
+device token, obtained either by signing in or by scanning a QR code from the
+desktop.
+
+**One thing no app can work around:** if you force-stop the app in Android
+settings, the system stops delivering its alarms until you launch it again.
+Google's own Clock behaves the same way.
+
+### Tests
+
+```bash
+npm test
+```
+
+144 tests on the built-in `node --test`: migrations, timezone maths across DST,
+concurrent edits to one day, habit streaks and challenges, auth in all three
+modes, token scopes, recurrence rules, notification scheduling.
+
+For the Android alarm there is a separate live suite that needs a running
+emulator or a plugged-in phone:
+
+```bash
+bash tools/alarm-emulator-test.sh --with-reboot
+```

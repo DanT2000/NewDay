@@ -5,8 +5,22 @@ services:
     ports:
       - "3000:3000"
     env_file:
-      - .env
+      # Файла может не быть: без него приложение поднимется на значениях
+      # по умолчанию, только SESSION_SECRET стоит задать своим.
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      DB_PATH: /app/data/newday.db
+      # Собственный секрет задаётся в .env; здесь только чтобы контейнер
+      # запустился и сразу написал предупреждение в лог
+      SESSION_SECRET: ${SESSION_SECRET:-please-change-me-in-dot-env-file-000000}
     volumes:
       - ./data:/app/data
-      - ./public/downloads:/app/public/downloads
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>r.json()).then(d=>process.exit(d.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

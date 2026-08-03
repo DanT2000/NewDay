@@ -1,0 +1,35 @@
+name: Тесты
+
+on:
+  push:
+    branches: [master, develop]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # better-sqlite3 собирается из исходников, поэтому нужен полный набор зависимостей
+      - run: npm ci
+
+      - name: Прогон тестов
+        run: npm test
+
+      - name: Проверка, что приложение поднимается без SMTP и VAPID
+        run: |
+          DB_PATH=/tmp/ci.db SESSION_SECRET=ci-secret-0123456789012345678901234 PORT=4321 \
+            node server/index.js & 
+          for i in $(seq 1 30); do
+            if curl -sf -m 2 http://127.0.0.1:4321/api/health | grep -q '"ok":true'; then
+              echo "поднялось"; exit 0
+            fi
+            sleep 1
+          done
+          echo "не поднялось за 30 с"; exit 1

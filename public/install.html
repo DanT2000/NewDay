@@ -2,74 +2,100 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Установить NewDay на Android</title>
-  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NewDay на телефоне</title>
   <meta name="theme-color" content="#2E7BE4">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon.png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <link rel="stylesheet" href="/css/tokens.css">
   <link rel="stylesheet" href="/css/base.css">
   <link rel="stylesheet" href="/css/components.css">
   <link rel="stylesheet" href="/css/auth.css">
-  <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon.png">
-  <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png">
-  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <script>
     try { var t = localStorage.getItem('newday.theme');
       if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
   </script>
 </head>
 <body class="auth-page">
-  <div class="auth-card install-card">
+  <div class="auth-card" style="width: min(560px, 100%)">
     <div class="auth-logo">
-      <span class="auth-logo-icon">📱</span>
-      <h1 class="auth-logo-title">NewDay для Android</h1>
+      <img class="auth-logo-icon" src="/icons/logo-256.png" alt="NewDay" width="72" height="72">
+      <h1 class="auth-logo-title">NewDay на телефоне</h1>
+      <p class="auth-logo-sub">Два способа, между ними есть важная разница</p>
     </div>
 
-    <div class="install-section">
-      <h3>Вариант 1 — Добавить на экран (PWA)</h3>
-      <p>Самый простой способ. Работает прямо в браузере.</p>
-      <ol class="install-steps">
-        <li>Откройте <strong>newday.appswire.ru</strong> в браузере Chrome на Android.</li>
-        <li>Нажмите меню (⋮) → <strong>«Добавить на главный экран»</strong>.</li>
-        <li>Нажмите <strong>«Установить»</strong>.</li>
-        <li>NewDay появится на главном экране как приложение.</li>
-      </ol>
+    <div class="stack">
+      <section class="card">
+        <div class="card-hd"><span class="eyebrow">приложение · есть будильник</span></div>
+        <div class="card-bd pad">
+          <div class="stack">
+            <p class="small">
+              Полноценное приложение: работает без интернета и умеет <b>будильник</b> —
+              звонит в беззвучном режиме и при «Не беспокоить», поднимает экран поверх
+              блокировки и требует решить задачу, чтобы выключиться.
+            </p>
+            <a class="btn btn-primary" id="apk-link" href="#" target="_blank" rel="noopener">
+              Скачать APK из релизов
+            </a>
+            <p class="small">
+              После установки при первом запуске укажите адрес сервера — по умолчанию
+              подставлен этот сайт. Затем зайдите в <b>Настройки → Будильник</b>
+              и пройдите проверку разрешений: без них Android не даст будильнику
+              сработать, и приложение об этом честно предупредит.
+            </p>
+            <details>
+              <summary class="small">Android не даёт установить файл</summary>
+              <p class="small">
+                Разрешите установку из неизвестных источников для браузера или файлового
+                менеджера: <b>Настройки → Приложения → ваш браузер → Установка
+                неизвестных приложений</b>. Это нормальное поведение для приложений,
+                которые ставятся не из Google Play.
+              </p>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-hd"><span class="eyebrow">ярлык на экране · без будильника</span></div>
+        <div class="card-bd pad">
+          <div class="stack">
+            <p class="small">
+              Сайт можно поставить на главный экран как обычное приложение —
+              ничего скачивать не нужно. Уведомления работают, а вот
+              <b>будильника здесь нет</b>: браузеру не разрешено включать экран,
+              звучать в беззвучном режиме и держать звук в фоне.
+            </p>
+            <p class="small">
+              Chrome на Android: меню <b>⋮ → Добавить на главный экран</b>.
+            </p>
+            <a class="btn" href="/app.html">Открыть в браузере</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-hd"><span class="eyebrow">собрать самому</span></div>
+        <div class="card-bd pad">
+          <p class="small">
+            Проект открыт, APK собирается из исходников:
+          </p>
+          <pre style="background: var(--code, var(--surface-2)); padding: var(--s-3); border-radius: var(--r-md); overflow-x: auto; font-size: 12px">git clone https://github.com/DanT2000/NewDay
+cd NewDay &amp;&amp; npm install
+npx cap sync android
+cd android &amp;&amp; ./gradlew assembleRelease</pre>
+        </div>
+      </section>
     </div>
 
-    <div class="install-section">
-      <h3>Вариант 2 — Скачать APK</h3>
-      <p>Полноценное Android-приложение (требует разрешить установку из неизвестных источников).</p>
-      <div id="apk-status"></div>
-    </div>
-
-    <div class="install-section install-note">
-      <p><strong>Примечание:</strong> APK-приложение открывает сайт <code>newday.appswire.ru</code> внутри WebView. Для работы нужен доступ к интернету и к серверу.</p>
-    </div>
-
-    <p class="auth-footer"><a href="/app.html">← Вернуться в планировщик</a></p>
+    <p class="auth-footer"><a href="/app.html">← К приложению</a></p>
   </div>
 
   <script>
-    const statusEl = document.getElementById('apk-status');
-    fetch('/downloads/NewDay.apk', { method: 'HEAD' })
-      .then(r => {
-        if (r.ok) {
-          statusEl.innerHTML = `
-            <a href="/downloads/NewDay.apk" class="btn btn-primary btn-block" download>
-              ⬇ Скачать NewDay.apk
-            </a>`;
-        } else {
-          throw new Error();
-        }
-      })
-      .catch(() => {
-        statusEl.innerHTML = `
-          <div class="apk-missing">
-            APK ещё не загружен. Соберите Android-приложение и положите файл в
-            <code>public/downloads/NewDay.apk</code>.
-            Инструкция в <code>README.md</code>.
-          </div>`;
-      });
+    // Ссылка ведёт в релизы GitHub: держать пятимегабайтный бинарник
+    // в открытом репозитории смысла нет, а собирает его CI по тегу
+    document.getElementById('apk-link').href = 'https://github.com/DanT2000/NewDay/releases/latest';
   </script>
 </body>
 </html>

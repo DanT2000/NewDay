@@ -1,11 +1,16 @@
 FROM node:20-alpine
 
-RUN apk add --no-cache python3 make g++
-
 WORKDIR /app
 
+# better-sqlite3 — нативный модуль: собирается компиляторами, но в рантайме
+# ему нужен libstdc++. Компиляторы удаляем после сборки, libstdc++ оставляем —
+# без него модуль падает с ERR_DLOPEN_FAILED.
 COPY package*.json ./
-RUN npm install --production
+RUN apk add --no-cache libstdc++ \
+ && apk add --no-cache --virtual .build python3 make g++ \
+ && npm ci --omit=dev \
+ && npm cache clean --force \
+ && apk del .build
 
 COPY . .
 

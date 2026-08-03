@@ -6,6 +6,15 @@ const { runBackup, scheduleDailyBackup } = require('./lib/backup');
 const { createApp } = require('./app');
 
 const config = loadConfig();
+if (config.sessionSecret.includes('change') || config.sessionSecret.includes('please-change')
+    || config.sessionSecret.length < 32) {
+  console.warn(
+    '[newday] ВНИМАНИЕ: SESSION_SECRET не задан или слишком короткий. '
+    + 'Сессии можно подделать. Сгенерируйте свой и положите в .env: '
+    + 'node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'hex\'))"',
+  );
+}
+
 const db = createDb(config.dbPath);
 
 // Снимок перед миграцией: если что-то пойдёт не так, есть куда откатиться.
@@ -50,6 +59,8 @@ if (app.locals.push.enabled) {
   console.log('NewDay push disabled: не заданы VAPID_PUBLIC_KEY и VAPID_PRIVATE_KEY');
 }
 
-app.listen(config.port, '0.0.0.0', () => {
-  console.log(`NewDay listening on port ${config.port}`);
+// Порт берём из фактически открытого сокета: при PORT=0 система выбирает его
+// сама, и запись «порт 0» в логе бесполезна
+const server = app.listen(config.port, '0.0.0.0', () => {
+  console.log(`NewDay listening on port ${server.address().port}`);
 });

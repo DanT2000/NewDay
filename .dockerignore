@@ -1,0 +1,16 @@
+# В образе нужен только сервер и веб-часть
+node_modules
+.git
+.github
+android
+docs
+tools
+test
+data
+*.md
+!README.md
+brand-icon.png
+.env
+Dockerfile
+docker-compose.yaml
+.dockerignore
