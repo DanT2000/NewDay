@@ -30,13 +30,14 @@ const SECTIONS = [
   { id: 'progress', label: 'Кольца прогресса', on: false },
 ];
 
-/** Шапка листа: дата и фокус дня — то, ради чего лист и печатают. */
+/**
+ * Шапка листа — дата, и только она.
+ * Заголовок дня и «фокус» из интерфейса убраны: дату видно в навигации,
+ * а главное дело дня — это задача или строка расписания.
+ */
 function printHead() {
-  const d = state.day;
   return h('div.print-head',
-    h('div',
-      h('div.d', { text: d?.title?.trim() || formatLong(state.date) }),
-      d?.focus ? h('div.m', { text: `Фокус: ${d.focus}` }) : null),
+    h('div', h('div.d', { text: formatLong(state.date) })),
     h('div.m', { text: state.date.split('-').reverse().join('.') }));
 }
 

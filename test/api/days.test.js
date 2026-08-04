@@ -113,16 +113,34 @@ test('сдвиг обеда двигает всё, что после', async () 
   } finally { await s.close(); }
 });
 
-test('прогресс дня считается без весов по всем секциям', async () => {
+test('расписание не входит в прогресс дня, но остаётся отдельным счётчиком', async () => {
   const s = await loggedIn();
   try {
+    // две строки расписания, одна отмечена — на прогресс влиять не должны
     await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/schedule', { startMin: 540, title: 'A', done: true });
     await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/schedule', { startMin: 600, title: 'B' });
     await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/tasks', { bucket: 'work', text: 'T', done: true });
+    await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/tasks', { bucket: 'home', text: 'H' });
+
     const full = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-03/full');
-    assert.strictEqual(full.progress.total.done, 2);
-    assert.strictEqual(full.progress.total.possible, 3);
-    assert.strictEqual(full.progress.total.percent, 67);
+    assert.strictEqual(full.progress.total.done, 1, 'только выполненная задача');
+    assert.strictEqual(full.progress.total.possible, 2, 'две задачи, расписание не считается');
+    assert.strictEqual(full.progress.total.percent, 50);
+
+    assert.strictEqual(full.progress.schedule.done, 1, 'счётчик расписания живёт сам по себе');
+    assert.strictEqual(full.progress.schedule.possible, 2);
+  } finally { await s.close(); }
+});
+
+test('день из одного расписания даёт пустой прогресс, а не ноль процентов', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/schedule', { startMin: 540, title: 'A' });
+    const full = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-03/full');
+    // отмечать нечего — процента нет; иначе день с одним расписанием
+    // выглядел бы как проваленный
+    assert.strictEqual(full.progress.total.possible, 0);
+    assert.strictEqual(full.progress.total.percent, null);
   } finally { await s.close(); }
 });
 

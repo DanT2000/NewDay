@@ -272,7 +272,9 @@ textarea.input { height: auto; min-height: 92px; padding: var(--s-3); resize: ve
   padding: 6px var(--s-3); border-radius: var(--r-md);
 }
 .trow:hover { background: var(--surface-2); }
-.trow.done .bare { color: var(--ink-3); text-decoration: line-through; }
+/* Перечёркивается только название. Цифры — это запись сделанного:
+   «4×12, 60 кг» перечёркнутым читается как «отменено». */
+.trow.done .rowname, .sportrow.done .rowname { color: var(--ink-3); text-decoration: line-through; }
 .carried {
   font: var(--t-micro); color: var(--ink-3);
   padding: 1px 6px; border-radius: var(--r-pill); background: var(--surface-3);
@@ -596,9 +598,11 @@ textarea.input { height: auto; min-height: 92px; padding: var(--s-3); resize: ve
   .tp-time { font-size: 22px; }
 }
 
-/* ── Навигация по дням: один компактный блок над расписанием ── */
+/* ── Навигация по дням ────────────────────────────────────────
+   Слева день словами, по центру числа, стрелки по бокам, «Сегодня»
+   отдельно. Числа делят ширину между собой и не прокручиваются:
+   прокрутка внутри узкой полоски — это промах пальцем по определению. */
 .daynav {
-  display: flex; align-items: center;
   background: var(--surface);
   border: 1px solid var(--hairline);
   border-radius: var(--r-lg);
@@ -606,21 +610,61 @@ textarea.input { height: auto; min-height: 92px; padding: var(--s-3); resize: ve
   padding: var(--s-2) var(--s-3);
   min-width: 0;
 }
-.daynav .datestrip { flex: 1 1 auto; min-width: 0; gap: var(--s-2); }
+.daynav-in {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  align-items: center; gap: var(--s-2);
+  min-width: 0;
+}
 .daynav-label {
-  display: flex; align-items: baseline; gap: var(--s-2);
-  flex: none; white-space: nowrap;
+  display: flex; flex-direction: column; gap: 0;
+  white-space: nowrap; line-height: 1.15;
 }
 .daynav-label b { font: var(--t-body-md); }
+.daynav-label .small { color: var(--ink-3); }
 
-@media (max-width: 620px) {
-  .daynav { padding: var(--s-1) var(--s-2); }
-  .daynav-label b { font-size: 14px; }
-  .daynav-label .pill { display: none; }
+.daynav-arrow {
+  display: grid; place-items: center;
+  width: 36px; height: 40px; flex: none;
+  border: 1px solid var(--hairline-firm); border-radius: var(--r-md);
+  background: var(--surface); color: var(--ink-2);
+  font: 400 20px/1 var(--font-ui); cursor: pointer;
 }
-/* Совсем узкие экраны: номера дней уступают месту дате словами */
-@media (max-width: 480px) {
-  .daynav .datestrip-scroll { display: none; }
+.daynav-arrow:hover { background: var(--surface-2); color: var(--ink); }
+.daynav-arrow:active { transform: translateY(1px); }
+
+.daynav-grid { display: grid; gap: 2px; min-width: 0; }
+.daynav-grid .dchip { min-width: 0; width: 100%; }
+/* день, в котором что-то записано, помечен точкой — видно, где пусто */
+.dchip.has-data .dnum::after {
+  content: ''; display: block; margin: 2px auto 0;
+  width: 3px; height: 3px; border-radius: 50%; background: var(--c-day);
+}
+.dchip[aria-current="date"].has-data .dnum::after { background: var(--ink-invert); }
+
+/*
+ * Узкий экран — две строки: сверху день и «Сегодня», снизу числа со
+ * стрелками. Раньше на телефоне числа просто скрывались, и оставались две
+ * иконки 30×30 — попасть в них пальцем было нельзя.
+ */
+@media (max-width: 620px) {
+  .daynav { padding: var(--s-2); }
+  .daynav-in {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    /* Подпись растягивается на две колонки: иначе первая колонка равнялась
+       её ширине и сжимала числа до девяти пикселей */
+    grid-template-areas:
+      'label  label  today'
+      'prev   dates  next';
+    row-gap: var(--s-2);
+  }
+  .daynav-label { grid-area: label; flex-direction: row; align-items: baseline; gap: var(--s-2); }
+  .daynav-in > .btn { grid-area: today; }
+  .daynav-in > .daynav-arrow:first-of-type { grid-area: prev; }
+  .daynav-in > .daynav-arrow:last-of-type { grid-area: next; }
+  .daynav-grid { grid-area: dates; }
+  .daynav-arrow { width: 44px; height: 46px; font-size: 22px; }
+  .daynav-grid .dchip { padding: 6px 2px; min-height: 46px; }
 }
 
 /* ── Карточка привычки ────────────────────────────────────── */
@@ -729,3 +773,64 @@ textarea.input { height: auto; min-height: 92px; padding: var(--s-3); resize: ve
 }
 .installbar { display: none; }
 body.has-install-banner .installbar { display: grid; }
+
+/* ── Спорт таблицей ───────────────────────────────────────────
+   Три числа подряд без подписей прочитать нельзя. На широком экране
+   подписи стоят шапкой, на узком — у каждого поля: шапка там не влезает. */
+.sport-head, .sportrow {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto auto auto 18px;
+  align-items: center; gap: var(--s-3);
+  padding: 6px var(--s-3);
+}
+.sport-head { padding-bottom: 2px; }
+.sport-head .eyebrow { text-align: center; }
+.sport-head .eyebrow:first-of-type { text-align: left; }
+.sportrow { border-radius: var(--r-md); }
+.sportrow:hover { background: var(--surface-2); }
+.snum { display: grid; gap: 0; min-width: 0; }
+.snum-l { display: none; }
+.snum .mono { text-align: center; width: 100%; min-width: 5ch; }
+.sportrow .row-del { opacity: 0; transition: opacity var(--dur-fast); }
+.sportrow:hover .row-del, .sportrow:focus-within .row-del { opacity: 1; }
+
+@media (max-width: 560px) {
+  .sport-head { display: none; }
+  .sportrow {
+    grid-template-columns: 20px minmax(0, 1fr) 18px;
+    gap: var(--s-2) var(--s-2);
+  }
+  .sportrow .rowname { grid-column: 2; }
+  .sportrow .snum {
+    grid-row: 2; grid-column: 2;
+    display: flex; align-items: baseline; gap: 4px;
+  }
+  /* три поля в одну строку под названием */
+  .sportrow .snum:nth-of-type(1) { grid-column: 2; justify-self: start; }
+  .sportrow .snum:nth-of-type(2) { grid-column: 2; justify-self: center; }
+  .sportrow .snum:nth-of-type(3) { grid-column: 2; justify-self: end; }
+  .snum-l { display: inline; font: var(--t-micro); color: var(--ink-4); }
+  .snum .mono { width: 4ch; text-align: right; }
+}
+
+/* Контроль веса — в спорте, а не в шапке дня */
+.wrow {
+  display: flex; align-items: center; gap: var(--s-2);
+  padding: var(--s-3);
+  border-top: 1px solid var(--hairline); margin-top: var(--s-2);
+}
+
+/* ── Неделя привычки точками ──────────────────────────────────
+   Семь точек вместо абзаца текста: «идёт или сорвалось» читается
+   с одного взгляда, а места занимает меньше строки. */
+.hweek { display: flex; align-items: center; gap: 4px; margin-top: 5px; }
+.hdot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--surface-3); flex: none;
+}
+.hdot.done { background: var(--c-habits); }
+.hdot.missed { background: var(--c-danger); opacity: .7; }
+.hdot.skipped { background: var(--hairline-firm); }
+.hdot.off { background: transparent; box-shadow: inset 0 0 0 1px var(--hairline-firm); }
+.hdot.last { box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px var(--ink-4); }
+.hrow .hbar { margin-top: 6px; max-width: 240px; }

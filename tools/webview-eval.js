@@ -13,7 +13,10 @@ if (!expression) {
   process.exit(1);
 }
 
-const list = await (await fetch('http://127.0.0.1:9222/json/list')).json();
+// Порт можно переопределить: тот же инструмент нужен и для обычного
+// headless-браузера, а не только для WebView приложения.
+const port = process.env.CDP_PORT || 9222;
+const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
 const page = list.find(t => t.type === 'page' && t.webSocketDebuggerUrl);
 if (!page) { console.error('Страница WebView не найдена'); process.exit(1); }
 

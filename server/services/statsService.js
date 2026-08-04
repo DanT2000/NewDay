@@ -11,12 +11,29 @@ const { todayFor, addDays, rangeDates, weekdayInMask } = require('../lib/dates')
  * Всё остальное — не считается ни выполнением, ни пропуском.
  */
 function habitActiveOn(habit, date) {
-  if (habit.archived_at) return false;
   if (habit.is_active !== 1) return false;
+  // архив считается с даты архивации, а не задним числом: в днях, когда
+  // привычка ещё жила, её история остаётся правдой
+  if (!habitExistsOn(habit, date)) return false;
+  return weekdayInMask(date, habit.schedule_mask);
+}
+
+/**
+ * Существовала ли привычка в эту дату вообще.
+ *
+ * Отличается от «активна»: неактивная в конкретный день привычка — это
+ * законный выходной по маске дней недели, и её видно с подписью «сегодня
+ * выходной». А привычка, созданная 1 августа, в июльских днях не должна
+ * появляться вовсе: она там не отдыхала, её там не было.
+ */
+function habitExistsOn(habit, date) {
   const created = String(habit.created_at || '').slice(0, 10);
   if (created && date < created) return false;
+  const archived = String(habit.archived_at || '').slice(0, 10);
+  if (archived && date >= archived) return false;
+  // до начала челленджа отмечать нечего
   if (habit.challenge_start_date && date < habit.challenge_start_date) return false;
-  return weekdayInMask(date, habit.schedule_mask);
+  return true;
 }
 
 function pct(done, possible) {
@@ -150,20 +167,40 @@ function statsService(db, opts = {}) {
 
   /** Привычки на конкретный день — то, что показывается в блоке «Привычки сегодня». */
   function habitsForDate(user, date) {
-    const list = habits.list(user.id);
+    const list = habits.list(user.id, { includeArchived: true })
+      .filter(h => habitExistsOn(h, date));
     const logs = habits.logsForDate(user.id, date);
     const byId = {};
     for (const l of logs) byId[l.habit_id] = l;
 
+    /*
+     * К каждой привычке добавляем неделю истории и текущую серию.
+     * «Отмечено сегодня» само по себе ничего не говорит: смысл привычки
+     * в том, как идёт подряд, а для этого нужно видеть предыдущие дни.
+     * Неделя — потому что она укладывается в блок и совпадает с тем, как
+     * человек про привычки и думает.
+     */
+    const weekFrom = addDays(date, -6);
+    const weekDates = rangeDates(weekFrom, date);
+
     return list.map(h => {
       const log = byId[h.id];
       const active = habitActiveOn(h, date);
-      let challenge = null;
-      if (h.mode === 'challenge' && h.challenge_target_days) {
-        const s = habitStats(user, h.id, null, date);
-        challenge = s.challenge;
-      }
+      const s = habitStats(user, h.id, null, date);
+      const challenge = (h.mode === 'challenge' && h.challenge_target_days) ? s.challenge : null;
+
+      const weekMap = {};
+      for (const l of habits.logsInRange(user.id, h.id, weekFrom, date)) weekMap[l.date] = l.status;
+      const week = weekDates.map(d => ({
+        date: d,
+        status: weekMap[d] ?? null,
+        active: habitActiveOn(h, d),
+      }));
+
       return {
+        week,
+        streak: s.currentStreak,
+        bestStreak: s.bestStreak,
         id: h.id,
         title: h.title,
         emoji: h.emoji || '',
@@ -195,8 +232,19 @@ function statsService(db, opts = {}) {
     const habitRows = habitsForDate(user, date)
       .filter(h => h.activeToday && h.status !== 'skipped');
 
+    /*
+     * Прогресс — это ответ на вопрос «что я сделал», и в него входит только
+     * то, что человек отмечает осознанно: дела, питание, спорт, привычки.
+     *
+     * Расписание из прогресса исключено намеренно. Раньше оно считалось
+     * наравне с остальным, и на обычном дне девять строк расписания из
+     * двадцати шести шагов давали больше трети «прогресса дня» — то есть
+     * треть дня закрывалась галочками напротив «Подъём» и «Душ». Про время
+     * знают часы; заставлять человека отмечать, что он проснулся, незачем.
+     * Счётчик по расписанию остаётся отдельным полем: он нужен заголовку
+     * секции, но в общую сумму не входит.
+     */
     const parts = {
-      schedule: section(schedule.list(user.id, date)),
       work: section(allTasks.filter(t => t.bucket === 'work')),
       home: section(allTasks.filter(t => t.bucket === 'home')),
       food: section(meals.list(user.id, date)),
@@ -211,7 +259,11 @@ function statsService(db, opts = {}) {
     const done = Object.values(parts).reduce((s, p) => s + p.done, 0);
     const possible = Object.values(parts).reduce((s, p) => s + p.possible, 0);
 
-    return { total: { done, possible, percent: pct(done, possible) }, ...parts };
+    return {
+      total: { done, possible, percent: pct(done, possible) },
+      ...parts,
+      schedule: section(schedule.list(user.id, date)),
+    };
   }
 
   /** Сводка за период: прогресс по дням и статистика всех привычек. */

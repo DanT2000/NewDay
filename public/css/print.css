@@ -34,10 +34,9 @@
 
   /* Экранная обвязка на бумаге не нужна */
   .tl,
-  .day-head-screen,
   .hdr, .bottomnav, .installbar, .toasts, .overlay,
   .add-row, .row-del, .sdrag, .sshift, .sbell,
-  .icon-btn, .btn, .tabs, .datestrip, .sleft,
+  .icon-btn, .btn, .tabs, .daynav, .sleft,
   .no-print { display: none !important; }
 
   .app { display: block; }
@@ -116,9 +115,13 @@
   .ring .track { stroke: #ddd !important; }
   .chart, .wgrid, .dots, .bar { display: none; }
 
-  /* Все три корзины задач печатаются, а не только открытая вкладка */
-  .print-bucket { display: block !important; margin-top: 2mm; }
-  .print-bucket > .eyebrow { display: block; margin-bottom: 1mm; }
+  /* Разделы дня — четыре отдельных блока и печатаются как есть: отдельные
+     «печатные корзины» больше не нужны, вкладок на экране тоже нет */
+
+  /* Спорт: подписи столбцов нужны и на бумаге, цифры не перечёркиваются */
+  .sport-head { display: grid !important; }
+  .sportrow.done .mono { text-decoration: none; color: #000; }
+  .wrow { border-top: 0.3pt solid #999; }
 
   /* ── Привычки ───────────────────────────────────────────── */
   .hcard { break-inside: avoid; padding: 0.8mm 0; border-bottom: 0.3pt dotted #999; }

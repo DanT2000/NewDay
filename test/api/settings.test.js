@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const { loggedIn, api, getJson } = require('../helpers/client');
+const { loggedIn, api, getJson, today } = require('../helpers/client');
 const { startTestServer } = require('../helpers/server');
 const { runBackup } = require('../../server/lib/backup');
 
@@ -50,23 +50,24 @@ test('произвольные настройки кладутся в user_setti
 
 test('экспорт и импорт в режиме replace восстанавливают состояние', async () => {
   const s = await loggedIn();
+  const D = today();   // привычки нет в днях до её создания
   try {
-    await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/schedule',
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${D}/schedule`,
       { time: '9-13', title: 'Работа' });
-    await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-03/tasks',
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${D}/tasks`,
       { bucket: 'home', text: 'Посуда' });
     const h = await api(s.url, s.cookie, 'POST', '/api/v1/habits', { title: 'Вода', emoji: '💧' });
-    await api(s.url, s.cookie, 'PUT', `/api/v1/habits/${h.id}/log/2026-08-03`, { status: 'done' });
+    await api(s.url, s.cookie, 'PUT', `/api/v1/habits/${h.id}/log/${D}`, { status: 'done' });
 
     const dump = await getJson(s.url, s.cookie, '/api/v1/export');
     assert.strictEqual(dump.formatVersion, 1);
 
-    await api(s.url, s.cookie, 'DELETE', '/api/v1/days/2026-08-03');
+    await api(s.url, s.cookie, 'DELETE', `/api/v1/days/${D}`);
     await api(s.url, s.cookie, 'DELETE', `/api/v1/habits/${h.id}?hard=1`);
 
     await api(s.url, s.cookie, 'POST', '/api/v1/import', { data: dump, mode: 'replace' });
 
-    const full = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-03/full');
+    const full = await getJson(s.url, s.cookie, `/api/v1/days/${D}/full`);
     assert.strictEqual(full.schedule[0].title, 'Работа');
     assert.strictEqual(full.tasks.home[0].text, 'Посуда');
     const habits = await getJson(s.url, s.cookie, '/api/v1/habits');

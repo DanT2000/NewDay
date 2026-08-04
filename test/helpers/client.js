@@ -1,4 +1,27 @@
 const { startTestServer } = require('./server');
+const { todayFor, addDays, weekdayOf } = require('../../server/lib/dates');
+
+/*
+ * Даты для тестов считаются от «сегодня», а не пишутся числом.
+ *
+ * Часть тестов раньше держала в себе 2026-08-03 — день, когда их написали.
+ * Пока это был сегодняшний день, всё сходилось; на следующие сутки он стал
+ * прошлым, и тесты про привычки посыпались. Дата, зашитая числом, — бомба
+ * с часовым механизмом.
+ */
+const TZ = 'Europe/Moscow';                    // таймзона тестового пользователя
+const today = () => todayFor(TZ);
+const dayFromToday = n => addDays(today(), n);
+
+/** Ближайшая дата не раньше сегодня с нужным днём недели (1 — понедельник). */
+function nextWeekday(weekday) {
+  let d = today();
+  for (let i = 0; i < 7; i++) {
+    if (weekdayOf(d) === weekday) return d;
+    d = addDays(d, 1);
+  }
+  return d;
+}
 
 /** Достаёт значение cookie сессии из Set-Cookie, чтобы переиспользовать в следующих запросах. */
 function extractCookie(res) {
@@ -62,4 +85,7 @@ async function loggedIn({ email = 'user@example.com', password = 'secret12', ser
   };
 }
 
-module.exports = { loggedIn, post, api, getJson, call, extractCookie };
+module.exports = {
+  loggedIn, post, api, getJson, call, extractCookie,
+  today, dayFromToday, nextWeekday, TZ,
+};

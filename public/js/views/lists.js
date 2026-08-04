@@ -63,7 +63,7 @@ export function renderTasks(root, bucket) {
       checkbox(row.done === 1,
         v => mutate(get, row.id, { done: v ? 1 : 0 },
           () => api.tasks.update(state.date, row.id, { done: v }), true)),
-      h('input.bare', {
+      h('input.bare.rowname', {
         value: row.text, placeholder: 'Задача', 'aria-label': 'Текст задачи',
         onchange: e => mutate(get, row.id, { text: e.target.value.trim() },
           () => api.tasks.update(state.date, row.id, { text: e.target.value.trim() })),
@@ -85,7 +85,7 @@ export function renderTasks(root, bucket) {
     text: '+ задача',
     onclick: () => addAndFocus(
       () => api.tasks.create(state.date, { bucket, text: '' }),
-      '.trow .bare'),
+      '.trow .rowname'),
   }));
 
   replace(root, list);
@@ -126,7 +126,7 @@ export function renderMeals(root) {
           mutate(get, row.id, { time_min: min }, () => api.meals.update(state.date, row.id, { timeMin: min }), true);
         },
       }) : null,
-      h('input.bare', {
+      h('input.bare.rowname', {
         value: row.title, placeholder: 'Что едим', 'aria-label': 'Название',
         onchange: e => mutate(get, row.id, { title: e.target.value.trim() },
           () => api.meals.update(state.date, row.id, { title: e.target.value.trim() })),
@@ -165,7 +165,7 @@ export function renderMeals(root) {
     text: '+ приём пищи',
     onclick: () => addAndFocus(
       () => api.meals.create(state.date, { slot: nextSlot(rows), title: '' }),
-      '.trow .bare'),
+      '.trow .rowname'),
   }));
 
   replace(root, list);
@@ -179,41 +179,59 @@ function nextSlot(rows) {
 
 // ── Спорт ────────────────────────────────────────────────────
 
+/**
+ * Таблица, а не строка из цифр.
+ *
+ * Раньше подходы, повторы и вес шли тремя безымянными числами подряд, и
+ * понять, где что, было нельзя. Теперь у каждого столбца есть подпись:
+ * на широком экране — общей шапкой сверху, на узком — у каждого поля,
+ * потому что шапка там не влезает. Одна разметка, два вида.
+ *
+ * Цифры не перечёркиваются, когда упражнение отмечено: 4×12 с весом 60 —
+ * это запись сделанного, а не «отменено». Перечёркивается только название.
+ */
+const SPORT_FIELDS = [
+  { key: 'sets', label: 'подходы', short: 'подх.', hint: '4' },
+  { key: 'reps', label: 'повторы', short: 'повт.', hint: '12' },
+  { key: 'weight', label: 'вес, кг', short: 'кг', hint: '60' },
+];
+
 export function renderSport(root) {
   const rows = state.day?.sport ?? [];
   const list = h('div');
   const get = day => day.sport;
 
+  if (rows.length) {
+    add(list, h('div.sport-head',
+      h('span'),
+      h('span.eyebrow', { text: 'упражнение' }),
+      ...SPORT_FIELDS.map(f => h('span.eyebrow', { text: f.label })),
+      h('span')));
+  }
+
   for (const row of rows) {
-    add(list, h('div.trow', {
-      class: row.done ? 'done' : '',
-      style: { gridTemplateColumns: '20px minmax(0,1fr) 3.5ch 3.5ch 18px' },
-      dataset: { id: row.id },
-    },
+    add(list, h('div.sportrow', { class: row.done ? 'done' : '', dataset: { id: row.id } },
       checkbox(row.done === 1,
         v => mutate(get, row.id, { done: v ? 1 : 0 },
           () => api.sport.update(state.date, row.id, { done: v }), true)),
-      h('input.bare', {
+      h('input.bare.rowname', {
         value: row.exercise, placeholder: 'Упражнение', 'aria-label': 'Упражнение',
         onchange: e => mutate(get, row.id, { exercise: e.target.value.trim() },
           () => api.sport.update(state.date, row.id, { exercise: e.target.value.trim() })),
       }),
-      h('input.bare.mono', {
-        value: row.sets ?? '', placeholder: 'x', inputMode: 'numeric',
-        'aria-label': 'Подходы', style: { textAlign: 'center' },
-        onchange: e => {
-          const v = e.target.value === '' ? null : Number(e.target.value);
-          mutate(get, row.id, { sets: v }, () => api.sport.update(state.date, row.id, { sets: v }));
-        },
-      }),
-      h('input.bare.mono', {
-        value: row.reps ?? '', placeholder: 'x', inputMode: 'numeric',
-        'aria-label': 'Повторы', style: { textAlign: 'center' },
-        onchange: e => {
-          const v = e.target.value === '' ? null : Number(e.target.value);
-          mutate(get, row.id, { reps: v }, () => api.sport.update(state.date, row.id, { reps: v }));
-        },
-      }),
+      ...SPORT_FIELDS.map(f => h('label.snum',
+        h('span.snum-l', { text: f.short }),
+        h('input.bare.mono', {
+          value: row[f.key] ?? '', placeholder: f.hint, inputMode: 'decimal',
+          'aria-label': f.label,
+          onchange: e => {
+            const raw = e.target.value.trim().replace(',', '.');
+            const v = raw === '' ? null : Number(raw);
+            if (v !== null && !Number.isFinite(v)) { e.target.value = row[f.key] ?? ''; return; }
+            mutate(get, row.id, { [f.key]: v },
+              () => api.sport.update(state.date, row.id, { [f.key]: v }));
+          },
+        }))),
       h('button.row-del', {
         text: '×', title: 'Удалить', 'aria-label': 'Удалить',
         onclick: () => removeFrom(get, row.id, () => api.sport.remove(state.date, row.id)),
@@ -226,8 +244,55 @@ export function renderSport(root) {
     text: '+ упражнение',
     onclick: () => addAndFocus(
       () => api.sport.create(state.date, { exercise: '' }),
-      '.trow .bare'),
+      '.sportrow .rowname'),
   }));
 
+  add(list, weightBlock());
   replace(root, list);
+}
+
+/**
+ * Контроль веса живёт в спорте, а не в шапке дня: это часть той же истории
+ * про тело, и смотрят на него вместе с тренировкой. Пусто — значит пусто:
+ * ни на экране лишнего, ни на бумаге.
+ */
+function weightBlock() {
+  const d = state.day;
+  if (!d) return null;
+
+  const prev = state.daysIndex
+    .filter(x => x.date < state.date && x.weight !== null)
+    .sort((a, b) => b.date.localeCompare(a.date))[0]?.weight ?? null;
+  const delta = prev !== null && d.weight !== null ? +(d.weight - prev).toFixed(1) : null;
+
+  const input = h('input.bare.num.mono', {
+    value: d.weight ?? '', placeholder: '—', inputMode: 'decimal',
+    'aria-label': 'Вес, кг', style: { width: '6ch', textAlign: 'right' },
+    onchange: e => {
+      const raw = e.target.value.trim().replace(',', '.');
+      const v = raw === '' ? null : Number(raw);
+      if (v !== null && !Number.isFinite(v)) { e.target.value = d.weight ?? ''; return; }
+      state.day.weight = v;
+      pushWeight(v);
+    },
+  });
+
+  return h('div.wrow', { class: d.weight === null ? 'no-print' : '' },
+    h('span.eyebrow', { text: 'контроль веса' }),
+    h('span.grow'),
+    input,
+    h('span.small', { text: 'кг' }),
+    delta !== null && delta !== 0
+      ? h('span.micro', {
+          text: `${delta > 0 ? '↑' : '↓'}${Math.abs(delta)}`,
+          style: { color: delta > 0 ? 'var(--c-warn)' : 'var(--c-success)' },
+        })
+      : null);
+}
+
+async function pushWeight(value) {
+  try {
+    const updated = await api.patchDay(state.date, { weight: value }, state.day.rev);
+    state.day.rev = updated.rev;
+  } catch (e) { toast(e.message, 'error'); }
 }

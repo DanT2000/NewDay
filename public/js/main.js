@@ -26,7 +26,6 @@ import { mountInstallBanner } from './install-banner.js';
 import * as appUpdate from './update.js';
 
 const els = {};
-let taskTab = 'work';
 
 // ── Каркас ───────────────────────────────────────────────────
 
@@ -56,32 +55,40 @@ function buildLayout() {
       h('button.icon-btn', { text: '🖨', title: 'Печать дня', 'aria-label': 'Печать дня', onclick: openPrintDialog }),
       h('a.icon-btn', { href: '/settings.html', text: '⚙', title: 'Настройки', 'aria-label': 'Настройки' })));
 
-  els.dayHead = h('div.card.card-bd.pad.day-head-screen');
   els.schedule = h('div.card-bd');
-  els.tasks = h('div.card-bd');
+  els.work = h('div.card-bd');
+  els.home = h('div.card-bd');
+  els.food = h('div.card-bd');
   els.sport = h('div.card-bd');
   els.notes = h('div.card-bd.pad');
   els.progress = h('div');
   els.habits = h('div.card-bd');
-  els.tabs = h('div.tabs');
   els.schedHead = h('div.card-hd');
 
-  // На экране видна одна вкладка, на бумаге нужны все три корзины сразу
   // На бумагу всегда идёт список, даже если на экране включён таймлайн
   els.printSchedule = h('div.no-screen');
-  els.printHome = h('div.print-bucket.no-screen', h('span.eyebrow', { text: 'дом' }), h('div'));
-  els.printFood = h('div.print-bucket.no-screen', h('span.eyebrow', { text: 'питание' }), h('div'));
 
+  /*
+   * Работа, дом, питание и спорт — четыре отдельных блока друг под другом,
+   * а не вкладки. Вкладки прятали три четверти дня и заставляли листать,
+   * чтобы просто посмотреть, что осталось. Заодно исчезла разница между
+   * экраном и бумагой: печатать больше нечего «дополнительно», всё и так
+   * на месте.
+   */
   const main = h('div.col',
     els.strip,
-    els.dayHead,
     h('section.card', { dataset: { print: 'schedule' } }, els.schedHead, els.schedule, els.printSchedule),
     h('section.card', { dataset: { print: 'tasks' } },
-      h('div.card-hd', els.tabs),
-      h('span.eyebrow.no-screen', { text: 'работа' }),
-      els.tasks, els.printHome, els.printFood),
+      h('div.card-hd', h('span.eyebrow', { text: 'работа' }), h('span.grow'), els.workCount = h('span.micro')),
+      els.work),
+    h('section.card', { dataset: { print: 'tasks' } },
+      h('div.card-hd', h('span.eyebrow', { text: 'дом' }), h('span.grow'), els.homeCount = h('span.micro')),
+      els.home),
+    h('section.card', { dataset: { print: 'meals' } },
+      h('div.card-hd', h('span.eyebrow', { text: 'питание' }), h('span.grow'), els.foodCount = h('span.micro')),
+      els.food),
     h('section.card', { dataset: { print: 'sport' } },
-      h('div.card-hd', h('span.eyebrow', { text: 'спорт' })),
+      h('div.card-hd', h('span.eyebrow', { text: 'спорт' }), h('span.grow'), els.sportCount = h('span.micro')),
       els.sport));
 
   const side = h('div.col',
@@ -102,10 +109,12 @@ function buildLayout() {
   attachSwipe(els.body, () => go(addDays(state.date, -1)), () => go(addDays(state.date, 1)));
 }
 
-// ── Шапка дня ────────────────────────────────────────────────
+// ── Заметки ──────────────────────────────────────────────────
+//
+// Заголовок дня и «фокус» убраны: дату и так видно в навигации, а «главное
+// дело дня» — это либо задача, либо строка расписания, и отдельного поля
+// для него не нужно. Осталось то, что действительно свободный текст.
 
-const saveTitle = debounce(v => pushDayField({ title: v }));
-const saveFocus = debounce(v => pushDayField({ focus: v }));
 const saveNotes = debounce(v => pushDayField({ notes: v }));
 
 async function pushDayField(fields) {
@@ -116,80 +125,31 @@ async function pushDayField(fields) {
   } catch (e) { toast(e.message, 'error'); }
 }
 
-function renderDayHead() {
+function renderNotes() {
   const d = state.day;
   if (!d) return;
-  const prevWeight = state.daysIndex
-    .filter(x => x.date < state.date && x.weight !== null)
-    .sort((a, b) => b.date.localeCompare(a.date))[0]?.weight ?? null;
-  const delta = prevWeight !== null && d.weight !== null ? +(d.weight - prevWeight).toFixed(1) : null;
-
-  replace(els.dayHead, 
-    h('div.row',
-      h('div.grow',
-        h('input.bare.title', {
-          value: d.title, placeholder: 'Заголовок дня',
-          'aria-label': 'Заголовок дня',
-          style: { marginTop: '2px' },
-          oninput: e => saveTitle(e.target.value),
-        })),
-      h('div', { style: { textAlign: 'right' } },
-        h('div.eyebrow', { text: 'вес, кг' }),
-        h('div.row', { style: { justifyContent: 'flex-end', gap: '6px' } },
-          h('input.bare.num', {
-            value: d.weight ?? '', placeholder: '—', inputMode: 'decimal',
-            'aria-label': 'Вес', style: { width: '5ch', textAlign: 'right' },
-            onchange: e => {
-              const v = e.target.value === '' ? null : Number(e.target.value.replace(',', '.'));
-              if (v !== null && !Number.isFinite(v)) { e.target.value = d.weight ?? ''; return; }
-              state.day.weight = v;
-              pushDayField({ weight: v });
-            },
-          }),
-          delta !== null && delta !== 0
-            ? h('span.micro', {
-                text: `${delta > 0 ? '↑' : '↓'}${Math.abs(delta)}`,
-                style: { color: delta > 0 ? 'var(--c-warn)' : 'var(--c-success)' },
-              })
-            : null))),
-    h('div.row', { style: { marginTop: '10px' } },
-      h('span.eyebrow', { text: 'фокус', style: { flex: 'none' } }),
-      h('input.bare', {
-        value: d.focus, placeholder: 'Главное дело дня',
-        'aria-label': 'Фокус дня',
-        oninput: e => saveFocus(e.target.value),
-      })));
-
   replace(els.notes, h('textarea.input', {
     value: d.notes, placeholder: 'Заметки дня', 'aria-label': 'Заметки дня',
     oninput: e => saveNotes(e.target.value),
   }));
 }
 
-// ── Вкладки задач ────────────────────────────────────────────
+// ── Разделы дня ──────────────────────────────────────────────
 
-function renderTaskTabs() {
+function renderSections() {
   const d = state.day;
-  const counts = {
-    work: d?.tasks.work.length ?? 0,
-    home: d?.tasks.home.length ?? 0,
-    food: d?.meals.length ?? 0,
-  };
-  const label = { work: 'работа', home: 'дом', food: 'питание' };
+  const count = (done, all) => (all ? `${done}/${all}` : '');
+  const p = d?.progress ?? {};
 
-  replace(els.tabs, ...Object.keys(label).map(key =>
-    h('button.tab', {
-      role: 'tab', 'aria-selected': key === taskTab ? 'true' : 'false',
-      onclick: () => { taskTab = key; renderTaskTabs(); renderTaskBody(); },
-    }, label[key], counts[key] ? h('span.n', { text: counts[key] }) : null)));
-}
+  renderTasks(els.work, 'work');
+  renderTasks(els.home, 'home');
+  renderMeals(els.food);
+  renderSport(els.sport);
 
-function renderTaskBody() {
-  if (taskTab === 'food') renderMeals(els.tasks);
-  else renderTasks(els.tasks, taskTab);
-  // печатные корзины наполняются всегда, вне зависимости от открытой вкладки
-  renderTasks(els.printHome.lastElementChild, 'home');
-  renderMeals(els.printFood.lastElementChild);
+  els.workCount.textContent = count(p.work?.done, p.work?.possible);
+  els.homeCount.textContent = count(p.home?.done, p.home?.possible);
+  els.foodCount.textContent = count(p.food?.done, p.food?.possible);
+  els.sportCount.textContent = count(p.sport?.done, p.sport?.possible);
 }
 
 // ── Расписание: заголовок с переключателем вида ──────────────
@@ -244,13 +204,11 @@ function renderScheduleBody() {
 function renderAll() {
   renderDateStrip(els.strip, go);
   if (!state.day) return;
-  renderDayHead();
+  renderNotes();
   replace(els.printHead, printHead());
   renderSchedHead();
   renderScheduleBody();
-  renderTaskTabs();
-  renderTaskBody();
-  renderSport(els.sport);
+  renderSections();
   renderProgress(els.progress);
   renderHabitsToday(els.habits);
   scheduleNativeSync();

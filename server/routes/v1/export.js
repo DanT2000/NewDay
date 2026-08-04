@@ -2,6 +2,8 @@ const express = require('express');
 const { wrap, badRequest } = require('../../lib/errors');
 const v = require('../../lib/validate');
 const { publicUser, usersRepo } = require('../../repos/users');
+const { buildIcs } = require('../../lib/ical');
+const { todayFor, addDays } = require('../../lib/dates');
 
 const FORMAT_VERSION = 1;
 
@@ -40,6 +42,39 @@ module.exports = function exportRouter({ db }) {
       res.setHeader('Content-Disposition', 'attachment; filename="newday-export.json"');
     }
     res.json(payload);
+  }));
+
+  /**
+   * Расписание в iCalendar. Свой JSON понимает только NewDay, .ics —
+   * любой календарь; это способ посмотреть свой день там, где удобно.
+   *
+   * ?from&to — период, по умолчанию месяц назад и всё вперёд: выгружать
+   * годы истории в календарь незачем.
+   */
+  router.get('/export.ics', wrap((req, res) => {
+    const uid = req.user.id;
+    const from = req.query.from
+      ? v.date(req.query.from, { field: 'начало' })
+      : addDays(todayFor(req.user.timezone), -30);
+    const to = req.query.to ? v.date(req.query.to, { field: 'конец' }) : '9999-12-31';
+
+    const schedule = db.prepare(
+      `SELECT date, start_min, end_min, title, note, done, sort_order
+         FROM schedule_items WHERE user_id = ? AND date BETWEEN ? AND ?
+        ORDER BY date, start_min`).all(uid, from, to);
+    const meals = db.prepare(
+      `SELECT date, time_min, title, note, done, sort_order
+         FROM meals WHERE user_id = ? AND date BETWEEN ? AND ? AND time_min IS NOT NULL
+        ORDER BY date, time_min`).all(uid, from, to);
+
+    const body = buildIcs({ schedule, meals }, {
+      timeZone: req.user.timezone || 'Europe/Moscow',
+      calendarName: 'NewDay — расписание',
+    });
+
+    res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="newday.ics"');
+    res.send(body);
   }));
 
   router.post('/import', wrap((req, res) => {

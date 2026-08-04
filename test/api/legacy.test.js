@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { loggedIn, api, getJson } = require('../helpers/client');
+const { loggedIn, api, getJson, today } = require('../helpers/client');
 
 test('openapi.json валиден и покрывает ключевые пути', async () => {
   const s = await loggedIn();
@@ -62,8 +62,9 @@ test('старые эндпоинты привычек работают', async 
   const s = await loggedIn();
   try {
     const h = await api(s.url, s.cookie, 'POST', '/api/habits', { title: 'Вода', emoji: '💧' });
-    await api(s.url, s.cookie, 'PUT', `/api/habits/logs/2026-08-03/${h.id}`, { done: true });
-    const logs = await getJson(s.url, s.cookie, '/api/habits/logs/2026-08-03');
+    // дата от сегодня: в днях до создания привычки теперь нет вовсе
+    await api(s.url, s.cookie, 'PUT', `/api/habits/logs/${today()}/${h.id}`, { done: true });
+    const logs = await getJson(s.url, s.cookie, `/api/habits/logs/${today()}`);
     assert.strictEqual(logs[0].done, true);
     const stats = await getJson(s.url, s.cookie, '/api/habits/stats');
     assert.strictEqual(stats.habits.length, 1);

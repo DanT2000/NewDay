@@ -230,7 +230,7 @@ function quietHoursBlock(cfg, quietOn) {
           saveNotify({ quietFrom: a, quietTo: b });
         },
       })),
-    h('span.small', { text: 'В этот промежуток уведомления не приходят. Промежуток может пересекать полночь.' }));
+    h('span.small', { text: 'В этот промежуток уведомления не приходят.' }));
 }
 
 async function saveNotify(settings) {
@@ -633,11 +633,47 @@ function showSecret(created) {
 
 function dataSection() {
   return section('данные',
-    h('p.small', { text: 'Выгрузка содержит все дни, привычки, отметки и повторы в формате JSON.' }),
+    h('p.small', { text: 'Своя выгрузка — это всё: дни, привычки, отметки и повторы. '
+      + 'Ей же данные и загружаются обратно.' }),
     h('div.row', { style: { flexWrap: 'wrap' } },
-      h('a.btn', { href: '/api/v1/export?download=1', text: 'Скачать выгрузку', download: '' }),
+      h('a.btn', { href: '/api/v1/export?download=1', text: 'Скачать JSON', download: '' }),
       h('button.btn', { text: 'Загрузить из файла', onclick: openImport })),
+    h('div.divider'),
+    /*
+     * Календарь — путь наружу. Свой JSON понимает только NewDay, .ics
+     * открывает любой календарь, так что расписание можно посмотреть
+     * в Google Calendar или на часах, не дожидаясь синхронизации.
+     */
+    h('p.small', { text: 'Расписание в формате календаря (.ics) открывается в Google Calendar, '
+      + 'Apple Calendar и почти где угодно. Задачи и привычки в него не идут: у них нет времени начала.' }),
+    h('a.btn', { href: '/api/v1/export.ics', text: 'Скачать календарь (.ics)', download: '' }),
     h('a.small', { href: '/api/docs', text: 'Документация API →' }));
+}
+
+/**
+ * Выбор файла своей кнопкой.
+ *
+ * Системный `input[type=file]` рисуется браузером и в тёмной теме выглядит
+ * чужой деталью, а имя выбранного файла обрезается. Настоящий input
+ * остаётся — он спрятан и делает всю работу, кнопка только нажимает на него.
+ */
+function filePicker(onPick) {
+  const name = h('span.small', { text: 'Файл не выбран' });
+  const input = h('input', {
+    type: 'file', accept: 'application/json,.json',
+    class: 'sr-only',
+    onchange: e => {
+      const f = e.target.files[0] || null;
+      name.textContent = f ? f.name : 'Файл не выбран';
+      onPick(f);
+    },
+  });
+  return h('div.row', { style: { gap: 'var(--s-2)', minWidth: 0 } },
+    input,
+    h('button.btn.btn-sm', {
+      type: 'button', text: 'Выбрать файл', onclick: () => input.click(),
+    }),
+    name);
 }
 
 function openImport() {
@@ -646,10 +682,7 @@ function openImport() {
 
   openSheet('Загрузка данных', (body) => {
     add(body, h('div.stack',
-      field('Файл выгрузки', h('input.input', {
-        type: 'file', accept: 'application/json,.json',
-        onchange: e => { file = e.target.files[0] || null; },
-      })),
+      field('Файл выгрузки', filePicker(f => { file = f; })),
       field('Как загружать', segmented(
         [['merge', 'Дополнить'], ['replace', 'Заменить всё']], mode, v => { mode = v; }),
         '«Дополнить» пропускает дни, которые уже есть. «Заменить всё» стирает текущие данные и заливает файл.')));

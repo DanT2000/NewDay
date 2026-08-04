@@ -45,7 +45,9 @@ function row(x) {
     h('span.hemoji', { text: x.emoji || '•' }),
     h('div', { style: { minWidth: 0 } },
       h('div', { text: x.title, style: { fontWeight: 500 } }),
-      h('div.hmeta', ...meta(x))),
+      h('div.hmeta', ...meta(x)),
+      weekDots(x),
+      x.challenge ? challengeBar(x.challenge) : null),
     h('div.row',
       x.activeToday && !done && x.polarity === 'avoid'
         ? h('button.btn.btn-sm.btn-danger', { text: 'Сорвался', onclick: () => setStatus(x, 'missed') })
@@ -54,6 +56,36 @@ function row(x) {
         text: '⋯', title: 'Ещё', 'aria-label': 'Действия с привычкой',
         onclick: () => openMenu(x),
       })));
+}
+
+const DOT_TITLE = {
+  done: 'сделано', missed: 'пропущено', skipped: 'заморозка',
+  off: 'выходной', none: 'нет отметки',
+};
+
+/**
+ * Неделя одной строкой: семь точек, последняя — выбранный день.
+ *
+ * Одной галочки мало: она не отвечает на главный вопрос про привычку —
+ * идёт или сорвалось. Неделю видно не читая.
+ */
+function weekDots(x) {
+  const week = x.week ?? [];
+  if (!week.length) return null;
+  return h('div.hweek', ...week.map((d, i) => {
+    const kind = !d.active ? 'off' : (d.status ?? 'none');
+    return h('i', {
+      class: `hdot ${kind}${i === week.length - 1 ? ' last' : ''}`,
+      title: `${d.date.slice(8)}.${d.date.slice(5, 7)} — ${DOT_TITLE[kind]}`,
+    });
+  }));
+}
+
+/** У челленджа виден путь до цели, а не только число. */
+function challengeBar(c) {
+  const percent = c.target ? Math.min(100, Math.round((c.day / c.target) * 100)) : 0;
+  return h('div.hbar', { title: `${c.day} из ${c.target}` },
+    h('i', { style: { width: `${percent}%`, background: 'var(--c-habits)' } }));
 }
 
 function meta(x) {
@@ -69,6 +101,9 @@ function meta(x) {
       parts.push(h('span', { text: ` · срывов ${c.breaks}` }));
     }
     if (c.complete) parts.push(h('span', { text: ' · цель взята' }));
+  } else if (x.streak > 1) {
+    parts.push(h('span', { text: `подряд ${x.streak}` }));
+    if (x.bestStreak > x.streak) parts.push(h('span', { text: ` · лучшее ${x.bestStreak}` }));
   } else if (x.status === 'skipped') {
     parts.push(h('span', { text: 'пропуск не в счёт' }));
   } else if (x.status === 'missed') {

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { loggedIn, api, getJson } = require('../helpers/client');
+const { loggedIn, api, getJson, today, dayFromToday, nextWeekday } = require('../helpers/client');
 
 test('пресет «30 дней подряд» разворачивается в правильные поля', async () => {
   const s = await loggedIn();
@@ -62,10 +62,24 @@ test('привычка вне schedule_mask помечена activeToday = false
   try {
     const MON = 1 << 0;
     await api(s.url, s.cookie, 'POST', '/api/v1/habits', { title: 'Зал', scheduleMask: MON });
-    const tue = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-04/full'); // вторник
-    assert.strictEqual(tue.habits[0].activeToday, false);
-    const mon = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-03/full'); // понедельник
-    assert.strictEqual(mon.habits[0].activeToday, true);
+    // Дни берём начиная с сегодня: в днях до создания привычки теперь нет вовсе
+    const tue = await getJson(s.url, s.cookie, `/api/v1/days/${nextWeekday(2)}/full`);
+    assert.strictEqual(tue.habits[0].activeToday, false, 'вторник не в маске');
+    const mon = await getJson(s.url, s.cookie, `/api/v1/days/${nextWeekday(1)}/full`);
+    assert.strictEqual(mon.habits[0].activeToday, true, 'понедельник в маске');
+  } finally { await s.close(); }
+});
+
+test('привычки нет в днях до её создания — её там не было', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/habits', { title: 'Вода' });
+    const before = await getJson(s.url, s.cookie, `/api/v1/days/${dayFromToday(-1)}/full`);
+    assert.deepStrictEqual(before.habits, [], 'вчера привычки не существовало');
+    assert.strictEqual(before.progress.habits.possible, 0, 'и в прогресс вчера она не входит');
+
+    const now = await getJson(s.url, s.cookie, `/api/v1/days/${today()}/full`);
+    assert.strictEqual(now.habits.length, 1, 'а сегодня есть');
   } finally { await s.close(); }
 });
 
@@ -73,8 +87,8 @@ test('отметка привычки попадает в день и в про�
   const s = await loggedIn();
   try {
     const h = await api(s.url, s.cookie, 'POST', '/api/v1/habits', { title: 'Вода', emoji: '💧' });
-    await api(s.url, s.cookie, 'PUT', `/api/v1/habits/${h.id}/log/2026-08-03`, { status: 'done' });
-    const full = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-03/full');
+    await api(s.url, s.cookie, 'PUT', `/api/v1/habits/${h.id}/log/${today()}`, { status: 'done' });
+    const full = await getJson(s.url, s.cookie, `/api/v1/days/${today()}/full`);
     assert.strictEqual(full.habits[0].status, 'done');
     assert.strictEqual(full.progress.habits.done, 1);
     assert.strictEqual(full.progress.habits.possible, 1);
