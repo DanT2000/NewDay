@@ -30,15 +30,26 @@ let stats7 = null;      // сводка привычек за неделю, гр
 // ── Каркас ───────────────────────────────────────────────────
 
 function build() {
-  els.head = h('div');
-  els.week = h('div.weekstrip');
+  els.head = h('div.nd-head');
+  els.week = h('div.weekstrip.nd-week');
   els.now = h('div');
   els.near = h('div.sect');
   els.tiles = h('div.tiles');
 
-  replace($('#app'),
-    screen(els.head, els.week, els.now, els.near, els.tiles),
-    bottomNav('today'));
+  /*
+   * На компьютере экран расходится в две колонки: слева текущий блок и
+   * соседние строки расписания, справа итоги дня. Классы-подсказки нужны
+   * только раскладке — на телефоне блоки просто идут друг за другом в том
+   * же порядке.
+   */
+  const main = screen(
+    els.head,
+    els.week,
+    h('div.nd-left', els.now, els.near),
+    h('div.nd-right', els.tiles));
+  main.classList.add('is-now');
+
+  replace($('#app'), main, bottomNav('today'));
 }
 
 // ── Шапка дня ────────────────────────────────────────────────

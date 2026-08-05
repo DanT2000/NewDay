@@ -67,7 +67,7 @@ export function iconButton(name, { title, onclick, accent = false, size = '17px'
 
 /** Переключатель темы — одинаковый на всех экранах. */
 export function themeButton() {
-  const btn = h('button.roundbtn', {
+  const btn = h('button.roundbtn.is-theme', {
     type: 'button',
     title: `Тема: ${THEME_LABEL[getTheme()]}`,
     'aria-label': 'Переключить тему',

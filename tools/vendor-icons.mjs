@@ -27,7 +27,7 @@ const WANTED = {
     'arrows-in-line-vertical', 'arrows-out-line-horizontal', 'battery-high',
     'bell', 'bell-ringing', 'bell-slash', 'cake', 'calendar-blank',
     'calendar-check', 'caret-left', 'caret-right', 'cell-signal-full',
-    'chart-bar', 'clock',
+    'chart-bar', 'check-circle', 'clock',
     'clock-clockwise', 'device-mobile', 'dots-six-vertical', 'dots-three-vertical',
     'file', 'file-arrow-down', 'file-arrow-up', 'gear', 'hand-tap', 'key',
     'laptop', 'list-checks', 'list-dashes', 'magic-wand', 'math-operations',

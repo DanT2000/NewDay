@@ -92,6 +92,34 @@ async function request(method, path, body, headers = {}) {
 
 export const GET    = (p, h)    => request('GET', p, undefined, h);
 export const POST   = (p, b, h) => request('POST', p, b, h);
+
+/**
+ * Отправка формы: нужна только там, где везут файл, — сейчас это запись
+ * голоса. Content-Type не ставим руками: браузер сам допишет границу
+ * multipart, а заданный вручную заголовок эту границу потеряет и сервер
+ * получит нечитаемое тело.
+ */
+export async function postForm(path, form) {
+  const token = deviceToken();
+  let res;
+  try {
+    res = await fetch(apiBase() + path, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+  } catch {
+    throw new ApiError(0, 'NETWORK', 'Нет связи с сервером');
+  }
+
+  if (res.status === 401) { onUnauthorized(); throw new ApiError(401, 'UNAUTHORIZED', 'Требуется вход'); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const e = data.error || {};
+    throw new ApiError(res.status, e.code || 'ERROR', e.message || `Ошибка ${res.status}`);
+  }
+  return data;
+}
 export const PATCH  = (p, b, h) => request('PATCH', p, b, h);
 export const PUT    = (p, b, h) => request('PUT', p, b, h);
 export const DELETE = (p, h)    => request('DELETE', p, undefined, h);

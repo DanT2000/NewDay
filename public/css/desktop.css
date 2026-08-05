@@ -1,0 +1,228 @@
+/* ============================================================
+   NewDay — вид на компьютере.
+
+   Всё в этом файле включается только на широком экране. Телефонная
+   раскладка остаётся ровно такой, какой была: ни одно правило отсюда
+   не действует ниже порога.
+
+   Порог — 1080 px. Ниже него колонка навигации (236) плюс содержимое
+   уже теснят друг друга, и разделы внизу удобнее.
+
+   Размеры взяты из эталонного макета: колонка 236, строка навигации 44,
+   рабочее поле с отступами 22/28, три колонки «Сейчас» в пропорции
+   1.15 / 1 / 320.
+   ============================================================ */
+
+/* Каркас есть всегда, но до порога это просто обёртка */
+.applayout { display: block; }
+#sidebar { display: none; }
+
+@media (min-width: 1080px) {
+
+  .applayout { display: flex; align-items: stretch; min-height: 100vh; }
+
+  /* ── Колонка разделов ─────────────────────────────────────── */
+  #sidebar {
+    position: sticky; top: 0; align-self: flex-start;
+    display: flex; flex-direction: column; gap: 26px;
+    width: 236px; flex: none; height: 100vh;
+    box-sizing: border-box; padding: 22px 16px;
+    background: var(--bg);
+    box-shadow: 1px 0 0 var(--hairline);
+  }
+
+  .sb-brand {
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 6px; color: inherit; text-decoration: none;
+  }
+  .sb-mark {
+    width: 30px; height: 30px; flex: none;
+    display: grid; place-items: center;
+    border: 1px solid var(--accent); border-radius: 9px;
+    color: var(--accent);
+  }
+  .sb-brand b { font: 500 17px/1 var(--font-ui); letter-spacing: -.01em; }
+
+  .sb-nav { display: flex; flex-direction: column; gap: 3px; }
+  .sb-item {
+    display: flex; align-items: center; gap: 11px;
+    height: 44px; padding: 0 12px; border-radius: 12px;
+    color: var(--ink-3); text-decoration: none;
+    font: 500 15px/1 var(--font-ui);
+    transition: background var(--dur-fast), color var(--dur-fast);
+  }
+  .sb-item:hover { color: var(--ink); background: var(--surface); }
+  .sb-item.is-active { background: var(--accent-soft); color: var(--accent); }
+  .sb-label { flex: 1; min-width: 0; }
+  .sb-badge { font: var(--t-time); color: var(--ink-3); flex: none; }
+  .sb-item.is-active .sb-badge { color: var(--accent); }
+
+  /* Низ колонки прижат к полу: между разделами и профилем — воздух */
+  .sb-foot { margin-top: auto; display: flex; flex-direction: column; gap: 10px; }
+
+  .sb-ai {
+    display: flex; align-items: center; justify-content: center; gap: 9px;
+    height: 44px; border: 0; border-radius: 12px; cursor: pointer;
+    background: var(--accent); color: var(--on-accent);
+    font: 500 14px/1 var(--font-ui);
+  }
+  .sb-ai:hover { filter: brightness(1.06); }
+  .sb-ai:active { transform: translateY(1px); }
+
+  .sb-ghost {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    height: 42px; padding: 0 12px; cursor: pointer;
+    border: 1px solid var(--hairline); border-radius: 12px;
+    background: transparent; color: var(--ink-3);
+    font: 500 13px/1 var(--font-ui);
+  }
+  .sb-ghost:hover { color: var(--ink); border-color: var(--accent); }
+
+  .sb-user {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: 12px;
+    background: var(--surface); color: inherit; text-decoration: none;
+  }
+  .sb-user:hover { background: var(--surface-2); }
+  .sb-avatar {
+    width: 30px; height: 30px; flex: none;
+    display: grid; place-items: center; border-radius: 9px;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .sb-user-body { flex: 1; min-width: 0; }
+  .sb-user-name {
+    font: 400 14px/1.2 var(--font-ui);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .sb-user-note { font: 400 11px/1.2 var(--font-ui); color: var(--ink-3); margin-top: 4px; }
+
+  /* ── Рабочее поле ─────────────────────────────────────────── */
+  .workarea { flex: 1; min-width: 0; }
+
+  /* Разделы внизу теперь слева — снизу их быть не должно */
+  .tabbar { display: none; }
+
+  /*
+   * Шапка с логотипом и значками не нужна: логотип, тема и настройки уже
+   * в боковой колонке. Две одинаковые кнопки темы на одном экране — это
+   * вопрос «а эта что делает», а не удобство.
+   */
+  .hdr { display: none; }
+
+  /*
+   * Полоса больше не нужна: содержимое получает всю ширину, а нижний
+   * отступ под навигацию — нет.
+   */
+  .screen {
+    max-width: none; margin: 0;
+    padding: 22px 28px 34px;
+    gap: var(--s-5);
+  }
+  .app-body { padding-bottom: 34px; }
+
+  /*
+   * «Сейчас» — две колонки. На эталоне их три, но там в средней стоят
+   * задачи и питание, которых на этом экране нет: он отвечает на вопрос
+   * «что происходит сейчас», а не показывает весь день. Пустая третья
+   * колонка была бы обещанием, за которым ничего нет.
+   */
+  .screen.is-now {
+    display: grid; align-items: start; gap: 20px;
+    grid-template-columns: minmax(0, 1.35fr) minmax(300px, 380px);
+    grid-template-areas:
+      'head head'
+      'week week'
+      'left right';
+  }
+  .screen.is-now > .nd-head { grid-area: head; }
+  .screen.is-now > .nd-week { grid-area: week; }
+  .screen.is-now > .nd-left { grid-area: left; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .screen.is-now > .nd-right { grid-area: right; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  /* Плитки прогресса в узкой колонке встают в один столбец, а не в три */
+  .screen.is-now .tiles { grid-template-columns: minmax(0, 1fr); }
+
+  /*
+   * «Дела» на компьютере.
+   *
+   * Расписание идёт во всю ширину, а не в колонку. Его строка — это
+   * редактор: время начала, время конца, название, будильник, выбор
+   * диапазона, сдвиг, галочка и удаление. В колонке 390 пикселей на
+   * название оставалось девяносто, и «Работа, вторая половина»
+   * превращалась в «Раб». Ширина здесь не роскошь, а условие читаемости.
+   *
+   * Ниже — разделы дня в две колонки и итоги в третьей.
+   */
+  .app-body {
+    max-width: none; padding: 22px 28px 34px; gap: 20px;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) minmax(300px, 340px);
+  }
+
+  /* Числа не растягиваются на всю стену, а стоят по центру полосы */
+  .daynav-grid { width: min(100%, 760px); justify-self: center; }
+
+  /* Полоска дней и расписание — про весь экран, а не про колонку */
+  .app-body > .daynav,
+  .app-body > .nd-c1 { grid-column: 1 / -1; }
+
+  /* Работа, дом, питание, спорт — попарно: четыре карточки столбиком
+     оставляли справа пустоту */
+  .app-body > .nd-c2 {
+    grid-column: 1 / 3;
+    display: grid; align-content: start; gap: 20px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .app-body > .nd-c3 { grid-column: 3; }
+
+  /* ── Заметки сеткой ───────────────────────────────────────── */
+  .notes-grid {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px; align-items: start;
+  }
+  /* Пустое состояние — не карточка: ему вся ширина */
+  .notes-grid > .emptybox { grid-column: 1 / -1; }
+  .notes-grid > .notecard { min-height: 132px; }
+
+  /*
+   * Привычки. Строка привычки — это название, полоса выполнения и неделя
+   * точками; на 1150 пикселях всё это расползается, и полоса перестаёт
+   * читаться как полоса. Эталон ограничивает раздел 900 — берём 980.
+   */
+  #habits-col, #stats-col { max-width: 980px; }
+  .app-body:has(> #habits-col),
+  .app-body:has(> #stats-col) { grid-template-columns: minmax(0, 1fr); }
+
+  /*
+   * Настройки в две колонки. Группы разной высоты, поэтому выравниваем
+   * их по верху: растянутые до общей высоты карточки выглядели бы пустыми.
+   */
+  /*
+   * Две колонки многоколоночной вёрсткой, а не сеткой. У сетки строки
+   * выравниваются по самой высокой карточке, и под короткими группами
+   * зияли дыры в полэкрана. Здесь группы просто перетекают.
+   */
+  .rscreen {
+    display: block; columns: 2; column-gap: 16px;
+    max-width: 1000px; margin: 0;
+    padding: 22px 28px 34px;
+  }
+  .rscreen > * { break-inside: avoid; margin-bottom: 14px; }
+  /* Заголовок и карточка аккаунта — во всю ширину: это не группа настроек */
+  .rscreen > .rtitle,
+  .rscreen > .raccount { column-span: all; }
+
+  /* Вторая кнопка темы в шапке лишняя: она уже в боковой колонке */
+  .roundbtn.is-theme { display: none; }
+
+  /* Заголовок экрана крупнее: на мониторе 28 px теряется */
+  .topbar-title { font-size: 26px; }
+}
+
+/*
+ * Между 1000 и 1080 «Дела» уже показывали две колонки по старому правилу
+ * из base.css. Оставляем: боковой навигации там ещё нет, ширины хватает.
+ */
+
+/* Очень широкие мониторы: содержимое не должно расползаться на всю стену */
+@media (min-width: 1700px) {
+  .screen, .app-body { max-width: 1420px; margin-inline: auto; }
+}

@@ -29,6 +29,8 @@ import {
 import { state, today } from '../store.js';
 
 const CHIP_MIN = 40;     // ниже этого палец уже не попадает
+/** Шире этого числам расти незачем: столбцы становятся пустыми полями. */
+const GRID_MAX = 760;
 let observed = null;
 
 /** Понедельник недели, в которую попадает дата. */
@@ -36,12 +38,19 @@ function weekStart(date) {
   return addDays(date, -(weekdayOf(date) - 1));
 }
 
-/** Сколько недель показываем при такой ширине. */
+/**
+ * Сколько недель показываем при такой ширине.
+ *
+ * Считаем не от всей полосы, а от того, сколько ей отдано: на мониторе
+ * числа иначе расползаются на всю стену и читаются хуже, чем на телефоне.
+ * Больше двух недель не показываем — за этим уже календарь, а строка
+ * из двадцати восьми чисел перестаёт быть строкой.
+ */
 function weeksFor(width) {
   if (!width) return 1;
-  const forChips = width - 24;             // отступы карточки
+  const forChips = Math.min(width, GRID_MAX) - 24;   // отступы карточки
   const weeks = Math.floor(forChips / (7 * CHIP_MIN));
-  return Math.max(1, Math.min(4, weeks));
+  return Math.max(1, Math.min(2, weeks));
 }
 
 export function renderDateStrip(root, onPick) {

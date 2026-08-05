@@ -214,6 +214,15 @@
 .notecard:hover { background: var(--surface-2); }
 .notecard-hd { display: flex; align-items: center; gap: var(--s-2); color: var(--ink-3); }
 .notecard-hd .eyebrow { flex: 1 1 auto; }
+/* Карточка «добавить»: пунктир говорит, что тут пока ничего нет */
+.notecard.is-new {
+  display: flex; align-items: center; justify-content: center; gap: var(--s-2);
+  min-height: 96px; background: transparent;
+  border: 1px dashed var(--hairline-firm); box-shadow: none;
+  color: var(--ink-3); font: var(--t-body-md);
+}
+.notecard.is-new:hover { color: var(--accent); border-color: var(--accent); background: transparent; }
+
 /* Три строки: узнать заметку хватает, а список остаётся списком */
 .notecard-text {
   margin: 6px 0 0; font: var(--t-body); color: var(--ink-2);

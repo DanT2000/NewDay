@@ -14,16 +14,21 @@
   <link rel="stylesheet" href="/css/base.css">
   <link rel="stylesheet" href="/css/components.css">
   <link rel="stylesheet" href="/css/shell.css">
+  <link rel="stylesheet" href="/css/desktop.css">
   <link rel="stylesheet" href="/css/print.css" media="print">
   <script src="/js/boot-theme.js"></script>
 </head>
 <body>
-  <div id="app"></div>
+  <div class="applayout">
+    <aside id="sidebar" hidden></aside>
+    <div class="workarea"><div id="app"></div></div>
+  </div>
   <script type="module" src="/js/now.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
       addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js').catch(() => {}));
     }
   </script>
+  <script type="module" src="/js/sidebar.js"></script>
 </body>
 </html>

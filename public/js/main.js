@@ -76,9 +76,15 @@ function buildLayout() {
    * экраном и бумагой: печатать больше нечего «дополнительно», всё и так
    * на месте.
    */
-  const main = h('div.col',
-    els.strip,
-    h('section.card', { dataset: { print: 'schedule' } }, els.schedHead, els.schedule, els.printSchedule),
+  /*
+   * Три колонки на компьютере, одна на телефоне. Порядок один и тот же:
+   * сложенные друг за другом колонки дают ровно ту же последовательность,
+   * что была раньше, — расписание, разделы, итоги.
+   */
+  const left = h('div.col.nd-c1',
+    h('section.card', { dataset: { print: 'schedule' } }, els.schedHead, els.schedule, els.printSchedule));
+
+  const mid = h('div.col.nd-c2',
     h('section.card', { dataset: { print: 'tasks' } },
       h('div.card-hd', h('span.eyebrow', { text: 'работа' }), h('span.grow'), els.workCount = h('span.micro')),
       els.work),
@@ -92,7 +98,7 @@ function buildLayout() {
       h('div.card-hd', h('span.eyebrow', { text: 'спорт' }), h('span.grow'), els.sportCount = h('span.micro')),
       els.sport));
 
-  const side = h('div.col',
+  const side = h('div.col.nd-c3',
     // прогресс на бумаге не нужен: печатают план, а не итоги
     h('section.card.no-print', { dataset: { print: 'progress' } }, els.progress),
     h('section.card', { dataset: { print: 'habits' } },
@@ -105,7 +111,7 @@ function buildLayout() {
       els.notes, printLines()));
 
   els.printHead = h('div', { class: 'no-screen' });
-  els.body = h('div.app-body', els.printHead, main, side);
+  els.body = h('div.app-body', els.printHead, els.strip, left, mid, side);
   replace(app, els.header, els.body, bottomNav('tasks'));
   attachSwipe(els.body, () => go(addDays(state.date, -1)), () => go(addDays(state.date, 1)));
 }
