@@ -169,7 +169,17 @@ function notificationService(db, { push, now = () => Date.now() } = {}) {
 
       const startsAt = zonedTimeToUtc(date, meal.time_min, user.timezone);
       for (const before of leads) {
-        const fireAt = startsAt - before * 60000;
+        /*
+         * −1 — это «к концу окна», а не «за минус одну минуту»: у окна
+         * «с 12:00 до 14:00» напомнить к концу значит в 14:00. Считаем от конца
+         * окна, каким он лежит сейчас, — поэтому правка окна двигает и
+         * напоминание. Если окна нет, отметке нечего означать.
+         */
+        const atEnd = before === -1;
+        if (atEnd && (meal.end_min === null || meal.end_min === undefined)) { skipped += 1; continue; }
+        const fireAt = atEnd
+          ? zonedTimeToUtc(date, meal.end_min, user.timezone)
+          : startsAt - before * 60000;
         if (fireAt <= now()) { skipped += 1; continue; }
         if (inQuietHours(minutesInZone(fireAt, user.timezone), cfg.quietFrom, cfg.quietTo)) {
           skipped += 1;
@@ -181,12 +191,14 @@ function notificationService(db, { push, now = () => Date.now() } = {}) {
         queue.upsertQueued(user.id, key, fireAt, {
           kind: 'notify',
           title: 'NewDay',
-          body: before > 0
-            ? `${meal.title || 'Приём пищи'} — через ${humanLead(before)}, в ${formatMinutes(meal.time_min)}`
-            : `${meal.title || 'Приём пищи'} — пора`,
+          body: atEnd
+            ? `${meal.title || 'Приём пищи'} — окно закрывается в ${formatMinutes(meal.end_min)}`
+            : before > 0
+              ? `${meal.title || 'Приём пищи'} — через ${humanLead(before)}, в ${formatMinutes(meal.time_min)}`
+              : `${meal.title || 'Приём пищи'} — пора`,
           date,
           itemId: `meal${meal.id}`,
-          startMin: meal.time_min,
+          startMin: atEnd ? meal.end_min : meal.time_min,
           url: `/web.html#${date}`,
         });
       }

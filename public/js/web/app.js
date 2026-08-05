@@ -2720,8 +2720,14 @@ const BODIES = {
     add(durs, ...[15, 30, 45, 60, 90].map(v =>
       sheetChip(durLabel(v), state.mealDur === v, () => setIn({ mealDur: v }), 'wchip-dur')));
 
-    const leads = h('div.wwrap');
-    add(leads, ...LEADS.map(l => sheetChip(l.label, state.mealLeads.includes(l.k),
+    /*
+     * У окна есть свой срок — «к концу окна». Съесть можно где угодно внутри,
+     * но напомнить полезно и о том, что оно закрывается; момент считается от
+     * конца окна, поэтому правка окна двигает и напоминание.
+     */
+    const mealLeadOpts = window_ ? [...LEADS, { k: 'end', label: 'к концу окна' }] : LEADS;
+    const leads = h('div.wwrap.wleads');
+    add(leads, ...mealLeadOpts.map(l => sheetChip(l.label, state.mealLeads.includes(l.k),
       () => setIn({ mealLeads: toggleLead(state.mealLeads, l.k) }))));
 
     const schedCard = h('button.wtoggle-card', { type: 'button', onclick: () => setIn(s => ({ mealSched: !s.mealSched })) },

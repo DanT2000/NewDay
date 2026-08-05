@@ -301,3 +301,61 @@ test('чужая подписка не видна', async () => {
     assert.strictEqual(status.subscriptions.length, 0);
   } finally { await a.close(); }
 });
+
+/*
+ * Напоминания о еде. Раньше их не планировал никто: читались только строки
+ * расписания, а колокольчик у приёма пищи в интерфейсе горел — обещал то,
+ * чего не будет.
+ */
+test('приём пищи со сроком планирует напоминание', async () => {
+  const s = await loggedIn(withPush());
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/push/subscribe', { subscription: SUB });
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/meals`,
+      { title: 'Обед', timeMin: 780, remindBefore: [15] });
+
+    const status = await getJson(s.url, s.cookie, '/api/v1/push/status');
+    assert.strictEqual(status.pending.length, 1, 'напоминание о еде запланировано');
+    assert.match(status.pending[0].payload.body, /Обед/);
+    // 13:00 минус 15 минут по Москве = 12:45 = 09:45 UTC
+    assert.strictEqual(new Date(status.pending[0].fireAt).toISOString(), `${tomorrow}T09:45:00.000Z`);
+  } finally { await s.close(); }
+});
+
+test('«к концу окна» считается от конца окна, а не от начала', async () => {
+  const s = await loggedIn(withPush());
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/push/subscribe', { subscription: SUB });
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    // окно 12:00–14:00, отметка «к концу окна» — это −1, а не минус ширина окна
+    const meal = await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/meals`,
+      { title: 'Обед окном', timeMin: 720, endMin: 840, remindBefore: [-1] });
+    assert.strictEqual(meal.remind_before_json, '[-1]', 'отметка хранится как отметка');
+
+    let status = await getJson(s.url, s.cookie, '/api/v1/push/status');
+    assert.strictEqual(status.pending.length, 1);
+    assert.match(status.pending[0].payload.body, /окно закрывается в 14:00/);
+    assert.strictEqual(new Date(status.pending[0].fireAt).toISOString(), `${tomorrow}T11:00:00.000Z`);
+
+    // правка окна двигает и напоминание: момент считается от конца, а не хранится
+    await api(s.url, s.cookie, 'PATCH', `/api/v1/days/${tomorrow}/meals/${meal.id}`, { endMin: 900 });
+    status = await getJson(s.url, s.cookie, '/api/v1/push/status');
+    assert.strictEqual(new Date(status.pending[0].fireAt).toISOString(), `${tomorrow}T12:00:00.000Z`);
+  } finally { await s.close(); }
+});
+
+test('приём пищи со своим блоком в расписании не напоминает дважды', async () => {
+  const s = await loggedIn(withPush());
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/push/subscribe', { subscription: SUB });
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    const block = await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/schedule`,
+      { time: '13:00-13:30', title: 'Обед', kind: 'meal', alarmMode: 'notify', remindBefore: [15] });
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/meals`,
+      { title: 'Обед', timeMin: 780, remindBefore: [15], scheduleItemId: block.id });
+
+    const status = await getJson(s.url, s.cookie, '/api/v1/push/status');
+    assert.strictEqual(status.pending.length, 1, 'напоминает блок, а не оба');
+  } finally { await s.close(); }
+});

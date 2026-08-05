@@ -27,14 +27,26 @@ const BUCKETS = ['work', 'home'];
 const REMIND_MAX = 7 * 24 * 60;
 
 /**
+ * «К концу окна» — не число минут, а отметка.
+ *
+ * У окна «обед с 12:00 до 14:00» напомнить к концу значит в 14:00, и в минутах
+ * «до начала» это минус ширина окна. Хранить такое число нельзя: стоит поменять
+ * окно, и напоминание уедет. Поэтому храним отметку, а момент считает
+ * планировщик — по концу окна, каким он на тот момент будет.
+ */
+const AT_END = -1;
+
+/**
  * Сроки предупреждения списком. Отсортированы по убыванию — первым идёт
  * самый ранний: именно его видит всё, что умеет только одно число.
  */
-function normalizeLeads(raw) {
+function normalizeLeads(raw, { allowEnd = false } = {}) {
   if (raw === null) return [];
   const arr = Array.isArray(raw) ? raw : [raw];
   const nums = arr
-    .map(x => v.int(x, { min: 0, max: REMIND_MAX, field: 'напомнить за' }))
+    .map(x => (allowEnd && Number(x) === AT_END
+      ? AT_END
+      : v.int(x, { min: 0, max: REMIND_MAX, field: 'напомнить за' })))
     .filter(x => x !== null && x !== undefined);
   return [...new Set(nums)].sort((a, b) => b - a).slice(0, 6);
 }
@@ -109,7 +121,8 @@ function sanitizeMeal(body, { partial }) {
   }, partial);
 
   if (body.remindBefore !== undefined) {
-    const list = normalizeLeads(body.remindBefore);
+    // у приёма пищи есть окно, поэтому ему разрешена отметка «к концу окна»
+    const list = normalizeLeads(body.remindBefore, { allowEnd: true });
     out.remindBefore = list.length ? JSON.stringify(list) : null;
   }
   return out;
