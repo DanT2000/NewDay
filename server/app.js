@@ -34,7 +34,7 @@ const { aiService } = require('./services/aiService');
  * должен — иначе тесты станут падать от чужих лимитов и молчать о своих
  * ошибках.
  */
-function createApp({ db, config, fetchImpl }) {
+function createApp({ db, config, fetchImpl, env = process.env }) {
   const app = express();
 
   if (config.trustProxy) app.set('trust proxy', 1);
@@ -76,10 +76,10 @@ function createApp({ db, config, fetchImpl }) {
 
   // Помощник обращается к облаку напрямую. Ключ и модели задаёт владелец
   // в админских настройках; переменные окружения — только первые значения.
-  const ai = aiService(db, { env: process.env, fetchImpl });
+  const ai = aiService(db, { env, fetchImpl });
   app.locals.ai = ai;
 
-  app.use('/api/health', healthRouter(db));
+  app.use('/api/health', healthRouter(db, { ai }));
   // Спецификация и документация доступны без входа
   app.use('/api/v1', openapiRouter({ config }));
   app.get('/api/docs', (_req, res) => res.sendFile(path.join(__dirname, '../public/api-docs.html')));

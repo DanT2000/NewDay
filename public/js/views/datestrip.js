@@ -12,11 +12,16 @@
  * «Сегодня» отдельной кнопкой. На узком экране то же самое в две строки,
  * и стрелки становятся большими: попасть в иконку 30×30 пальцем нельзя.
  *
+ * Подпись слева — кнопка: она открывает календарь месяца. Стрелками до
+ * даты через два месяца не дойти, а полоска показывает максимум четыре
+ * недели. Кнопка там же, где человек и так читает текущую дату.
+ *
  * Числа не прокручиваются, а делят ширину между собой — сколько недель
  * влезло, столько и показано, от одной до четырёх.
  */
 
-import { h, replace } from '../dom.js';
+import { h, add, replace } from '../dom.js';
+import { icon } from '../vendor/icons.js';
 import {
   addDays, weekdayShort, dayNumber, formatLong, formatShort,
   rangeDates, weekdayLong, weekdayOf,
@@ -48,9 +53,15 @@ export function renderDateStrip(root, onPick) {
   const from = weekStart(cur);
   const to = addDays(from, weeks * 7 - 1);
 
-  const label = h('div.daynav-label',
-    h('b', { text: weekdayLong(cur) }),
-    h('span.small', { text: formatShort(cur) }));
+  const label = h('button.daynav-label', {
+    type: 'button',
+    title: 'Выбрать дату в календаре',
+    onclick: () => openDatePicker(cur, onPick),
+  },
+    h('span.daynav-label-text',
+      h('b', { text: weekdayLong(cur) }),
+      h('span.small', { text: formatShort(cur) })),
+    icon('calendar-blank', { size: '15px', cls: 'daynav-label-ico' }));
 
   const arrow = (dir, title) => h('button.daynav-arrow', {
     text: dir < 0 ? '‹' : '›', title, 'aria-label': title,
@@ -96,6 +107,21 @@ export function renderDateStrip(root, onPick) {
     });
     observed.observe(root);
   }
+}
+
+/**
+ * Календарь месяца. Загружается по нажатию, а не вместе со страницей:
+ * большинство дней человек листает стрелками, и держать разметку
+ * календаря наготове незачем.
+ */
+async function openDatePicker(current, onPick) {
+  const [{ openSheet }, { renderCalendar }] = await Promise.all([
+    import('../components/sheet.js'),
+    import('../components/calendar.js'),
+  ]);
+  openSheet('Выберите дату', (body, { close }) => {
+    add(body, renderCalendar(current, date => { close(); onPick(date); }));
+  });
 }
 
 /** Свайп влево-вправо по области дня — то же, что стрелки. */

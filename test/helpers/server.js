@@ -14,7 +14,7 @@ async function startTestServer({ env = {}, fetchImpl } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'newday-test-'));
   const dbPath = path.join(dir, 'test.db');
 
-  const config = loadConfig({
+  const vars = {
     NODE_ENV: 'test',
     PORT: '0',
     DB_PATH: dbPath,
@@ -22,11 +22,14 @@ async function startTestServer({ env = {}, fetchImpl } = {}) {
     APP_URL: 'http://127.0.0.1',
     TRUST_PROXY: '0',
     ...env,
-  });
+  };
+  const config = loadConfig(vars);
 
   const db = createDb(dbPath);
   runMigrations(db);
-  const app = createApp({ db, config, fetchImpl });
+  // Тот же набор переменных получает и приложение: подключение помощника
+  // читается из окружения, а не из config
+  const app = createApp({ db, config, fetchImpl, env: vars });
 
   const server = await new Promise(resolve => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));

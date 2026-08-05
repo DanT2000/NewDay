@@ -616,12 +616,26 @@ textarea.input { height: auto; min-height: 92px; padding: var(--s-3); resize: ve
   align-items: center; gap: var(--s-2);
   min-width: 0;
 }
+/*
+ * Подпись — кнопка календаря. Выглядит как текст, пока на неё не наведёшь:
+ * это в первую очередь надпись «какой сейчас день», и рамка вокруг неё
+ * спорила бы со стрелками и «Сегодня» за внимание.
+ */
 .daynav-label {
-  display: flex; flex-direction: column; gap: 0;
-  white-space: nowrap; line-height: 1.15;
+  display: flex; align-items: center; gap: var(--s-2);
+  padding: 4px var(--s-2); margin: -4px calc(-1 * var(--s-2));
+  border: 1px solid transparent; border-radius: var(--r-md);
+  background: none; color: inherit; text-align: left;
+  white-space: nowrap; line-height: 1.15; cursor: pointer;
+  font: inherit;
 }
+.daynav-label:hover { border-color: var(--hairline-firm); background: var(--surface-2); }
+.daynav-label:hover .daynav-label-ico { color: var(--ink-2); }
+.daynav-label:active { transform: translateY(1px); }
+.daynav-label-text { display: flex; flex-direction: column; gap: 0; min-width: 0; }
 .daynav-label b { font: var(--t-body-md); }
 .daynav-label .small { color: var(--ink-3); }
+.daynav-label-ico { color: var(--ink-3); flex: none; }
 
 .daynav-arrow {
   display: grid; place-items: center;
@@ -658,7 +672,10 @@ textarea.input { height: auto; min-height: 92px; padding: var(--s-3); resize: ve
       'prev   dates  next';
     row-gap: var(--s-2);
   }
-  .daynav-label { grid-area: label; flex-direction: row; align-items: baseline; gap: var(--s-2); }
+  .daynav-label { grid-area: label; }
+  /* На телефоне подпись в одну строку: две строки съедали высоту, а места
+     по горизонтали хватает */
+  .daynav-label-text { flex-direction: row; align-items: baseline; gap: var(--s-2); }
   .daynav-in > .btn { grid-area: today; }
   .daynav-in > .daynav-arrow:first-of-type { grid-area: prev; }
   .daynav-in > .daynav-arrow:last-of-type { grid-area: next; }
