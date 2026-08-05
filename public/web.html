@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NewDay — веб-версия</title>
+  <meta name="theme-color" content="#161826">
+  <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png">
+  <!--
+    Шрифт вшит в проект: веб-часть должна открываться и внутри APK, где
+    интернета может не быть. Стили только свои — прежние листы сюда не
+    подключаются, чтобы перенос эталона было видно как есть.
+  -->
+  <link rel="stylesheet" href="/css/fonts.css">
+  <link rel="stylesheet" href="/css/web.css">
+  <style>
+    html, body { margin: 0; padding: 0; }
+    body { background: #161826; }
+  </style>
+</head>
+<body>
+  <div class="wroot" id="wapp" data-theme="dark"></div>
+  <script type="module" src="/js/web/app.js"></script>
+</body>
+</html>

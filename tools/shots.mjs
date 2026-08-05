@@ -23,13 +23,16 @@ const STAND = process.env.STAND || 'http://127.0.0.1:4010';
 const OUT = path.join(import.meta.dirname, '.shots');
 const PORT = 9333;
 
-const PAGES = [
-  ['now', '/now.html'],
-  ['dela', '/app.html'],
-  ['habits', '/habits.html'],
-  ['notes', '/notes.html'],
-  ['settings', '/settings.html'],
-];
+const PAGES = process.env.SHOT_WEB
+  // Веб-версия — одна страница с разделами внутри; переключаем их кликом
+  ? [['web', '/web.html']]
+  : [
+    ['now', '/now.html'],
+    ['dela', '/app.html'],
+    ['habits', '/habits.html'],
+    ['notes', '/notes.html'],
+    ['settings', '/settings.html'],
+  ];
 
 const BROWSERS = [
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
@@ -96,7 +99,7 @@ async function go(url) {
   // модулями уже после load, и снимок пустого каркаса бесполезен
   for (let i = 0; i < 80; i++) {
     const r = await rpc(ws, 'Runtime.evaluate', {
-      expression: 'document.readyState === "complete" && document.querySelector("#app")?.children.length > 0',
+      expression: 'document.readyState === "complete" && (document.querySelector("#app")?.children.length > 0 || document.querySelector("#wapp")?.children.length > 0)',
       returnByValue: true,
     });
     if (r?.result?.value) break;
@@ -162,6 +165,46 @@ if (process.env.SHOT_AI) {
   shot = await rpc(ws, 'Page.captureScreenshot', { format: 'png' });
   await fs.writeFile(path.join(OUT, `ai-razbor-${WIDTH}.png`), Buffer.from(shot.data, 'base64'));
   console.log('  помощник: разбор');
+}
+
+/*
+ * Разделы веб-версии: щёлкаем по колонке слева и снимаем каждый. Плюс
+ * шторки — они и есть половина макета, а увидеть их иначе нечем.
+ */
+if (process.env.SHOT_WEB) {
+  const SECTIONS = ['today', 'plan', 'habits', 'notes', 'settings'];
+  for (let i = 0; i < SECTIONS.length; i++) {
+    await rpc(ws, 'Runtime.evaluate', { expression: `document.querySelectorAll('.wnav-item')[${i}].click()` });
+    await new Promise(r => setTimeout(r, 450));
+    const shot = await rpc(ws, 'Page.captureScreenshot', { format: 'png' });
+    await fs.writeFile(path.join(OUT, `web-${SECTIONS[i]}-${WIDTH}.png`), Buffer.from(shot.data, 'base64'));
+    console.log(`  раздел ${SECTIONS[i]}`);
+  }
+
+  // Месяц и день расписания — отдельные виды одного раздела
+  await rpc(ws, 'Runtime.evaluate', { expression: `document.querySelectorAll('.wnav-item')[1].click()` });
+  await new Promise(r => setTimeout(r, 350));
+  for (const [n, label] of [[2, 'month'], [0, 'day']]) {
+    await rpc(ws, 'Runtime.evaluate', { expression: `document.querySelectorAll('.wseg button')[${n}].click()` });
+    await new Promise(r => setTimeout(r, 400));
+    const shot = await rpc(ws, 'Page.captureScreenshot', { format: 'png' });
+    await fs.writeFile(path.join(OUT, `web-plan-${label}-${WIDTH}.png`), Buffer.from(shot.data, 'base64'));
+    console.log(`  расписание: ${label}`);
+  }
+
+  const MODALS = ['row', 'schedule', 'ai', 'habit', 'note', 'task', 'meal', 'reminder', 'sound', 'file', 'template', 'print'];
+  for (const m of MODALS) {
+    await rpc(ws, 'Runtime.evaluate', {
+      expression: `(() => {
+        const mod = document.querySelector('.wveil'); if (mod) mod.remove();
+        window.__wopen && window.__wopen(${JSON.stringify(m)});
+      })()`,
+    });
+    await new Promise(r => setTimeout(r, 400));
+    const shot = await rpc(ws, 'Page.captureScreenshot', { format: 'png' });
+    await fs.writeFile(path.join(OUT, `web-modal-${m}-${WIDTH}.png`), Buffer.from(shot.data, 'base64'));
+    console.log(`  шторка ${m}`);
+  }
 }
 
 ws.close();

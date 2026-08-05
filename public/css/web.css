@@ -1,0 +1,825 @@
+/* ============================================================
+   NewDay — веб-версия по эталону «NewDay Web».
+
+   Это самостоятельный лист: он не зависит от прежних стилей
+   приложения и ничего из них не использует. Все числа взяты из
+   эталонного макета один в один — размеры, скругления, отступы,
+   толщины, тайминги.
+
+   Переменные темы задаются на .wroot скриптом: тёмная и светлая
+   палитры плюс акцент из четырёх цветов. Поэтому здесь везде
+   var(--…) со значением по умолчанию — лист остаётся читаемым
+   и работающим сам по себе.
+   ============================================================ */
+
+/* ── Основа ─────────────────────────────────────────────────── */
+
+.wroot {
+  --bg: #161826;
+  --surface: #232532;
+  --raise: #2e3040;
+  --text: #e9e9ed;
+  --dim: #9ba0b5;
+  --faint: #7b8092;
+  --line: rgba(233, 233, 237, .10);
+  --accent: #9d8cf0;
+  --accent-soft: color-mix(in srgb, var(--accent) 18%, transparent);
+  --accent-line: color-mix(in srgb, var(--accent) 40%, transparent);
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --ui: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  /*
+   * Высота ровно в экран, и прокручивается только рабочее поле. Иначе при
+   * высоком содержимом (месяц) страница ползёт целиком, и низ боковой
+   * колонки — «Помощник», тема, профиль — уезжает под сгиб.
+   */
+  height: 100vh; overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--ui);
+  display: flex;
+}
+
+.wroot[data-theme="light"] {
+  --bg: #f3f5fe;
+  --surface: #ffffff;
+  --raise: #e8ebf8;
+  --text: #232530;
+  --dim: #565b6e;
+  --faint: #767b8d;
+  --line: rgba(41, 43, 49, .12);
+}
+
+.wroot * { box-sizing: border-box; }
+.wroot button { font-family: inherit; }
+
+/* Полосы прокрутки убраны там, где они мешают рисунку сетки */
+.wscroll { scrollbar-width: none; }
+.wscroll::-webkit-scrollbar { width: 0; height: 0; }
+
+@keyframes wpulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+@media (prefers-reduced-motion: reduce) {
+  .wroot *, .wroot *::before, .wroot *::after { animation-duration: .01ms !important; }
+}
+
+/* ── Боковая колонка ───────────────────────────────────────── */
+
+.wside {
+  width: 236px; flex: none;
+  padding: 22px 16px;
+  display: flex; flex-direction: column; gap: 26px;
+  background: var(--bg);
+  box-shadow: 1px 0 0 var(--line);
+  overflow-y: auto; scrollbar-width: none;
+}
+.wside::-webkit-scrollbar { width: 0; }
+
+.wbrand { display: flex; align-items: center; gap: 10px; padding: 0 6px; }
+.wbrand-mark {
+  width: 30px; height: 30px; border-radius: 9px;
+  border: 1px solid var(--accent); color: var(--accent);
+  display: grid; place-items: center; font-size: 16px;
+}
+.wbrand b { font-weight: 500; font-size: 17px; letter-spacing: -.01em; }
+
+.wnav { display: flex; flex-direction: column; gap: 3px; }
+.wnav-item {
+  display: flex; align-items: center; gap: 11px;
+  height: 44px; padding: 0 12px; border-radius: 12px;
+  border: 0; cursor: pointer; background: transparent;
+  color: var(--dim); font: 500 15px/1 var(--ui);
+}
+.wnav-item:hover { color: var(--text); background: var(--surface); }
+.wnav-item.on { background: var(--accent-soft); color: var(--accent); }
+.wnav-item > span:first-of-type { flex: 1; text-align: left; }
+.wnav-badge { font: 500 11px/1 var(--mono); color: var(--faint); }
+.wnav-item.on .wnav-badge { color: var(--accent); }
+
+.wside-foot { margin-top: auto; display: flex; flex-direction: column; gap: 10px; }
+
+.wbtn-ai {
+  display: flex; align-items: center; justify-content: center; gap: 9px;
+  height: 44px; border-radius: 12px; border: 0; cursor: pointer;
+  background: var(--accent); color: #fff; font: 500 14px/1 var(--ui);
+}
+.wbtn-ai:hover { filter: brightness(1.06); }
+
+.wbtn-line {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  height: 42px; padding: 0 12px; border-radius: 12px; cursor: pointer;
+  border: 1px solid var(--line); background: transparent;
+  color: var(--dim); font: 500 13px/1 var(--ui);
+}
+.wbtn-line:hover { color: var(--text); border-color: var(--accent); }
+
+.wuser {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 12px; background: var(--surface);
+}
+.wuser-ava {
+  width: 30px; height: 30px; border-radius: 9px; flex: none;
+  background: var(--accent-soft); color: var(--accent);
+  display: grid; place-items: center; font-size: 15px;
+}
+.wuser-body { flex: 1; min-width: 0; }
+.wuser-name { font: 400 14px/1.2 var(--ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wuser-note { font: 400 11px/1.2 var(--ui); color: var(--faint); margin-top: 4px; }
+
+/* ── Рабочая область и верхняя полоса ──────────────────────── */
+
+.wmain { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+.wtop {
+  flex: none; display: flex; align-items: center; gap: 14px;
+  padding: 18px 28px; box-shadow: 0 1px 0 var(--line);
+}
+.wtop-date { min-width: 0; flex: none; }
+.wtop-dow {
+  font: 500 11px/1 var(--ui); letter-spacing: .12em;
+  text-transform: uppercase; color: var(--faint);
+}
+.wtop-num { font: 500 24px/1.1 var(--ui); letter-spacing: -.02em; margin-top: 7px; }
+
+.wtop-nav { display: flex; align-items: center; gap: 6px; margin-left: 6px; }
+.wsq {
+  width: 34px; height: 34px; border-radius: 10px;
+  border: 1px solid var(--line); background: transparent;
+  color: var(--dim); font-size: 15px; cursor: pointer;
+  display: grid; place-items: center;
+}
+.wsq:hover { color: var(--text); }
+
+.wdays { flex: 1; min-width: 0; display: flex; gap: 4px; justify-content: center; }
+.wday {
+  display: flex; flex-direction: column; align-items: center;
+  width: 48px; padding: 8px 0 7px; border-radius: 11px;
+  border: 0; cursor: pointer; background: transparent; color: var(--dim);
+}
+.wday:hover:not(.on) { background: var(--surface); color: var(--text); }
+.wday.on { background: var(--accent); color: #fff; }
+.wday-dow { font: 400 11px/1 var(--ui); opacity: .8; }
+.wday-num { font: 500 16px/1 var(--mono); margin-top: 5px; }
+.wday-dot { width: 4px; height: 4px; border-radius: 50%; margin-top: 5px; opacity: .85; background: transparent; }
+.wday.has .wday-dot { background: var(--faint); }
+.wday.on.has .wday-dot { background: #fff; }
+
+.wbody { flex: 1; overflow-y: auto; padding: 22px 28px 34px; }
+
+/* ── Кнопки ────────────────────────────────────────────────── */
+
+.wbtn {
+  display: flex; align-items: center; height: 44px; padding: 0 18px;
+  border-radius: 12px; border: 0; cursor: pointer;
+  background: var(--accent); color: #fff; font: 500 14px/1 var(--ui);
+}
+.wbtn:hover { filter: brightness(1.06); }
+.wbtn i { font-size: 16px; margin-right: 8px; }
+
+.wbtn-ghost {
+  display: flex; align-items: center; gap: 8px; flex: none; white-space: nowrap;
+  height: 38px; padding: 0 14px; border-radius: 11px;
+  border: 1px solid var(--line); background: transparent;
+  color: var(--dim); font: 500 13px/1 var(--ui); cursor: pointer;
+}
+.wbtn-ghost:hover { color: var(--text); border-color: var(--accent); }
+
+/* Главная кнопка шторки: 56 px и тень акцентом — так в эталоне */
+.wbtn-wide {
+  flex: 1; height: 56px; border-radius: 13px; border: 0; cursor: pointer;
+  background: var(--accent); color: #fff; font: 500 17px/1 var(--ui);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.wbtn-wide:hover { filter: brightness(1.06); }
+
+.wbtn-quiet {
+  height: 56px; padding: 0 22px; border-radius: 13px; cursor: pointer; flex: none;
+  border: 1px solid var(--line); background: transparent;
+  color: var(--dim); font: 500 16px/1 var(--ui);
+}
+.wbtn-quiet:hover { color: var(--text); }
+
+.wbtn-dashed {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  flex: 1; height: 50px; border-radius: 12px; cursor: pointer;
+  border: 1px dashed var(--line); background: transparent;
+  color: var(--dim); font: 500 15px/1 var(--ui);
+}
+.wbtn-dashed:hover { color: var(--accent); border-color: var(--accent); }
+
+/* Чип: в списках на поверхности, в шторках — на приподнятом слое */
+.wchip {
+  height: 34px; padding: 0 14px; border-radius: 10px; border: 0; cursor: pointer;
+  flex: none; white-space: nowrap; font: 500 13px/1 var(--ui);
+  background: var(--surface); color: var(--dim);
+}
+.wchip.on { background: var(--accent); color: #fff; }
+.wchip-sheet { background: var(--raise); }
+.wchip-sheet.on { background: var(--accent); color: #fff; }
+.wchip-flex { flex: 1; padding: 0; }
+
+.wseg { display: flex; gap: 3px; padding: 3px; border-radius: 11px; background: var(--surface); flex: none; }
+.wseg button {
+  height: 32px; padding: 0 15px; border-radius: 9px; border: 0; cursor: pointer;
+  white-space: nowrap; font: 500 13px/1 var(--ui);
+  background: transparent; color: var(--dim);
+}
+.wseg button.on { background: var(--accent); color: #fff; }
+
+/* ── Заголовок раздела и подписи ───────────────────────────── */
+
+.whead { display: flex; align-items: flex-end; gap: 14px; margin-bottom: 18px; }
+.whead-text { flex: 1; }
+.whead-title { font: 500 24px/1.1 var(--ui); letter-spacing: -.02em; }
+.whead-hint { font: 400 14px/1.4 var(--ui); color: var(--faint); margin-top: 7px; }
+
+.wcap {
+  font: 500 11px/1 var(--ui); letter-spacing: .12em;
+  text-transform: uppercase; color: var(--faint);
+}
+.wsect-hd { display: flex; align-items: center; gap: 10px; padding: 0 2px 12px; }
+.wsect-hd .wrule { flex: 1; height: 1px; background: linear-gradient(90deg, var(--line), transparent); }
+.wsect-hd .wcount { font: 500 12px/1 var(--mono); color: var(--faint); white-space: nowrap; }
+.wdot6 { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+
+.wlink {
+  display: flex; align-items: center; gap: 6px; flex: none; white-space: nowrap;
+  background: none; border: 0; padding: 0; cursor: pointer;
+  color: var(--accent); font: 500 12px/1 var(--ui);
+}
+
+/* ── Галочка ───────────────────────────────────────────────── */
+
+.wbox {
+  width: 22px; height: 22px; border-radius: 7px; flex: none;
+  display: grid; place-items: center; cursor: pointer;
+  border: 1.5px solid color-mix(in srgb, var(--dim) 55%, transparent);
+  background: color-mix(in srgb, var(--dim) 8%, transparent);
+  transition: background 140ms ease, border-color 140ms ease;
+}
+.wbox > i, .wbox > svg { font-size: 13px; color: #fff; opacity: 0; transform: scale(.6); transition: opacity 140ms ease, transform 140ms ease; }
+.wbox.on {
+  border-color: var(--accent); background: var(--accent);
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.wbox.on > i, .wbox.on > svg { opacity: 1; transform: scale(1); }
+/* Пунктирная — выходной по графику привычки: отмечать нечего */
+.wbox.off { border: 1.5px dashed var(--faint); background: transparent; }
+.wbox.off > i, .wbox.off > svg { opacity: 1; transform: none; color: var(--faint); font-size: 12px; }
+
+.wstrike { flex: 1; min-width: 0; font: 400 15px/1.35 var(--ui); color: var(--text); }
+.wstrike.done { color: var(--faint); text-decoration: line-through; }
+
+/* ── Переключатель ─────────────────────────────────────────── */
+
+.wsw {
+  width: 48px; height: 28px; border-radius: 999px; flex: none; display: block;
+  padding: 3px; cursor: pointer; border: 0; background: var(--raise);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--dim) 70%, transparent);
+}
+.wsw > i {
+  display: block; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--dim); transform: translateX(0);
+  transition: transform 160ms cubic-bezier(.22, .61, .36, 1);
+}
+.wsw.on { background: var(--accent); box-shadow: none; }
+.wsw.on > i { background: #fff; transform: translateX(20px); }
+
+/* ── Поля ──────────────────────────────────────────────────── */
+
+.winput {
+  width: 100%; height: 48px; padding: 0 14px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--raise);
+  color: var(--text); font: 400 16px/1 var(--ui); outline: none;
+}
+.winput:focus { border-color: var(--accent); }
+
+.wnum {
+  width: 86px; height: 44px; padding: 0 12px; border-radius: 11px;
+  border: 1px solid var(--line); background: var(--raise);
+  color: var(--text); font: 500 16px/1 var(--mono); text-align: center; outline: none;
+}
+.wnum:focus { border-color: var(--accent); }
+
+.wtime {
+  width: 104px; height: 46px; padding: 0 12px; border-radius: 11px;
+  border: 1px solid var(--line); background: var(--raise);
+  color: var(--text); font: 500 18px/1 var(--mono); text-align: center; outline: none;
+}
+.wtime:focus { border-color: var(--accent); }
+
+.wtextarea {
+  width: 100%; height: 220px; padding: 16px; border-radius: 14px;
+  border: 1px solid var(--line); background: var(--raise);
+  color: var(--text); font: 400 15px/1.6 var(--ui); outline: none; resize: none;
+}
+.wtextarea:focus { border-color: var(--accent); }
+
+.wfield-label {
+  display: block; font: 500 11px/1 var(--ui); letter-spacing: .12em;
+  text-transform: uppercase; color: var(--faint); margin-bottom: 8px;
+}
+
+/* Плитка и вариант — выбор одного из нескольких */
+.wtile {
+  display: flex; flex-direction: column; align-items: flex-start; flex: 1;
+  padding: 12px 13px; border-radius: 12px; cursor: pointer;
+  border: 1px solid transparent; background: var(--raise); color: var(--dim);
+}
+.wtile.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.wtile-cap { font: 400 10px/1 var(--ui); letter-spacing: .1em; text-transform: uppercase; opacity: .8; }
+.wtile input {
+  width: 100%; border: 0; background: transparent; outline: none; margin-top: 6px;
+  font: 500 20px/1 var(--mono); color: var(--text); padding: 0;
+}
+.wtile.on input { color: var(--accent); }
+
+.wopt {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  min-height: 48px; padding: 10px 13px; border-radius: 12px; cursor: pointer;
+  font: 400 15px/1.2 var(--ui);
+  border: 1px solid transparent; background: var(--raise); color: var(--dim);
+}
+.wopt.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.wopt > span { flex: 1; text-align: left; }
+.wopt-sm { min-height: 44px; font: 400 14px/1.2 var(--ui); }
+
+/* Часы и минуты в редакторе строки */
+.wclock { border-radius: 14px; background: var(--raise); padding: 14px; }
+.wclock-cap { font: 400 11px/1 var(--ui); color: var(--faint); margin-bottom: 9px; }
+.wclock-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 5px; }
+.wclock-grid button {
+  height: 32px; border-radius: 8px; border: 0; cursor: pointer;
+  font: 500 13px/1 var(--mono); background: var(--surface); color: var(--dim);
+}
+.wclock-grid button.on { background: var(--accent); color: #fff; }
+
+/* ── Экран «Сейчас» ────────────────────────────────────────── */
+
+.wcols {
+  display: grid; align-items: start; gap: 20px;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(280px, 320px);
+}
+.wcol { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+.wnow {
+  position: relative; border-radius: 18px; padding: 20px; overflow: hidden;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+.wnow::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(120% 90% at 10% 0%, var(--accent-soft), transparent 62%);
+}
+.wnow-in { position: relative; display: flex; align-items: flex-end; gap: 20px; }
+.wnow-live {
+  display: flex; align-items: center; gap: 7px; white-space: nowrap;
+  font: 500 11px/1.4 var(--ui); letter-spacing: .12em;
+  text-transform: uppercase; color: var(--accent);
+}
+.wnow-live i {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--accent); animation: wpulse 2.4s ease-in-out infinite;
+}
+.wnow-title { font: 500 28px/1.15 var(--ui); letter-spacing: -.025em; margin-top: 12px; }
+.wnow-left { display: flex; align-items: baseline; gap: 8px; margin-top: 12px; }
+.wnow-left b { font: 500 16px/1 var(--mono); }
+.wnow-left span { font: 400 13px/1 var(--ui); color: var(--faint); }
+.wbar { height: 5px; border-radius: 3px; background: var(--line); margin-top: 14px; overflow: hidden; }
+.wbar > i { display: block; height: 100%; background: var(--accent); }
+.wring { position: relative; width: 76px; height: 76px; flex: none; }
+.wring svg { width: 76px; height: 76px; transform: rotate(-90deg); }
+.wring span { position: absolute; inset: 0; display: grid; place-items: center; font: 500 16px/1 var(--mono); }
+
+/* Список расписания на «Сейчас» */
+.wsched { border-radius: 16px; background: var(--surface); padding: 8px 4px; }
+.wsched-row {
+  display: grid; grid-template-columns: 90px 20px minmax(0, 1fr) auto;
+  align-items: center; gap: 6px; padding: 2px 12px; cursor: pointer;
+  border: 0; background: transparent; color: inherit; width: 100%; text-align: left;
+}
+.wsched-row:hover { background: var(--raise); }
+.wsched-time { font: 500 13px/1 var(--mono); white-space: nowrap; color: var(--dim); }
+.wsched-row.past .wsched-time { color: var(--faint); }
+.wsched-row.now .wsched-time { color: var(--accent); }
+.wsched-mark { display: flex; justify-content: center; }
+.wsched-dot {
+  width: 10px; height: 10px; border-radius: 50%; display: block;
+  background: var(--bg); border: 1px solid var(--dim);
+}
+.wsched-row.past .wsched-dot { width: 10px; height: 10px; background: var(--faint); border: none; }
+.wsched-row.now .wsched-dot {
+  width: 12px; height: 12px; background: var(--accent); border: none;
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+.wsched-row.inner .wsched-dot {
+  width: 8px; height: 8px; background: var(--surface); border: 2px solid var(--accent);
+}
+.wsched-body { min-width: 0; padding: 10px 12px; }
+/* Блок, внутри которого лежит другой: у родителя скруглён верх, у вложенного низ */
+.wsched-row.parent .wsched-body { background: var(--raise); border-radius: 12px 12px 0 0; padding: 10px 12px 8px; }
+.wsched-row.inner .wsched-body {
+  background: var(--raise); border-radius: 0 0 12px 12px;
+  padding: 9px 12px 10px 18px; margin: 0 0 6px;
+  box-shadow: inset 12px 0 0 -10px var(--accent);
+}
+.wsched-title { font: 400 15px/1.3 var(--ui); color: var(--text); }
+.wsched-row.past .wsched-title { color: var(--dim); }
+.wsched-row.now .wsched-title { font: 500 16px/1.3 var(--ui); }
+.wsched-row.inner .wsched-title { font: 400 14px/1.3 var(--ui); }
+.wsched-sub { font: 400 12px/1.3 var(--ui); color: var(--faint); margin-top: 5px; }
+.wbell { font-size: 16px; flex: none; color: var(--accent); }
+
+/* Три плитки прогресса */
+.wstats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.wstat {
+  border-radius: 14px; background: var(--surface); padding: 14px 12px 13px;
+  display: flex; flex-direction: column; min-height: 112px;
+}
+.wstat-val { font: 500 24px/1 var(--ui); letter-spacing: -.02em; color: var(--accent); }
+.wstat-lab { font: 400 11px/1.35 var(--ui); color: var(--faint); margin-top: 7px; }
+.wstat .wbar { margin-top: auto; height: 4px; }
+
+/* Задачи и питание */
+.wlist { border-radius: 16px; background: var(--surface); padding: 6px 4px; }
+.wlist-row {
+  display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+  border-radius: 10px; cursor: pointer; border: 0; background: transparent;
+  color: inherit; width: 100%; text-align: left;
+}
+.wlist-row:hover { background: var(--raise); }
+.wlist-meta { font: 400 12px/1 var(--ui); color: var(--faint); flex: none; }
+.wtag {
+  font: 400 11px/1 var(--ui); padding: 5px 9px; border-radius: 999px; flex: none;
+  background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent);
+}
+.wadd {
+  display: flex; align-items: center; gap: 9px; padding: 10px 12px;
+  color: var(--accent); font: 500 14px/1 var(--ui); cursor: pointer;
+  border: 0; background: transparent; width: 100%; text-align: left;
+}
+
+.wfood { border-radius: 16px; background: var(--surface); padding: 16px 16px 6px; }
+.wfood-plan { font: 400 15px/1.45 var(--ui); }
+.wmeal {
+  display: flex; align-items: center; gap: 12px; padding: 9px 0; cursor: pointer;
+  border: 0; background: transparent; color: inherit; width: 100%; text-align: left;
+}
+.wmeal-body { flex: 1; min-width: 0; }
+.wmeal-meta { font: 400 12px/1.35 var(--ui); color: var(--faint); margin-top: 4px; }
+.wmeal-kcal { font: 400 12px/1 var(--mono); color: var(--faint); }
+
+/* Привычки, напоминания, заметки дня в правой колонке */
+.wcard { border-radius: 14px; padding: 14px; background: var(--surface); }
+.wcard.dim { opacity: .6; }
+.whabit-in { display: flex; align-items: flex-start; gap: 11px; }
+.whabit-name { display: flex; align-items: center; gap: 7px; }
+.whabit-name span:first-child { font-size: 15px; }
+.whabit-title { font: 500 15px/1.3 var(--ui); }
+.whabit-title.done { color: var(--faint); }
+.whabit-meta { font: 400 12px/1.4 var(--ui); color: var(--faint); margin-top: 6px; }
+.whabit-week { display: flex; gap: 4px; margin-top: 10px; }
+.whabit-week i {
+  flex: 1; height: 7px; border-radius: 4px; background: var(--line);
+}
+.whabit-week i.done { background: var(--accent); }
+.whabit-week i.miss { background: color-mix(in srgb, var(--accent) 45%, var(--bg)); }
+.whabit-week i.skip { background: var(--line); }
+.whabit-week i.off { opacity: .4; }
+/* Последний день недели обведён — это «сегодня» */
+.whabit-week i:last-child { outline: 1px solid var(--dim); outline-offset: 1px; }
+
+.wrem { display: flex; align-items: center; gap: 11px; padding: 10px 12px; border-radius: 10px; cursor: pointer; border: 0; background: transparent; color: inherit; width: 100%; text-align: left; }
+.wrem:hover { background: var(--raise); }
+.wrem > i:first-child { color: var(--accent); font-size: 17px; flex: none; }
+.wrem-body { flex: 1; min-width: 0; }
+.wrem-title { font: 400 14px/1.3 var(--ui); }
+.wrem-meta { font: 400 12px/1.3 var(--ui); color: var(--faint); margin-top: 4px; }
+
+.wnote-day { border-radius: 14px; background: var(--surface); padding: 13px 14px; }
+.wnote-day-title { font: 500 14px/1.3 var(--ui); }
+.wnote-day-text { font: 400 13px/1.45 var(--ui); color: var(--faint); margin-top: 6px; }
+
+/* ── Экран «Расписание» ────────────────────────────────────── */
+
+.wplan-head, .wplan-grid { display: grid; }
+.wplan-head { padding: 0 2px 10px; }
+.wplan-grid { border-radius: 16px; background: var(--surface); overflow: hidden; }
+
+.wplan-day {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 8px 0; border-radius: 10px; color: var(--dim);
+  border: 0; background: transparent; cursor: pointer;
+}
+.wplan-day.on { background: var(--accent-soft); color: var(--accent); }
+.wplan-day-dow { font: 400 11px/1 var(--ui); letter-spacing: .06em; text-transform: uppercase; opacity: .8; }
+.wplan-day-num { font: 500 17px/1 var(--mono); margin-top: 6px; }
+
+.wplan-hours { padding-top: 6px; }
+.wplan-hour {
+  height: 44px; padding-right: 10px; text-align: right;
+  font: 500 11px/1 var(--mono); color: var(--faint);
+}
+
+/* Колонка дня: часовая сетка нарисована фоном, блоки лежат поверх */
+.wplan-col {
+  position: relative; height: 798px; margin-top: 6px;
+  background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 44px);
+  box-shadow: inset 1px 0 0 var(--line);
+  cursor: crosshair;
+}
+.wplan-col.on { background-color: var(--accent-soft); }
+
+.wblock {
+  position: absolute; left: 3px; right: 3px; overflow: hidden; cursor: pointer;
+  border-radius: 10px; padding: 5px 7px; border: 0; text-align: left;
+  display: flex; flex-direction: column; align-items: flex-start;
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg));
+  box-shadow: inset 3px 0 0 var(--accent);
+  color: var(--text);
+}
+/* Вложенный блок приподнят и темнее — видно, что он внутри другого */
+.wblock.inner {
+  background: var(--raise);
+  box-shadow: inset 3px 0 0 var(--accent), 0 4px 12px rgba(0, 0, 0, .25);
+}
+.wblock.compact { padding: 0 8px; flex-direction: row; align-items: center; gap: 7px; }
+.wblock-time { font: 500 10px/1 var(--mono); color: var(--accent); white-space: nowrap; flex: none; }
+.wblock-title {
+  font: 400 12px/1.3 var(--ui); margin-top: 4px; width: 100%;
+  display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word;
+}
+.wblock.compact .wblock-title {
+  margin-top: 0; flex: 1; min-width: 0; line-height: 1;
+  white-space: nowrap; text-overflow: ellipsis; display: block;
+}
+
+/* Пунктирный след протягивания: пока держишь мышь, показывает будущий блок */
+.wsel {
+  position: absolute; left: 3px; right: 3px; z-index: 6; pointer-events: none;
+  border-radius: 10px; border: 1.5px dashed var(--accent);
+  background: var(--accent-soft); color: var(--accent);
+  font: 500 11px/1 var(--mono); display: grid; place-items: center;
+}
+
+.wnowline { position: absolute; left: 0; right: 0; height: 2px; background: var(--accent); z-index: 3; }
+.wnowline i {
+  position: absolute; left: -4px; top: -3px; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--accent); display: block;
+}
+
+/* Месяц */
+.wmonth-head { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; padding: 0 2px 10px; }
+.wmonth-head span { font: 400 11px/1 var(--ui); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
+.wmonth { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
+.wcell {
+  min-height: 116px; border-radius: 14px; padding: 11px 12px; cursor: pointer;
+  background: var(--surface); border: 0; text-align: left; color: inherit;
+  display: flex; flex-direction: column;
+}
+.wcell.out { opacity: .4; cursor: default; }
+.wcell.on { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.wcell-hd { display: flex; align-items: center; gap: 6px; }
+.wcell-num { font: 500 15px/1 var(--mono); }
+.wcell.on .wcell-num { color: var(--accent); }
+.wcell-count { font: 500 10px/1 var(--mono); color: var(--faint); white-space: nowrap; flex: none; }
+.wcell-items { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.wcell-item {
+  font: 400 11px/1.3 var(--ui); padding: 5px 7px; border-radius: 7px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.wcell-more { font: 400 11px/1 var(--ui); color: var(--faint); margin-top: 6px; }
+
+/* ── Привычки, заметки, настройки ──────────────────────────── */
+
+.wnarrow { max-width: 900px; }
+
+.whabit-wide { display: flex; align-items: center; gap: 14px; }
+.whabit-wide .whabit-emoji { font-size: 18px; flex: none; }
+.whabit-wide .whabit-body { flex: 1; min-width: 0; }
+.whabit-wide .whabit-week { width: 180px; flex: none; margin-top: 0; }
+.whabit-more { color: var(--faint); font-size: 16px; cursor: pointer; flex: none; background: none; border: 0; }
+
+.wnotes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.wnote {
+  border-radius: 16px; background: var(--surface); padding: 16px; min-height: 132px;
+  display: flex; flex-direction: column; cursor: pointer;
+  border: 0; text-align: left; color: inherit;
+}
+.wnote:hover { box-shadow: inset 0 0 0 1px var(--accent-line); }
+.wnote-hd { display: flex; align-items: center; gap: 10px; }
+.wnote-title { flex: 1; font: 500 15px/1.3 var(--ui); }
+.wnote-date { font: 400 11px/1 var(--ui); color: var(--faint); flex: none; }
+.wnote-date.on { color: var(--accent); }
+.wnote-text { font: 400 13px/1.5 var(--ui); color: var(--dim); margin-top: 9px; }
+.wnote-new {
+  min-height: 132px; border-radius: 16px; cursor: pointer;
+  border: 1px dashed var(--line); background: transparent; color: var(--dim);
+  font: 500 15px/1 var(--ui); display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.wnote-new:hover { color: var(--accent); border-color: var(--accent); }
+
+.wsettings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; max-width: 960px; }
+.wpanel { border-radius: 16px; background: var(--surface); padding: 18px; }
+.wpanel-list { border-radius: 16px; background: var(--surface); padding: 6px 0; }
+.wpanel-list .wcap { padding: 14px 18px 6px; display: block; }
+.wpanel-label { font: 400 15px/1 var(--ui); margin-top: 20px; }
+.wpanel-label:first-of-type { margin-top: 16px; }
+.wsegline { display: flex; gap: 4px; margin-top: 11px; padding: 3px; border-radius: 10px; background: var(--raise); }
+.wsegline button {
+  flex: 1; height: 38px; border-radius: 8px; border: 0; cursor: pointer;
+  font: 500 13px/1 var(--ui); background: transparent; color: var(--dim);
+}
+.wsegline button.on { background: var(--accent); color: #fff; }
+
+.wswatches { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 11px; }
+.wswatch {
+  min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 8px;
+  background: none; border: 0; padding: 0; cursor: pointer;
+}
+.wswatch i {
+  width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center;
+  color: #fff; font-size: 16px;
+}
+.wswatch span {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 400 11px/1 var(--ui); color: var(--dim);
+}
+.wswatch i > svg { opacity: 0; }
+.wswatch.on i > svg { opacity: 1; }
+
+.wrow-sw {
+  display: flex; align-items: center; gap: 14px; padding: 13px 18px; cursor: pointer;
+  border: 0; background: transparent; color: inherit; width: 100%; text-align: left;
+}
+.wrow-sw-body { flex: 1; min-width: 0; }
+.wrow-sw-title { font: 400 15px/1.3 var(--ui); }
+.wrow-sw-hint { font: 400 12px/1.4 var(--ui); color: var(--faint); margin-top: 5px; }
+
+.wrow-link {
+  display: flex; align-items: center; gap: 14px; padding: 13px 18px; cursor: pointer;
+  border: 0; background: transparent; color: inherit; width: 100%; text-align: left;
+}
+.wrow-link:hover { background: var(--raise); }
+.wrow-link > i:first-child { color: var(--dim); font-size: 17px; }
+.wrow-link > span:nth-of-type(1) { flex: 1; font: 400 15px/1 var(--ui); }
+.wrow-link-val { font: 400 13px/1 var(--ui); color: var(--faint); }
+
+.wdev { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 12px; background: var(--raise); }
+.wdev > i:first-child { color: var(--dim); font-size: 17px; }
+.wdev-body { flex: 1; min-width: 0; }
+.wdev-name { font: 400 14px/1.3 var(--ui); }
+.wdev-seen { font: 400 12px/1.3 var(--ui); color: var(--faint); margin-top: 4px; }
+.wdev-tag { font: 400 11px/1 var(--ui); letter-spacing: .06em; text-transform: uppercase; color: var(--accent); flex: none; }
+.wpanel-note { font: 400 13px/1.5 var(--ui); color: var(--faint); margin-top: 12px; }
+
+/* ── Шторка ────────────────────────────────────────────────── */
+
+.wveil {
+  position: fixed; inset: 0; z-index: 80; padding: 40px;
+  background: rgba(8, 9, 16, .66);
+  display: grid; place-items: center;
+  animation: wfade 180ms ease;
+}
+@keyframes wfade { from { opacity: 0; } }
+
+.wmodal {
+  width: 560px; max-width: 92vw; max-height: 86vh; overflow-y: auto;
+  border-radius: 20px; padding: 22px 24px 24px;
+  background: var(--surface); box-shadow: 0 30px 80px rgba(0, 0, 0, .55);
+  animation: wpop 180ms ease;
+}
+@keyframes wpop { from { opacity: 0; transform: translateY(10px) scale(.99); } }
+.wmodal.wide { width: 640px; }
+
+.wmodal-hd { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.wmodal-hd b { flex: 1; font: 500 20px/1.2 var(--ui); letter-spacing: -.01em; }
+.wmodal-x {
+  width: 34px; height: 34px; border-radius: 10px; border: 0; cursor: pointer;
+  background: var(--raise); color: var(--dim); font-size: 15px;
+  display: grid; place-items: center;
+}
+.wmodal-x:hover { color: var(--text); }
+
+.wstack { display: flex; flex-direction: column; gap: 14px; }
+.wstack-tight { display: flex; flex-direction: column; gap: 8px; }
+.wrow { display: flex; align-items: center; gap: 10px; }
+.wrow-end { display: flex; gap: 10px; margin-top: 2px; }
+.wgrid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.wgrid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.wwrap { display: flex; gap: 6px; flex-wrap: wrap; }
+.whint { font: 400 13px/1.5 var(--ui); color: var(--faint); }
+.wsmall { font: 400 14px/1.3 var(--ui); color: var(--dim); }
+
+/* Строка списка внутри шторки */
+.wsheet-row {
+  display: flex; align-items: center; gap: 12px; padding: 12px;
+  border-radius: 12px; background: var(--raise); cursor: pointer;
+  border: 0; color: inherit; width: 100%; text-align: left;
+}
+.wsheet-row:hover { filter: brightness(1.06); }
+.wsheet-row .wgrab { color: var(--faint); font-size: 16px; cursor: grab; }
+.wsheet-row .wlead { font: 500 13px/1 var(--mono); color: var(--accent); flex: none; }
+.wsheet-row .wtitle { flex: 1; min-width: 0; font: 400 15px/1.3 var(--ui); }
+.wsheet-row .wchev { color: var(--faint); font-size: 14px; }
+
+/* Помощник */
+.wai-row { display: flex; align-items: flex-end; gap: 12px; }
+.wai-input {
+  flex: 1; height: 108px; padding: 14px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--raise);
+  color: var(--text); font: 400 15px/1.45 var(--ui); outline: none; resize: none;
+}
+.wai-input:focus { border-color: var(--accent); }
+.wmic {
+  width: 56px; height: 56px; border-radius: 18px; border: 0; cursor: pointer; flex: none;
+  font-size: 22px; background: var(--accent); color: #fff;
+  display: grid; place-items: center;
+}
+.wmic.listening { animation: wpulse 1.1s ease-in-out infinite; }
+.wbubble { display: flex; gap: 12px; }
+.wbubble-ava {
+  width: 32px; height: 32px; border-radius: 10px; flex: none;
+  display: grid; place-items: center; background: var(--accent-soft);
+  color: var(--accent); font-size: 16px;
+}
+.wbubble-text { flex: 1; border-radius: 14px; padding: 14px; background: var(--raise); font: 400 15px/1.45 var(--ui); }
+.wplan-item {
+  display: flex; align-items: center; gap: 11px; padding: 12px;
+  border-radius: 12px; background: var(--raise); cursor: pointer;
+  border: 0; color: inherit; width: 100%; text-align: left;
+}
+.wplan-item-body { flex: 1; min-width: 0; }
+.wplan-item-title { font: 400 15px/1.3 var(--ui); }
+.wplan-item.off .wplan-item-title { color: var(--faint); text-decoration: line-through; }
+.wplan-item-meta { font: 400 12px/1.35 var(--ui); color: var(--faint); margin-top: 4px; }
+
+/* Эмодзи привычки */
+.wemoji {
+  width: 42px; height: 42px; border-radius: 12px; font-size: 19px; cursor: pointer; flex: none;
+  border: 1px solid transparent; background: var(--raise);
+}
+.wemoji.on { border-color: var(--accent); background: var(--accent-soft); }
+.wdays7 { display: flex; gap: 6px; }
+.wdays7 button {
+  flex: 1; height: 42px; border-radius: 10px; border: 0; cursor: pointer;
+  font: 500 13px/1 var(--ui); background: var(--raise); color: var(--dim);
+}
+.wdays7 button.on { background: var(--accent); color: #fff; }
+
+/* Файл: экспорт и импорт */
+.wfile { display: flex; align-items: center; gap: 14px; padding: 14px; border-radius: 14px; background: var(--raise); }
+.wfile > i:first-child { font-size: 24px; color: var(--accent); }
+.wfile-body { flex: 1; min-width: 0; }
+.wfile-name { font: 400 15px/1.3 var(--ui); }
+.wfile-meta { font: 400 12px/1.35 var(--ui); color: var(--faint); margin-top: 5px; }
+
+/* Питание: «добавить в расписание» */
+.wtoggle-card {
+  display: flex; align-items: center; gap: 14px; padding: 13px 14px;
+  border-radius: 12px; background: var(--raise); cursor: pointer;
+  border: 0; color: inherit; width: 100%; text-align: left;
+}
+.wtoggle-card-body { flex: 1; }
+.wdate-chip {
+  display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 13px;
+  border-radius: 10px; background: var(--raise); font: 400 13px/1 var(--ui); color: var(--dim);
+}
+.wdate-chip i { color: var(--accent); }
+
+/* ── Узкие экраны ──────────────────────────────────────────── */
+
+/*
+ * Эталон нарисован на 1440. Ниже 1240 третья колонка «Сейчас» уже не
+ * помещается, ниже 1024 колонка разделов забирает слишком много: она
+ * уезжает, а разделы становятся полосой сверху.
+ */
+@media (max-width: 1240px) {
+  .wcols { grid-template-columns: minmax(0, 1.2fr) minmax(320px, 1fr); }
+  .wcols > .wcol:nth-child(3) { grid-column: 1 / -1; }
+  .wsettings { grid-template-columns: minmax(0, 1fr); }
+  .wnotes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 1024px) {
+  /* Колонкой сверху вниз: прокрутка снова общая, иначе разделы не достать */
+  .wroot { flex-direction: column; height: auto; min-height: 100vh; overflow: visible; }
+  .wbody { overflow: visible; }
+  .wside {
+    width: 100%; height: auto; flex-direction: row; align-items: center;
+    gap: 12px; padding: 12px 16px; box-shadow: 0 1px 0 var(--line);
+    overflow-x: auto;
+  }
+  .wside .wnav { flex-direction: row; }
+  .wside-foot { margin-top: 0; flex-direction: row; }
+  .wuser, .wbtn-line span { display: none; }
+  .wcols { grid-template-columns: minmax(0, 1fr); }
+  .wcols > .wcol:nth-child(3) { grid-column: auto; }
+  .wtop { flex-wrap: wrap; }
+  .wdays { justify-content: flex-start; }
+  .wbody { padding: 16px; }
+  .wnotes { grid-template-columns: minmax(0, 1fr); }
+  .wveil { padding: 0; place-items: end stretch; }
+  .wmodal, .wmodal.wide { width: 100%; max-width: 100%; max-height: 92vh; border-radius: 20px 20px 0 0; }
+}
