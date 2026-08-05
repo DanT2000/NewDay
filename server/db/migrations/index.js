@@ -2,6 +2,7 @@ const MIGRATIONS = [
   require('./001-baseline'),
   require('./002-normalize'),
   require('./003-meal-calories'),
+  require('./004-app-settings'),
 ];
 
 function currentVersion(db) {

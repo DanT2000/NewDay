@@ -161,11 +161,43 @@ console.log(`Аккаунт: ${me.email || me.username}, таймзона ${tz}`
 console.log('Привычки:');
 const habits = await ensureHabits();
 
+/*
+ * Заполняем не два дня, а неделю вокруг сегодня: экран «Сейчас» и полоска
+ * недели без данных выглядят пустыми, и понять по ним ничего нельзя.
+ * Прошедшие дни идут с отметками, будущие — планом без отметок: так видно
+ * и то, как выглядит закрытый день, и то, как выглядит предстоящий.
+ */
 console.log('Дни:');
+const plan = [
+  [-3, WORKDAY, 'Рабочий день', 0.8],
+  [-2, WORKDAY, 'Рабочий день', 0.5],
+  [-1, DAYOFF,  'Выходной',     1.0],
+  [0,  WORKDAY, 'Рабочий день', 0.35],
+  [1,  DAYOFF,  'Выходной',     0],
+  [2,  WORKDAY, 'Рабочий день', 0],
+  [3,  WORKDAY, 'Рабочий день', 0],
+];
+
+for (const [offset, tpl, title, doneShare] of plan) {
+  const date = localDate(tz, offset);
+  // Отметки ставим долей от списка: ровные 100 % выглядят подделкой
+  const mark = (list, share) => list.map((row, i) => ({
+    ...row, done: i < Math.round(list.length * share),
+  }));
+  await fillDay(date, {
+    ...tpl,
+    schedule: tpl.schedule,
+    tasks: {
+      work: mark(tpl.tasks.work, doneShare),
+      home: mark(tpl.tasks.home, doneShare),
+    },
+    meals: mark(tpl.meals, doneShare),
+    sport: mark(tpl.sport, doneShare),
+    weight: 78.4 - offset * 0.15,
+  }, title);
+}
+
 const today = localDate(tz, 0);
-const tomorrow = localDate(tz, 1);
-await fillDay(today, WORKDAY, 'Рабочий день');
-await fillDay(tomorrow, DAYOFF, 'Выходной');
 
 // Немного отметок за прошедшие дни, чтобы статистика и серии были не пустыми
 console.log('Отметки привычек за две недели:');

@@ -19,7 +19,8 @@ const now = new Date();
 const tz = 'Europe/Moscow';
 const today = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 
-db.prepare('INSERT INTO users (id, username, email, password_hash, email_verified, timezone) VALUES (1,?,?,?,1,?)')
+// админ: иначе на стенде не видно раздела подключения ИИ
+db.prepare('INSERT INTO users (id, username, email, password_hash, email_verified, timezone, is_admin) VALUES (1,?,?,?,1,?,1)')
   .run('demo@newday.local', 'demo@newday.local', bcrypt.hashSync('demo1234', 8), tz);
 db.prepare('INSERT INTO days (user_id, date, title, focus, weight, notes) VALUES (1,?,?,?,?,?)')
   .run(today, '', 'Закрыть отчёт по июлю', 78.4, 'Позвонить в сервис насчёт машины.');

@@ -6,7 +6,7 @@
  * сказать, что связи нет.
  */
 
-const VERSION = 'newday-v4';
+const VERSION = 'newday-v5';
 const SHELL = [
   '/now.html', '/app.html', '/habits.html', '/stats.html', '/settings.html',
   '/login.html', '/register.html', '/index.html', '/install.html',
@@ -57,20 +57,39 @@ self.addEventListener('fetch', event => {
   if (url.pathname.startsWith('/api/')) return;      // данные — только из сети
   if (url.pathname.startsWith('/downloads/')) return; // APK не кешируем
 
+  /*
+   * Разметка, стили и скрипты — сеть вперёд, кеш только как запас.
+   *
+   * Раньше здесь было наоборот, и это давало худший из возможных эффектов:
+   * после выкладки страница продолжала работать на старом CSS, пока кеш
+   * не сменится сам. Человек видел неизменившийся интерфейс и справедливо
+   * считал, что ничего не поменялось.
+   *
+   * Шрифты, иконки и картинки — наоборот, кеш вперёд: их имена содержат
+   * хеш или они не меняются вовсе, а тянуть их из сети каждый раз незачем.
+   */
+  const immutable = /^\/(fonts|icons)\//.test(url.pathname)
+    || /\.(woff2|png|svg|jpg|webp)$/.test(url.pathname);
+
   event.respondWith((async () => {
-    const cached = await caches.match(request, { ignoreSearch: true });
-    const network = fetch(request).then(async response => {
+    if (immutable) {
+      const hit = await caches.match(request, { ignoreSearch: true });
+      if (hit) return hit;
+    }
+
+    try {
+      const response = await fetch(request);
       if (response.ok) {
         const cache = await caches.open(VERSION);
         cache.put(request, response.clone());
       }
       return response;
-    }).catch(() => null);
-
-    // отдаём кеш сразу, а сеть обновляет его в фоне
-    return cached || await network || new Response('Нет связи', {
-      status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-    });
+    } catch {
+      const hit = await caches.match(request, { ignoreSearch: true });
+      return hit || new Response('Нет связи', {
+        status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      });
+    }
   })());
 });
 

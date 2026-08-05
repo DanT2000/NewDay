@@ -19,6 +19,7 @@ const seriesRouter = require('./routes/v1/series');
 const pushRouter = require('./routes/v1/push');
 const settingsRouter = require('./routes/v1/settings');
 const notesRouter = require('./routes/v1/notes');
+const adminRouter = require('./routes/v1/admin');
 const exportRouter = require('./routes/v1/export');
 const openapiRouter = require('./routes/v1/openapi');
 const appVersionRouter = require('./routes/v1/app');
@@ -114,6 +115,7 @@ function createApp({ db, config }) {
   app.use('/api/v1/push', pushRouter({ db, push }));
 
   app.use('/api/v1/notes', notesRouter({ db }));
+  app.use('/api/v1/admin', adminRouter({ db }));
   app.use('/api/v1/settings', settingsRouter({ db }));
   app.use('/api/v1', exportRouter({ db }));
 
@@ -122,7 +124,27 @@ function createApp({ db, config }) {
   });
 
   app.get('/pair', (_req, res) => res.sendFile(path.join(__dirname, '../public/pair.html')));
-  app.use(express.static(path.join(__dirname, '../public')));
+  /*
+   * Заголовки кеша.
+   *
+   * Разметка, стили и скрипты — с обязательной перепроверкой: браузер
+   * спрашивает сервер, изменился ли файл, и по ETag получает либо 304,
+   * либо новую версию. Без этого после выкладки человек продолжал видеть
+   * старый интерфейс и справедливо считал, что ничего не поменялось.
+   *
+   * Шрифты и иконки — на год: их имена содержат хеш содержимого, поэтому
+   * новая версия приходит под новым адресом, а старую можно держать вечно.
+   */
+  app.use(express.static(path.join(__dirname, '../public'), {
+    setHeaders(res, filePath) {
+      // разделитель любой: на Windows путь приходит с обратными слэшами
+      if (/[\\/](fonts|icons)[\\/]/.test(filePath)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      } else if (/\.(html|css|js|json|webmanifest)$/.test(filePath)) {
+        res.setHeader('Cache-Control', 'no-cache');
+      }
+    },
+  }));
   app.get('/', (_req, res) => res.sendFile(path.join(__dirname, '../public/index.html')));
 
   app.use(errorHandler);

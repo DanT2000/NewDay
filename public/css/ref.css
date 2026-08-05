@@ -1,0 +1,157 @@
+/* ============================================================
+   NewDay — компоненты по эталонному макету.
+
+   Размеры, отступы и радиусы взяты из прототипа Claude Design
+   один в один: 14 px внутри карточек, радиус 14, подписи 11/12/15,
+   переключатель 48×28 с бегунком 22. Это не «в духе макета» —
+   это его числа.
+
+   Файл существует отдельно от components.css: там компоненты
+   прежнего интерфейса, здесь — эталонные. Пока идёт перенос,
+   живут оба, и видно, что уже переехало.
+   ============================================================ */
+
+/* ── Экран ──────────────────────────────────────────────────── */
+.rscreen {
+  display: flex; flex-direction: column; gap: 18px;
+  width: 100%; max-width: 560px; margin: 0 auto;
+  padding: 4px 16px calc(var(--bottomnav-h) + 22px);
+  box-sizing: border-box;
+}
+.rtitle { font: 500 28px/1.1 var(--font-ui); letter-spacing: -.02em; }
+
+/* Подпись группы: 11 px, разрядка, наверх группы */
+.rgroup-label {
+  padding: 0 4px 10px;
+  font: 500 11px/1 var(--font-ui); letter-spacing: .12em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+/* Карточка группы. `pad` — когда внутри свой макет, без него — список строк */
+.rcard { border-radius: 14px; background: var(--surface); padding: 2px 0; }
+.rcard.pad { padding: 14px; }
+
+/* ── Строка списка ──────────────────────────────────────────── */
+.rrow {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px; width: 100%; box-sizing: border-box;
+  background: none; border: 0; text-align: left; color: inherit;
+  font: inherit; cursor: pointer;
+}
+.rrow:not(button):not(a) { cursor: default; }
+.rrow-body { flex: 1; min-width: 0; }
+.rrow-title { font: 400 15px/1.3 var(--font-ui); }
+.rrow-hint { font: 400 12px/1.4 var(--font-ui); color: var(--ink-3); margin-top: 5px; }
+.rrow-value { font: 400 13px/1 var(--font-ui); color: var(--ink-3); white-space: nowrap; }
+.rrow-ico { color: var(--ink-2); flex: none; }
+.rrow-ico.is-accent { color: var(--accent); }
+.rrow-chev { color: var(--ink-3); flex: none; }
+button.rrow:hover, a.rrow:hover { background: var(--surface-2); }
+.rrow.is-accent .rrow-title { color: var(--accent); }
+/* Разделитель между строками одной группы — как в макете: его нет.
+   Группы разделяются подписью и промежутком, а не линиями. */
+
+/* ── Карточка аккаунта ──────────────────────────────────────── */
+.raccount {
+  display: flex; align-items: center; gap: 12px;
+  border-radius: 14px; background: var(--surface); padding: 14px;
+  width: 100%; box-sizing: border-box;
+  border: 0; text-align: left; color: inherit; font: inherit; cursor: pointer;
+}
+.raccount:hover { background: var(--surface-2); }
+.ravatar {
+  width: 42px; height: 42px; border-radius: 13px; flex: none;
+  background: var(--accent-soft); color: var(--accent);
+  display: grid; place-items: center; font-size: 19px;
+}
+
+/* ── Сегментированный переключатель ─────────────────────────── */
+.rseg {
+  display: flex; gap: 4px; margin-top: 12px;
+  padding: 3px; border-radius: 10px; background: var(--surface-2);
+}
+.rseg > button {
+  flex: 1; height: 36px; border-radius: 8px; border: 0; cursor: pointer;
+  font: 500 13px/1 var(--font-ui);
+  background: transparent; color: var(--ink-2);
+}
+.rseg > button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+
+/* ── Свотчи цвета ───────────────────────────────────────────── */
+.rswatches { display: flex; gap: 10px; margin-top: 12px; }
+.rswatch {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 8px;
+  background: none; border: 0; padding: 0; cursor: pointer;
+}
+.rswatch i {
+  width: 38px; height: 38px; border-radius: 12px;
+  display: grid; place-items: center;
+}
+.rswatch[aria-pressed="true"] i { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px currentColor; }
+.rswatch svg { color: #fff; opacity: 0; }
+.rswatch[aria-pressed="true"] svg { opacity: 1; }
+.rswatch span { font: 400 11px/1 var(--font-ui); color: var(--ink-2); }
+
+/* ── Переключатель 48×28 ────────────────────────────────────── */
+.rswitch {
+  width: 48px; height: 28px; border-radius: 999px; flex: none;
+  padding: 3px; box-sizing: border-box; border: 0; cursor: pointer;
+  background: var(--surface-2);
+  /* В выключенном состоянии обязателен видимый контур — из правил макета */
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--ink-2) 70%, transparent);
+  transition: background 160ms ease;
+}
+.rswitch > i {
+  display: block; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--ink-2);
+  transition: transform 160ms var(--ease), background 160ms ease;
+}
+.rswitch[aria-checked="true"] { background: var(--accent); box-shadow: none; }
+.rswitch[aria-checked="true"] > i { background: #fff; transform: translateX(20px); }
+
+/* ── Чипы ───────────────────────────────────────────────────── */
+.rchips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.rchips::-webkit-scrollbar { width: 0; height: 0; }
+.rchip {
+  flex: none; padding: 8px 12px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--hairline); background: transparent;
+  font: 400 13px/1 var(--font-ui); color: var(--ink-2); white-space: nowrap;
+}
+.rchip[aria-pressed="true"] {
+  background: var(--accent); border-color: transparent; color: var(--on-accent);
+}
+
+/* ── Заметка под группой ────────────────────────────────────── */
+.rnote { padding: 10px 4px 0; font: 400 12px/1.5 var(--font-ui); color: var(--ink-3); }
+
+/* ── Поле ввода ─────────────────────────────────────────────── */
+.rinput {
+  width: 100%; height: 46px; box-sizing: border-box; padding: 0 13px;
+  border-radius: 11px; border: 1px solid var(--hairline);
+  background: var(--surface-2); color: var(--ink);
+  font: 400 16px/1 var(--font-ui); outline: none;
+}
+.rinput:focus { border-color: var(--accent); }
+textarea.rinput { height: auto; min-height: 110px; padding: 12px 13px; line-height: 1.5; resize: vertical; }
+.rfield-label {
+  display: block; font: 500 11px/1 var(--font-ui); letter-spacing: .12em;
+  text-transform: uppercase; color: var(--ink-3); margin-bottom: 8px;
+}
+
+/* ── Тег устройства ─────────────────────────────────────────── */
+.rtag {
+  font: 500 11px/1 var(--font-ui); padding: 5px 9px; border-radius: 8px;
+  background: var(--surface-2); color: var(--ink-2); white-space: nowrap;
+}
+.rtag.is-accent { background: var(--accent-soft); color: var(--accent); }
+
+/*
+ * Совсем узкие экраны. Макет рисован на кадре 390 px; на 320 четыре подписи
+ * цветов («Сиреневый» — самая длинная) вместе с промежутками не влезали.
+ * Сжимаем промежуток и подпись, сами свотчи не трогаем: 38 px — это то,
+ * во что попадают пальцем.
+ */
+@media (max-width: 360px) {
+  .rswatches { gap: 6px; }
+  .rswatch span { font-size: 10px; }
+  .rrow { padding: 12px; gap: 10px; }
+}

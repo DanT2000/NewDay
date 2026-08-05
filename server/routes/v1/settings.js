@@ -3,6 +3,7 @@ const { wrap, badRequest } = require('../../lib/errors');
 const v = require('../../lib/validate');
 const { isValidTimezone, todayFor } = require('../../lib/dates');
 const { usersRepo, publicUser } = require('../../repos/users');
+const { appSettingsRepo } = require('../../repos/appSettings');
 
 const THEMES = ['system', 'light', 'dark'];
 const VIEWS = ['list', 'timeline'];
@@ -11,11 +12,15 @@ const FOOD_MODES = ['checklist', 'timed'];
 module.exports = function settingsRouter({ db }) {
   const router = express.Router();
   const users = usersRepo(db);
+  const appSettings = appSettingsRepo(db);
 
   router.get('/', wrap((req, res) => {
     res.json({
       ...publicUser(req.user, users.getSettings(req.user.id)),
       today: todayFor(req.user.timezone),
+      // ИИ общий на весь экземпляр: интерфейсу нужно знать лишь,
+      // работает ли он. Ключ и адрес видит только администратор.
+      ai: { ready: appSettings.aiPublic().ready },
     });
   }));
 
