@@ -38,11 +38,27 @@ function apply(el, props) {
     if (k === 'class') el.className = el.className ? `${el.className} ${v}` : v;
     else if (k === 'text') el.textContent = v;
     else if (k === 'html') el.innerHTML = v;
-    else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
+    else if (k === 'style' && typeof v === 'object') style(el, v);
     else if (k === 'dataset') Object.assign(el.dataset, v);
     else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v);
     else if (k in el && k !== 'list') el[k] = v;
     else el.setAttribute(k, v === true ? '' : v);
+  }
+}
+
+/**
+ * Стили по одному, а не присваиванием объекта.
+ *
+ * `Object.assign(el.style, {...})` молча теряет пользовательские свойства:
+ * `--pin` не является свойством CSSStyleDeclaration, и присваивание проходит
+ * впустую. Именно так пропадал цвет блока расписания: в базе он лежал, в
+ * редакторе горел, а на экране блок оставался цветом приложения.
+ */
+function style(el, props) {
+  for (const [k, v] of Object.entries(props)) {
+    if (v === null || v === undefined) continue;
+    if (k.startsWith('--')) el.style.setProperty(k, String(v));
+    else el.style[k] = v;
   }
 }
 

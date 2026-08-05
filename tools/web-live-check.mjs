@@ -543,8 +543,34 @@ const послеНачала = await плитки();
 await js(`document.querySelectorAll('.wmodal .wpaint')[3].click()`);
 проба('цвет отметился', await js(`document.querySelectorAll('.wmodal .wpaint.on').length === 1
   && !document.querySelectorAll('.wmodal .wpaint')[0].classList.contains('on')`));
-await js(`document.querySelector('.wmodal-x').click()`);
+await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
 await waitFor('!document.querySelector(".wveil")', 40);
+await wait(1200);
+
+/*
+ * Цвет доезжает до экрана, а не только до базы.
+ *
+ * Пользовательские свойства нельзя присвоить объектом стилей — присваивание
+ * проходит впустую. Цвет лежал в базе, горел в редакторе, а блок оставался
+ * цветом приложения; проверка «чип отметился» этого не видела.
+ */
+const цветБлока = await js(`(() => {
+  const b = [...document.querySelectorAll('.wblock')].find(x => x.textContent.includes('Зарядка'));
+  return b ? getComputedStyle(b).getPropertyValue('--pin').trim() : 'блока нет';
+})()`);
+проба('цвет блока виден на экране', /^#|rgb/.test(цветБлока), цветБлока);
+const цветВБазе = await js(`fetch('/api/v1/days/${DAY}/full').then(r=>r.json())
+  .then(d => d.schedule.find(x => x.title.includes('Зарядка'))?.color ?? 'нет')`, true);
+проба('цвет сохранён на сервере', цветВБазе === 'green', String(цветВБазе));
+// возвращаем как было
+await js(`(async () => {
+  const d = await (await fetch('/api/v1/days/${DAY}/full')).json();
+  const r = d.schedule.find(x => x.title.includes('Зарядка'));
+  if (r) await fetch('/api/v1/days/${DAY}/schedule/' + r.id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ color: null, startMin: 430, endMin: 470 }),
+  });
+})()`, true);
 
 /*
  * Пересечение: конец, залезающий на соседний блок, должен предложить три
