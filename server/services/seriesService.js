@@ -80,6 +80,14 @@ function seriesService(db) {
         alarmMode: payload.alarmMode ?? 'none',
         alarmProfile: payload.alarmProfile ?? 'gentle',
         remindBeforeMin: payload.remindBeforeMin ?? null,
+        /*
+         * Список сроков и цвет переносим тоже. Без этого повтор терял их при
+         * достраивании дня: «за день» становилось «вовремя», а цветной блок
+         * приезжал цветом приложения.
+         */
+        remindBefore: Array.isArray(payload.remindBefore) && payload.remindBefore.length
+          ? JSON.stringify(payload.remindBefore) : null,
+        color: payload.color ?? null,
         seriesId: rule.id,
         done: 0,
       });

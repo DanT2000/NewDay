@@ -7,7 +7,17 @@ const { tasksRepo } = require('../../repos/tasks');
 const { mealsRepo } = require('../../repos/meals');
 const { sportRepo } = require('../../repos/sport');
 
-const KINDS = ['normal', 'work', 'meal', 'sport', 'rest'];
+/*
+ * `reminder` — момент, а не отрезок: «забрать документы в 15:00». В расписании
+ * он занимает не блок, а точку, и в месяце красится иначе, чтобы отличался от
+ * блока времени. Отдельной сущностью его не делаем: дата, время, повтор и
+ * предупреждения у него ровно те же, что у строки, — вторая таблица завела бы
+ * второй набор тех же правил.
+ */
+const KINDS = ['normal', 'work', 'meal', 'sport', 'rest', 'reminder'];
+
+/** Цвета — те же четыре акцента, что и у приложения; пусто значит «цвет приложения». */
+const COLORS = ['violet', 'orange', 'green', 'red'];
 const ALARM_MODES = ['none', 'notify', 'alarm'];
 const ALARM_PROFILES = ['wakeup', 'gentle'];
 const SLOTS = ['breakfast', 'lunch', 'dinner', 'snack', 'other'];
@@ -40,6 +50,8 @@ function sanitizeSchedule(body, { partial }) {
     alarmProfile:    x => v.oneOf(x, ALARM_PROFILES, { field: 'профиль', fallback: 'gentle' }),
     remindBeforeMin: x => v.int(x, { min: 0, max: REMIND_MAX, field: 'напомнить за', nullable: true }),
     sortOrder:       x => v.int(x, { min: 0, max: 100000, field: 'порядок', nullable: true }),
+    // пусто — «цвет приложения», и это законное значение, а не пропуск поля
+    color:           x => (x === undefined || x === null || x === '' ? null : v.oneOf(x, COLORS, { field: 'цвет' })),
   }, partial);
 
   /*
@@ -76,15 +88,32 @@ const sanitizeTask = (body, { partial }) => pick(body, {
   sortOrder:   x => v.int(x, { min: 0, max: 100000, field: 'порядок', nullable: true }),
 }, partial);
 
-const sanitizeMeal = (body, { partial }) => pick(body, {
-  slot:      x => v.oneOf(x, SLOTS, { field: 'приём пищи', fallback: 'other' }),
-  timeMin:   x => v.int(x, { min: 0, max: 1439, field: 'время', nullable: true }),
-  calories:  x => v.int(x, { min: 0, max: 20000, field: 'калории', nullable: true }),
-  title:     x => v.str(x, { max: 200, field: 'название' }),
-  note:      x => v.str(x, { max: 1000, field: 'заметка' }),
-  done:      x => v.bool(x),
-  sortOrder: x => v.int(x, { min: 0, max: 100000, field: 'порядок', nullable: true }),
-}, partial);
+/*
+ * Режим времени у приёма пищи не хранится отдельным полем — он однозначно
+ * читается из пары времён: пусто и пусто — пункт плана без времени, оба
+ * заполнены — окно («обед с 12:00 до 14:00»), только начало — точное время.
+ * Отдельный признак режима был бы вторым источником правды и однажды разошёлся
+ * бы с самими временами.
+ */
+function sanitizeMeal(body, { partial }) {
+  const out = pick(body, {
+    slot:            x => v.oneOf(x, SLOTS, { field: 'приём пищи', fallback: 'other' }),
+    timeMin:         x => v.int(x, { min: 0, max: 1439, field: 'время', nullable: true }),
+    endMin:          x => v.int(x, { min: 0, max: 1439, field: 'конец окна', nullable: true }),
+    calories:        x => v.int(x, { min: 0, max: 20000, field: 'калории', nullable: true }),
+    title:           x => v.str(x, { max: 200, field: 'название' }),
+    note:            x => v.str(x, { max: 1000, field: 'заметка' }),
+    done:            x => v.bool(x),
+    sortOrder:       x => v.int(x, { min: 0, max: 100000, field: 'порядок', nullable: true }),
+    scheduleItemId:  x => v.int(x, { min: 1, field: 'блок расписания', nullable: true }),
+  }, partial);
+
+  if (body.remindBefore !== undefined) {
+    const list = normalizeLeads(body.remindBefore);
+    out.remindBefore = list.length ? JSON.stringify(list) : null;
+  }
+  return out;
+}
 
 const sanitizeSport = (body, { partial }) => pick(body, {
   exercise:  x => v.str(x, { max: 200, field: 'упражнение' }),

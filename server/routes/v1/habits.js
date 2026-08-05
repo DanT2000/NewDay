@@ -49,6 +49,8 @@ function sanitize(body, { partial }) {
   if (has('targetPerDay')) set('targetPerDay', v.int(body.targetPerDay, { min: 1, max: 10000, field: 'цель за день', nullable: true }));
   if (has('unit')) set('unit', v.str(body.unit, { max: 20, field: 'единица' }) || null);
   if (has('scheduleMask')) set('scheduleMask', v.int(body.scheduleMask, { min: 1, max: 127, field: 'дни недели' }));
+  // свободный график: сколько раз в неделю, без привязки к дням; пусто — график по дням
+  if (has('timesPerWeek')) set('timesPerWeek', v.int(body.timesPerWeek, { min: 1, max: 7, field: 'раз в неделю', nullable: true }));
   if (has('polarity')) set('polarity', v.oneOf(body.polarity, POLARITIES, { field: 'полярность' }));
   if (has('mode')) set('mode', v.oneOf(body.mode, MODES, { field: 'режим' }));
   if (has('breakPolicy')) set('breakPolicy', v.oneOf(body.breakPolicy, BREAK_POLICIES, { field: 'при срыве' }));

@@ -73,6 +73,13 @@ export function scheduleRow(row, { isToday, minutes }) {
     leads: leadsOf(row),
     kind: row.kind,
     fromFood: row.kind === 'meal',
+    /*
+     * Напоминание — момент, а не отрезок. Признак берём по типу, а не по
+     * пустому концу: блок без конца («момент, о котором просто помню») и
+     * напоминание выглядят и красятся по-разному.
+     */
+    isReminder: row.kind === 'reminder',
+    color: row.color || null,
     note: row.note || '',
     seriesId: row.series_id ?? null,
     past,
@@ -102,20 +109,38 @@ export function tasks(day) {
   return out;
 }
 
+/**
+ * Режим времени приёма пищи читается из пары времён, а не из отдельного поля:
+ * пусто — пункт плана, оба заполнены — окно, только начало — точное время.
+ */
+export const mealMode = m => {
+  if (m.time_min === null || m.time_min === undefined) return 'none';
+  return m.end_min === null || m.end_min === undefined ? 'exact' : 'window';
+};
+
 export const meals = day => (day?.meals ?? []).map(m => ({
   id: m.id,
   title: m.title || 'Без названия',
   kcal: m.calories ?? null,
   done: m.done === 1,
-  alarm: 'off',
+  alarm: parseLeads(m.remind_before_json) ? 'notify' : 'off',
+  mode: mealMode(m),
+  start: m.time_min ?? null,
+  end: m.end_min ?? null,
+  leads: leadsOf(m),
+  scheduled: Boolean(m.schedule_item_id),
   meta: mealMeta(m),
   raw: m,
 }));
 
 function mealMeta(m) {
   const parts = [];
-  parts.push(m.time_min === null || m.time_min === undefined ? 'без времени' : hhmm(m.time_min));
+  const mode = mealMode(m);
+  if (mode === 'none') parts.push('без времени');
+  else if (mode === 'window') parts.push(`окно ${hhmm(m.time_min)}–${hhmm(m.end_min)}`);
+  else parts.push(hhmm(m.time_min));
   if (m.slot && m.slot !== 'other') parts.push(SLOT_LABEL[m.slot] ?? m.slot);
+  if (m.schedule_item_id) parts.push('в расписании');
   return parts.join(' · ');
 }
 
@@ -142,18 +167,26 @@ function habitMeta(h) {
   if (h.activeToday === false) return 'сегодня по графику выходной';
   const parts = [];
   if (h.challenge) parts.push(`челлендж ${h.challenge.done ?? 0} из ${h.challenge.target ?? 0} дней`);
+  /*
+   * У свободного графика серия подряд ничего не значит: обещание считается
+   * за неделю. Поэтому вместо серии — норма недели.
+   */
+  else if (h.weekNorm) parts.push(`${h.weekNorm.done} из ${h.weekNorm.target} за неделю`);
   else if (h.streak) parts.push(`подряд ${h.streak} ${plural(h.streak, 'день', 'дня', 'дней')}`);
-  if (h.bestStreak) parts.push(`лучшая серия ${h.bestStreak}`);
+  if (h.bestStreak && !h.weekNorm) parts.push(`лучшая серия ${h.bestStreak}`);
   return parts.join(' · ') || 'ещё не отмечалась';
 }
 
 /**
- * Напоминания. Отдельной сущности пока нет, и придумывать её здесь нельзя.
- * Но в текущей модели напоминание — это и есть момент без длительности,
- * у которого включён сигнал; их и показываем.
+ * Напоминания. Своя таблица им не нужна: дата, время, повтор и предупреждения
+ * у напоминания те же, что у строки расписания, — отличается только то, что
+ * это момент, а не отрезок. Отмечает его тип `reminder`.
+ *
+ * Момент с сигналом, созданный до появления типа, тоже считается напоминанием:
+ * иначе прежние напоминания разом исчезли бы из списка.
  */
 export const reminders = rows => rows
-  .filter(r => r.end === null && r.alarm !== 'off')
+  .filter(r => r.isReminder || (r.end === null && r.alarm !== 'off'))
   .map(r => ({
     id: r.id,
     title: r.title,
@@ -174,12 +207,14 @@ const LEAD_LABEL = {
  */
 export const notes = (rows, todayKey, openDate = todayKey) => rows.map(n => {
   const text = String(n.text || '');
-  const firstLine = text.split('\n')[0].trim();
+  const title = String(n.title || '').trim();
   return {
-    id: n.date,
-    date: n.date === todayKey ? 'сегодня' : shortDate(n.date),
-    on: n.date === openDate,
-    title: firstLine.length > 48 ? `${firstLine.slice(0, 48)}…` : (firstLine || 'Без заголовка'),
+    id: n.id ?? n.date,
+    dated: Boolean(n.date),
+    dateKey: n.date ?? null,
+    date: n.date ? (n.date === todayKey ? 'сегодня' : shortDate(n.date)) : 'без даты',
+    on: Boolean(n.date) && n.date === openDate,
+    title: title.length > 48 ? `${title.slice(0, 48)}…` : (title || 'Без заголовка'),
     text,
     raw: n,
   };
@@ -192,12 +227,29 @@ export const notes = (rows, todayKey, openDate = todayKey) => rows.map(n => {
  * быть несколько — уходят списком минут; сервер сам оставит первым самый
  * ранний.
  */
-export const rowToServer = ({ title, start, end, alarm, leads }) => ({
+export const rowToServer = ({ title, start, end, alarm, leads, color, kind }) => ({
   title: String(title ?? '').trim(),
   startMin: start,
-  endMin: end ?? null,
+  // У напоминания конца нет по определению: это момент, а не отрезок
+  endMin: kind === 'reminder' ? null : (end ?? null),
   ...FROM_ALARM[alarm ?? 'off'],
   remindBefore: (leads?.length ? leads : ['at']).map(k => LEAD_MIN[k] ?? 0),
+  color: color ?? null,
+  kind: kind ?? 'normal',
+});
+
+/**
+ * Что уходит на сервер из редактора приёма пищи. Режим времени в запрос не
+ * попадает — он и есть пара времён: без времени оба пусты, у окна заполнены
+ * оба, у точного времени только начало.
+ */
+export const mealToServer = ({ title, slot, mode, start, end, kcal, leads }) => ({
+  title: String(title ?? '').trim(),
+  slot: slot || 'other',
+  timeMin: mode === 'none' ? null : (start ?? null),
+  endMin: mode === 'window' ? (end ?? null) : null,
+  calories: kcal === '' || kcal === null || kcal === undefined ? null : Number(kcal),
+  remindBefore: mode === 'none' ? [] : (leads?.length ? leads : ['at']).map(k => LEAD_MIN[k] ?? 0),
 });
 
 /**
@@ -235,12 +287,8 @@ export const taskToServer = ({ title, cat }) => ({
   bucket: cat === 'work' ? 'work' : 'home',
 });
 
-export const mealToServer = ({ title, kcal, timeMin, slot }) => ({
-  title: String(title ?? '').trim(),
-  calories: Number.isFinite(kcal) ? kcal : null,
-  timeMin: Number.isFinite(timeMin) ? timeMin : null,
-  slot: slot ?? 'other',
-});
+/** Сроки предупреждения в минутах — тем же словарём, что и у строки. */
+export const leadMinutes = leads => (leads?.length ? leads : ['at']).map(k => LEAD_MIN[k] ?? 0);
 
 // ── Мелочи ───────────────────────────────────────────────────
 

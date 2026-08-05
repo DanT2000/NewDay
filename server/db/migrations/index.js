@@ -5,6 +5,7 @@ const MIGRATIONS = [
   require('./004-app-settings'),
   require('./005-ai-usage'),
   require('./006-remind-many'),
+  require('./007-color-window'),
 ];
 
 function currentVersion(db) {

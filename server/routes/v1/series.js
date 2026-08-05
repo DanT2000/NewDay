@@ -13,10 +13,18 @@ function normalizeRow(row) {
   const out = {
     title: v.str(row.title, { max: 200, field: 'название' }),
     note: v.str(row.note, { max: 1000, field: 'заметка' }),
-    kind: v.oneOf(row.kind, ['normal', 'work', 'meal', 'sport', 'rest'], { field: 'тип', fallback: 'normal' }),
+    kind: v.oneOf(row.kind, ['normal', 'work', 'meal', 'sport', 'rest', 'reminder'], { field: 'тип', fallback: 'normal' }),
     alarmMode: v.oneOf(row.alarmMode, ['none', 'notify', 'alarm'], { field: 'будильник', fallback: 'none' }),
     alarmProfile: v.oneOf(row.alarmProfile, ['wakeup', 'gentle'], { field: 'профиль', fallback: 'gentle' }),
     remindBeforeMin: v.int(row.remindBeforeMin, { min: 0, max: 1440, field: 'напомнить за', nullable: true }),
+    /*
+     * Сроки предупреждения списком и цвет — повтору они нужны так же, как
+     * обычной строке: без них ежегодное «за день» превращалось в «вовремя»,
+     * а цветное напоминание в дне рождения теряло цвет.
+     */
+    remindBefore: Array.isArray(row.remindBefore) ? row.remindBefore : undefined,
+    color: row.color === undefined || row.color === null || row.color === ''
+      ? null : v.oneOf(row.color, ['violet', 'orange', 'green', 'red'], { field: 'цвет' }),
   };
   if (typeof row.time === 'string' && row.time.trim()) {
     const parsed = parseTimeRange(row.time);

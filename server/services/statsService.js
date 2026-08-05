@@ -36,6 +36,15 @@ function habitExistsOn(habit, date) {
   return true;
 }
 
+/**
+ * Свободный график: «три раза в неделю», без привязки к дням.
+ *
+ * У такой привычки неотмеченный день — не пропуск: человек ничего не обещал
+ * именно на него. Обещание считается за неделю, поэтому пропуском может быть
+ * только явная отметка «не сделал».
+ */
+const freeSchedule = habit => Number(habit.times_per_week) > 0;
+
 function pct(done, possible) {
   return possible > 0 ? Math.round((done / possible) * 100) : null;
 }
@@ -71,6 +80,8 @@ function statsService(db, opts = {}) {
       if (status === 'missed') break;
       // записи нет: сегодня и будущее не считаем срывом, прошлое — считаем
       if (cursor >= today) { cursor = addDays(cursor, -1); continue; }
+      // у свободного графика день без отметки ничего не нарушает
+      if (freeSchedule(habit)) { cursor = addDays(cursor, -1); continue; }
       break;
     }
     return streak;
@@ -108,7 +119,8 @@ function statsService(db, opts = {}) {
       if (status === 'done') done += 1;
       else if (status === 'skipped') skipped += 1;
       else if (status === 'missed') missed += 1;
-      else if (d < today) missed += 1; // прошедший активный день без отметки — пропуск
+      // прошедший активный день без отметки — пропуск, но только если он был обещан
+      else if (d < today && !freeSchedule(habit)) missed += 1;
     }
 
     const streak = currentStreak(habit, logsMap, rangeTo, today);
@@ -144,10 +156,24 @@ function statsService(db, opts = {}) {
       }
     }
 
+    const gap = freeSchedule(habit) ? null : 'missed';
     const last14 = rangeDates(addDays(rangeTo, -13), rangeTo).map(d => ({
       date: d,
-      status: habitActiveOn(habit, d) ? (logsMap[d] ?? (d < today ? 'missed' : null)) : 'inactive',
+      status: habitActiveOn(habit, d) ? (logsMap[d] ?? (d < today ? gap : null)) : 'inactive',
     }));
+
+    /*
+     * Норма недели у свободного графика: сколько сделано за последние семь
+     * дней против обещанного. Без этого «3 раза в неделю» нечем измерить —
+     * серия подряд для такой привычки ничего не значит.
+     */
+    const week = freeSchedule(habit)
+      ? {
+        target: habit.times_per_week,
+        done: rangeDates(addDays(rangeTo, -6), rangeTo)
+          .filter(d => logsMap[d] === 'done').length,
+      }
+      : null;
 
     return {
       id: habit.id,
@@ -161,6 +187,8 @@ function statsService(db, opts = {}) {
       done, missed, skipped,
       percent: pct(done, done + missed),
       challenge,
+      timesPerWeek: habit.times_per_week ?? null,
+      week,
       last14,
     };
   }
@@ -212,6 +240,8 @@ function statsService(db, opts = {}) {
         mode: h.mode,
         breakPolicy: h.break_policy,
         scheduleMask: h.schedule_mask,
+        timesPerWeek: h.times_per_week ?? null,
+        weekNorm: s.week,
         status: log?.status ?? null,
         value: log?.value ?? null,
         activeToday: active,

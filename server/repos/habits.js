@@ -6,7 +6,7 @@ const FIELD_MAP = {
   scheduleMask: 'schedule_mask', polarity: 'polarity', mode: 'mode',
   challengeTargetDays: 'challenge_target_days', challengeStartDate: 'challenge_start_date',
   breakPolicy: 'break_policy', allowedSkipsPerWeek: 'allowed_skips_per_week',
-  isActive: 'is_active', sortOrder: 'sort_order',
+  isActive: 'is_active', sortOrder: 'sort_order', timesPerWeek: 'times_per_week',
 };
 
 function habitsRepo(db) {

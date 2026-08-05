@@ -16,7 +16,7 @@
 import { h, add, replace, svg, $ } from '../dom.js';
 import { icon } from '../vendor/icons.js';
 import {
-  DARK, LIGHT, PALETTE, ALARM, LEADS, CATS, NAV, MONTHS, DOW_LONG, DOW_SHORT,
+  DARK, LIGHT, PALETTE, ALARM, LEADS, CATS, NAV, MONTHS, MONTHS_NOM, DOW_LONG, DOW_SHORT,
   SOUNDS, REPEATS, PRINT_PARTS, HABIT_EMOJI,
 } from './data.js';
 import * as adapt from './adapt.js';
@@ -24,6 +24,7 @@ import * as data from './store.js';
 import { store } from './store.js';
 import * as api from '../api.js';
 import { printSheet } from './sheet.js';
+import { renderEmojiPicker } from '../emoji.js';
 
 /** Часовая сетка: 18 часов с 06:00, строка часа — 44 px. */
 const HOUR_H = 44;
@@ -39,22 +40,27 @@ const state = {
   catFilter: 'all', noteFilter: 'all',
   modal: null, busy: false, notice: null,
   rowId: null, rowStart: null, rowEnd: null, rowField: 'start', rowTitle: '', rowAlarm: 'off', rowLeads: ['at'],
+  rowKind: 'normal', rowColor: null, rowConflict: 'overlap',
   taskId: null, taskTitle: '', taskCat: 'work',
   mealId: null, mealTitle: '', mealKcal: '', mealMode: 'none', mealDur: 30, mealSched: false,
+  mealStart: 720, mealEnd: 840, mealLeads: ['at'], mealSchedId: null, mealConflict: 'overlap',
   sportId: null, sportTitle: '', sportSets: '', sportReps: '', sportWeight: '',
-  noteId: null, noteTitle: '', noteText: '', noteDated: true,
+  noteId: null, noteTitle: '', noteText: '', noteDated: true, noteDate: '',
   remId: null, remRepeat: 'Разово', remTitle: '', remDate: '', remTime: '10:00', remLeads: ['at'],
+  remAlarm: 'notify', remSeriesId: null,
+  remDays: { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
   fileKind: 'export', sound: 'Рассвет', notifySound: 'Капля', soundKind: 'Звук будильника',
   tplRows: null, tplEdit: null, tplStart: 420, tplEnd: 480, tplField: 'start',
   tplTitle: '', tplAlarm: 'off', tplLeads: ['at'],
   quietFrom: '23:00', quietTo: '07:00',
-  habitKind: 'do', habitEmoji: '💧', habitGoal: 30, habitGoalCustom: false,
-  habitTitle: '', habitTimes: 5,
+  habitId: null, habitKind: 'do', habitEmoji: '💧', habitGoal: 30, habitGoalCustom: false,
+  habitTitle: '', habitTimes: 5, habitPlan: 'days', habitGoalDays: 730, habitPicker: false,
   habitDays: { 0: true, 1: true, 2: true, 3: true, 4: true, 5: false, 6: false },
   aiStep: 'input', aiText: '', aiOff: {},
+  calY: 0, calM: 0, calFor: 'day', calBack: null,
   printScope: 0, printOff: {},
   statsDays: 30,
-  passOld: '', passNew: '', passNew2: '',
+  accName: '', passOld: '', passNew: '', passNew2: '',
   pairCode: null,
   tokenName: '', tokenScope: 'read', tokenSecret: null,
   aiDraft: null,
@@ -80,6 +86,38 @@ const todayKey = () => store.settings?.today ?? data.todayFor();
 const set = patch => {
   Object.assign(state, typeof patch === 'function' ? patch(state) : patch);
   render();
+};
+
+/**
+ * Правка внутри шторки перерисовывает только шторку.
+ *
+ * Раньше любое нажатие в шторке шло через `set`, а он перестраивает весь
+ * экран — боковое меню, шапку, сетку дня. На глаз это выглядело как
+ * перезагрузка страницы: шторка мигала на каждом нажатии «начало · длится ·
+ * конец», а поле ввода теряло курсор посреди набора.
+ *
+ * Курсор возвращаем по имени поля: без этого набор в «своё: N минут»
+ * обрывался бы на первой цифре.
+ */
+const setIn = patch => {
+  Object.assign(state, typeof patch === 'function' ? patch(state) : patch);
+  const body = $('.wmodal-body');
+  if (!body || !state.modal) { render(); return; }
+
+  const live = document.activeElement;
+  const name = live && body.contains(live) ? live.getAttribute('name') : null;
+  const caret = name && live.selectionStart !== undefined
+    ? [live.selectionStart, live.selectionEnd] : null;
+
+  replace(body, ...modalBody());
+
+  if (!name) return;
+  const again = body.querySelector(`[name="${name}"]`);
+  if (!again) return;
+  again.focus();
+  if (caret && again.setSelectionRange) {
+    try { again.setSelectionRange(caret[0], caret[1]); } catch { /* не текстовое поле */ }
+  }
 };
 
 /*
@@ -112,6 +150,48 @@ const hhmm = min => { const m = ((min % 1440) + 1440) % 1440; return `${pad2(Mat
 const dayOf = () => { const [y, m, d] = state.date.split('-').map(Number); return new Date(y, m - 1, d); };
 const keyOf = dt => `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
 const shiftDay = n => go(data.addDays(state.date, n));
+
+/**
+ * Стрелки листают то, что показано.
+ *
+ * На «Расписании» это выбранный период: день — днями, неделя — неделями,
+ * месяц — месяцами; на остальных экранах показан день, и листаются дни.
+ * Так же ведут себя календари, и без этого лист месяца приходилось бы
+ * пролистывать по одному дню тридцать раз.
+ */
+function shiftPeriod(n) {
+  const step = state.screen === 'plan' ? state.view : 'day';
+  if (step === 'week') return shiftDay(n * 7);
+  if (step !== 'month') return shiftDay(n);
+
+  // Прибавление месяца к 31-му числу даёт следующий-следующий месяц —
+  // поэтому день прижимаем к длине месяца, в который переходим
+  const cur = dayOf();
+  const first = new Date(cur.getFullYear(), cur.getMonth() + n, 1);
+  const days = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  first.setDate(Math.min(cur.getDate(), days));
+  return go(keyOf(first));
+}
+
+/** Что за период сейчас на экране — этим подписана шапка. */
+function periodLabel() {
+  const cur = dayOf();
+  if (state.screen !== 'plan' || state.view === 'day') {
+    return { top: DOW_LONG[cur.getDay()], main: `${cur.getDate()} ${MONTHS[cur.getMonth()]}` };
+  }
+  if (state.view === 'month') {
+    return { top: 'месяц', main: `${MONTHS_NOM[cur.getMonth()]} ${cur.getFullYear()}` };
+  }
+  const mon = mondayOf(cur);
+  const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+  const sameMonth = mon.getMonth() === sun.getMonth();
+  return {
+    top: 'неделя',
+    main: sameMonth
+      ? `${mon.getDate()}–${sun.getDate()} ${MONTHS[mon.getMonth()]}`
+      : `${mon.getDate()} ${MONTHS[mon.getMonth()]} – ${sun.getDate()} ${MONTHS[sun.getMonth()]}`,
+  };
+}
 
 /** Перейти на дату: меняем и сразу перечитываем — день другой. */
 function go(date) {
@@ -201,6 +281,8 @@ async function reload() {
     const jobs = [];
     if (needsDay || state.modal) jobs.push(data.loadDay(state.date));
     if (needsRange) jobs.push(data.loadRange(state.date, state.view));
+    // Правила повторов: по ним редактор напоминания понимает, повтор это или разовое
+    if (needsDay || needsRange) jobs.push(data.loadSeries().catch(() => []));
     if (state.screen === 'habits') jobs.push(data.loadDay(state.date));
     // Заметки нужны и на «Сейчас»: правая колонка показывает заметки дня
     if (state.screen === 'notes' || needsDay) jobs.push(data.loadNotes());
@@ -342,15 +424,29 @@ function topBar() {
     return b;
   }));
 
+  const period = periodLabel();
+  const what = state.screen === 'plan' && state.view !== 'day'
+    ? (state.view === 'month' ? 'месяц' : 'неделю')
+    : 'день';
+
+  const cal = h('button.wbtn-ghost', { type: 'button', onclick: openCalendar });
+  add(cal, ico('calendar-blank', '16px'), h('span', { text: 'Календарь' }));
+
   return h('div.wtop',
     h('div.wtop-date',
-      h('div.wtop-dow', { text: DOW_LONG[cur.getDay()] }),
-      h('div.wtop-num', { text: `${cur.getDate()} ${MONTHS[cur.getMonth()]}` })),
+      h('div.wtop-dow', { text: period.top }),
+      h('div.wtop-num', { text: period.main })),
     h('div.wtop-nav',
-      iconBtn('caret-left', { title: 'Предыдущий день', onclick: () => shiftDay(-1) }),
-      iconBtn('caret-right', { title: 'Следующий день', onclick: () => shiftDay(1) }),
-      chip('Сегодня', state.date === todayKey(), () => go(todayKey()))),
-    days,
+      chip('Сегодня', state.date === todayKey(), () => go(todayKey())),
+      cal),
+    /*
+     * Стрелки по бокам полоски недель, а не обе слева: листают они именно её —
+     * и на месяце листают месяц, поэтому стоят там, где человек ждёт.
+     */
+    h('div.wtop-strip',
+      iconBtn('caret-left', { title: `Предыдущий ${what}`, onclick: () => shiftPeriod(-1) }),
+      days,
+      iconBtn('caret-right', { title: `Следующий ${what}`, onclick: () => shiftPeriod(1) })),
     (() => {
       const b = h('button.wbtn-ghost', { type: 'button', onclick: () => set({ modal: 'print' }) });
       add(b, ico('printer', '16px'), h('span', { text: 'Печать' }));
@@ -384,7 +480,8 @@ function scheduleList() {
     const row = h('button.wsched-row', {
       type: 'button',
       class: [r.past ? 'past' : '', r.now ? 'now' : '', inner[r.id] ? 'inner' : '', parent[r.id] ? 'parent' : ''].filter(Boolean).join(' '),
-      onclick: () => openRow(r.id),
+      style: r.color ? { '--pin': PALETTE[r.color][dark() ? 'dark' : 'light'] } : {},
+      onclick: () => openRow(r),
     });
     add(row,
       h('span.wsched-time', { text: r.end === null ? hhmm(r.start) : `${hhmm(r.start)}–${hhmm(r.end)}` }),
@@ -486,14 +583,7 @@ function foodBlock() {
   add(inner, ...MEALS.map(m => {
     const d = isDone(m);
     const mode = alarmOf(m);
-    const row = h('button.wmeal', {
-      type: 'button',
-      onclick: () => set({
-        modal: 'meal', mealId: m.id, mealTitle: m.title,
-        mealKcal: m.kcal === null || m.kcal === undefined ? '' : String(m.kcal),
-        mealMode: 'none', mealLead: 'at',
-      }),
-    });
+    const row = h('button.wmeal', { type: 'button', onclick: () => openMeal(m) });
     const mark = box(d);
     mark.onclick = e => { e.stopPropagation(); toggle(m, 'meal'); };
     add(row, mark,
@@ -506,7 +596,7 @@ function foodBlock() {
   }));
   const addBtn = h('button.wadd', {
     type: 'button', style: { padding: '8px 0 12px' },
-    onclick: () => set({ modal: 'meal', mealId: 'new', mealTitle: '', mealKcal: '', mealMode: 'none', mealLead: 'at' }),
+    onclick: () => openMeal(null),
   });
   add(addBtn, ico('plus', '15px'), h('span', { text: 'Добавить приём пищи' }));
   add(inner, addBtn);
@@ -546,7 +636,10 @@ function habitCard(hb, wide = false) {
           h('div.whabit-title', { text: hb.title, class: d ? 'done' : '' }),
           h('div.whabit-meta', { text: hb.meta })),
         week,
-        iconBtn('dots-three-vertical', { title: 'Ещё', cls: 'whabit-more', size: '16px' })));
+        iconBtn('dots-three-vertical', {
+          title: 'Настроить привычку', cls: 'whabit-more', size: '16px',
+          onclick: e => { e.stopPropagation(); openHabit(hb); },
+        })));
   }
 
   return h('div.wcard', { class: hb.active ? '' : 'dim' },
@@ -729,11 +822,12 @@ function planColumn(index, dateKey) {
         top: `${(r.start - FROM_MIN) * PX_PER_MIN}px`,
         height: `${height}px`,
         zIndex: String(1 + i),
+        ...(r.color ? { '--pin': PALETTE[r.color][dark() ? 'dark' : 'light'] } : {}),
         ...(of > 1
           ? { left: `calc(${i * step}% + 3px)`, width: `calc(${step}% - 6px)`, right: 'auto' }
           : {}),
       },
-      onclick: e => { e.stopPropagation(); openRow(r); },
+      onclick: e => { e.stopPropagation(); openRow(r, dateKey); },
       // Нажатие на блок — это правка блока, а не новый блок под ним
       onmousedown: e => e.stopPropagation(),
     });
@@ -821,50 +915,87 @@ function planScreen() {
   return h('div', head, headRow, grid);
 }
 
-function monthGrid() {
-  const cur = dayOf();
-  const y = cur.getFullYear(), m = cur.getMonth();
+/**
+ * Клетки месяца с хвостами соседних.
+ *
+ * Хвосты считаем по их собственным месяцам, а не по текущему: иначе клетка
+ * «5 сентября» брала данные пятого августа — и это было видно на снимке,
+ * одни и те же дела в двух местах сетки.
+ */
+function monthCells(y, m) {
   const lead = (new Date(y, m, 1).getDay() + 6) % 7;
   const dim = new Date(y, m + 1, 0).getDate();
   const prevDim = new Date(y, m, 0).getDate();
 
-  /*
-   * Хвосты соседних месяцев считаем по их месяцам, а не по текущему.
-   * Иначе клетка «5 сентября» брала данные пятого августа — и это было
-   * видно на снимке: одни и те же дела в двух местах сетки.
-   */
   const cells = [];
   for (let i = lead - 1; i >= 0; i--) cells.push({ n: prevDim - i, out: true, dt: new Date(y, m - 1, prevDim - i) });
   for (let n = 1; n <= dim; n++) cells.push({ n, out: false, dt: new Date(y, m, n) });
   let tail = 1;
   while (cells.length % 7) { cells.push({ n: tail, out: true, dt: new Date(y, m + 1, tail) }); tail += 1; }
+  return cells;
+}
+
+/** Сколько строк дня влезает в клетку месяца, не сминая её. */
+const MONTH_FIT = 3;
+
+function monthGrid() {
+  const cur = dayOf();
+  const y = cur.getFullYear(), m = cur.getMonth();
 
   const head = h('div.wmonth-head');
   add(head, ...DOW_SHORT.map(d => h('span', { text: d })));
 
   const grid = h('div.wmonth');
-  add(grid, ...cells.map(c => {
+  add(grid, ...monthCells(y, m).map(c => {
     const key = keyOf(c.dt);
     const sel = !c.out && key === state.date;
-    const day = (store.range?.days ?? []).find(d => d.date === key);
-    const items = (day?.schedule ?? [])
-      .slice()
-      .sort((a, b) => a.start_min - b.start_min)
-      .map(r => `${adapt.hhmm(r.start_min)} ${r.title}`);
+    const rows = rowsForDate(key).slice().sort((a, b) => a.start - b.start);
 
-    const cell = h('button.wcell', {
-      type: 'button',
+    /*
+     * Клетка — не кнопка: внутри неё свои нажатия. Число открывает день,
+     * строка — свой блок, пустое место создаёт новый. Так же ведут себя
+     * календари, и это единственный способ добавить дело, не уходя с месяца.
+     */
+    const cell = h('div.wcell', {
       class: [c.out ? 'out' : '', sel ? 'on' : ''].filter(Boolean).join(' '),
-      onclick: () => { if (!c.out) set({ date: key, view: 'day' }); },
+      title: 'Нажмите на пустое место, чтобы добавить',
+      onclick: () => { if (!c.out) newRow({ date: key, start: 600, end: 660 }); },
     });
+
+    const items = h('div.wcell-items');
+    add(items, ...rows.slice(0, MONTH_FIT).map(r => {
+      const line = h('button.wcell-item', {
+        type: 'button',
+        class: r.isReminder ? 'rem' : '',
+        style: r.color ? { '--pin': PALETTE[r.color][dark() ? 'dark' : 'light'] } : {},
+        onclick: e => { e.stopPropagation(); openRow(r, key); },
+      });
+      add(line,
+        h('i.wcell-pin'),
+        h('span.wcell-time', { text: hhmm(r.start) }),
+        h('span.wcell-name', { text: r.title }));
+      return line;
+    }));
+
+    // Сколько не влезло — сказано прямо: иначе человек считает, что это всё
+    const rest = rows.length - MONTH_FIT;
+    if (rest > 0) {
+      add(items, h('button.wcell-more', {
+        type: 'button',
+        text: `+ ещё ${rest}`,
+        onclick: e => { e.stopPropagation(); set({ date: key, view: 'day' }); reload(); },
+      }));
+    }
+
     add(cell,
       h('div.wcell-hd',
-        h('span.wcell-num', { text: String(c.n) }),
+        h('button.wcell-num', {
+          type: 'button', text: String(c.n), title: 'Открыть день',
+          onclick: e => { e.stopPropagation(); if (!c.out) { set({ date: key, view: 'day' }); reload(); } },
+        }),
         h('span', { style: { flex: '1' } }),
-        items.length ? h('span.wcell-count', { text: String(items.length) }) : null),
-      // Строк не больше трёх, а сколько всего — сказано числом в углу.
-      // Строка «+ ещё 7» повторяла бы то же самое второй раз.
-      h('div.wcell-items', ...items.slice(0, 3).map(t => h('div.wcell-item', { text: t }))));
+        rows.length ? h('span.wcell-count', { text: String(rows.length) }) : null),
+      items);
     return cell;
   }));
 
@@ -874,7 +1005,7 @@ function monthGrid() {
 // ── Привычки, заметки, настройки ─────────────────────────────
 
 function habitsScreen() {
-  const addBtn = h('button.wbtn', { type: 'button', onclick: () => set({ modal: 'habit', habitTitle: '' }) });
+  const addBtn = h('button.wbtn', { type: 'button', onclick: () => openHabit(null) });
   add(addBtn, ico('plus', '16px'), h('span', { text: 'Новая привычка' }));
 
   const act = HABITS.filter(x => x.active);
@@ -1022,9 +1153,20 @@ function settingsScreen() {
             text: d.last_seen_at ? `заходило ${adapt.shortDate(String(d.last_seen_at).slice(0, 10))}` : 'ещё не заходило',
           }))))));
 
+  /*
+   * Аккаунт. В эталоне веб-версии этой панели нет, но в описании функционала
+   * она есть, и без неё имя и пароль поменять нечем — а человек про них
+   * спросил прямо.
+   */
+  const account = h('div.wpanel-list', cap('аккаунт'));
+  const accountRow = h('button.wrow-link', { type: 'button', onclick: openAccount });
+  add(accountRow, ico('user', '17px'), h('span', { text: userName() }),
+    h('span.wrow-link-val', { text: store.user?.email ?? '' }), ico('caret-right', '14px'));
+  add(account, accountRow);
+
   return h('div',
     h('div.whead-title', { text: 'Настройки', style: { marginBottom: '18px' } }),
-    h('div.wsettings', look, day, dataPanel, devices));
+    h('div.wsettings', account, look, day, dataPanel, devices));
 }
 
 /**
@@ -1051,37 +1193,244 @@ function openLink(kind, label) {
     .catch(fail);
 }
 
+// ── Аккаунт ──────────────────────────────────────────────────
+
+function openAccount() {
+  set({
+    modal: 'account', notice: null,
+    accName: store.settings?.displayName ?? '',
+    passOld: '', passNew: '', passNew2: '',
+  });
+}
+
+function saveName() {
+  const name = String(state.accName ?? '').trim();
+  act(api.saveSettings({ displayName: name }).then(() => data.boot()), 'Имя сохранено');
+}
+
+/**
+ * Смена пароля. Второе поле — не формальность: опечатка в новом пароле
+ * запирает человека снаружи, и заметит он это уже при следующем входе.
+ */
+function savePassword() {
+  if (state.passNew.length < 8) { setIn({ notice: 'Новый пароль — не короче восьми знаков' }); return; }
+  if (state.passNew !== state.passNew2) { setIn({ notice: 'Пароли не совпали' }); return; }
+  act(
+    api.POST('/auth/password', { currentPassword: state.passOld, newPassword: state.passNew })
+      .then(() => set({ passOld: '', passNew: '', passNew2: '' })),
+    'Пароль изменён',
+  );
+}
+
 // ── Шторки ───────────────────────────────────────────────────
 
-function openRow(r) {
+/**
+ * Календарь открываем на месяце того дня, который правим — искать его не нужно.
+ *
+ * `calFor` говорит, чью дату выбираем: открытого дня, заметки или напоминания.
+ * Без этого выбор даты в заметке уводил бы весь экран на другой день.
+ */
+function openCalendar(target = 'day') {
+  const base = target === 'note' ? (state.noteDate ?? state.date)
+    : target === 'reminder' ? (fromRuDate(state.remDate) ?? state.date)
+      : state.date;
+  const [y, m] = base.split('-').map(Number);
+  set({ modal: 'calendar', calY: y, calM: m - 1, calFor: target, calBack: state.modal });
+}
+
+/** Выбранный день уходит туда, откуда календарь позвали. */
+function pickDate(key) {
+  if (state.calFor === 'note') { set({ modal: state.calBack, noteDate: key }); return; }
+  if (state.calFor === 'reminder') { set({ modal: state.calBack, remDate: RU_DATE(key) }); return; }
+  closeModal();
+  go(key);
+}
+
+const shiftCal = n => ({
+  calY: state.calM + n < 0 ? state.calY - 1 : state.calM + n > 11 ? state.calY + 1 : state.calY,
+  calM: (state.calM + n + 12) % 12,
+});
+
+function openRow(r, date = state.date) {
   set({
-    modal: 'row', rowId: r.id, rowDate: state.date,
+    modal: 'row', rowId: r.id, rowDate: date,
     rowStart: r.start, rowEnd: r.end ?? r.start + 30, rowField: 'start',
     rowTitle: r.title, rowAlarm: r.alarm, rowLeads: leadsOf(r),
+    rowKind: r.isReminder ? 'reminder' : (r.kind ?? 'normal'),
+    rowColor: r.color ?? null, rowConflict: 'overlap', notice: null,
   });
 }
 
 /** Новый блок: время либо протянутое, либо предложенное кнопкой. */
-function newRow({ date = state.date, start = 600, end = 660 } = {}) {
+function newRow({ date = state.date, start = 600, end = 660, kind = 'normal' } = {}) {
   set({
     modal: 'row', rowId: 'new', rowDate: date,
     rowStart: start, rowEnd: end, rowField: 'start',
-    rowTitle: '', rowAlarm: 'off', rowLeads: ['at'],
+    rowTitle: '', rowAlarm: kind === 'reminder' ? 'notify' : 'off', rowLeads: ['at'],
+    rowKind: kind, rowColor: null, rowConflict: 'overlap', notice: null,
   });
 }
 
-/** Сохранить строку. Новую создаём, существующую правим. */
+/**
+ * Сохранить строку. Новую создаём, существующую правим; если конец режет
+ * соседний блок — сначала расходимся выбранным способом, иначе «сдвинуть
+ * следующие» применилось бы к ещё не сдвинутому расписанию.
+ */
 function saveRow() {
   const body = adapt.rowToServer({
     title: state.rowTitle, start: state.rowStart, end: state.rowEnd,
     alarm: state.rowAlarm, leads: state.rowLeads,
+    color: state.rowColor, kind: state.rowKind,
   });
-  if (!body.title) { state.notice = 'Впишите, что делаем'; render(); return; }
+  if (!body.title) {
+    setIn({ notice: state.rowKind === 'reminder' ? 'Впишите, о чём напомнить' : 'Впишите, что делаем' });
+    return;
+  }
+
   const date = state.rowDate ?? state.date;
-  const job = state.rowId === 'new'
+  const other = state.rowKind === 'reminder' ? null : crossing();
+  const way = other ? state.rowConflict : 'overlap';
+
+  busy(applyConflict(date, other, way, body.endMin).then(() => (state.rowId === 'new'
     ? data.createRow(date, body)
-    : data.updateRow(date, state.rowId, body);
+    : data.updateRow(date, state.rowId, body))));
+}
+
+// ── Привычка ─────────────────────────────────────────────────
+
+/**
+ * Открыть привычку. Маска дней недели — биты, понедельник младший; полная
+ * маска (все семь) значит «каждый день», и тогда график читается как дни.
+ */
+function openHabit(hb) {
+  const raw = hb?.raw ?? null;
+  const mask = raw?.scheduleMask ?? 127;
+  const target = raw?.challenge?.target ?? raw?.challengeTargetDays ?? 0;
+  const preset = [30, 100].includes(target) ? target : (target ? -1 : 0);
+  set({
+    modal: 'habit', habitId: hb?.id ?? 'new', notice: null,
+    habitTitle: hb?.title ?? '',
+    habitEmoji: hb?.emoji && hb.emoji !== '•' ? hb.emoji : '💧',
+    habitKind: raw?.polarity === 'avoid' ? 'avoid' : 'do',
+    habitPlan: raw?.timesPerWeek ? 'times' : 'days',
+    habitTimes: raw?.timesPerWeek ?? 5,
+    habitDays: Object.fromEntries(Array.from({ length: 7 }, (_, i) => [i, Boolean(mask & (1 << i))])),
+    habitGoal: preset,
+    habitGoalCustom: preset === -1,
+    habitGoalDays: target || 730,
+    habitPicker: false,
+  });
+}
+
+function saveHabit() {
+  const title = state.habitTitle.trim();
+  if (!title) { setIn({ notice: 'Впишите название' }); return; }
+
+  const mask = Object.entries(state.habitDays)
+    .reduce((acc, [i, on]) => (on ? acc | (1 << Number(i)) : acc), 0);
+  const target = state.habitGoal === -1 ? state.habitGoalDays : state.habitGoal;
+
+  const body = {
+    title, emoji: state.habitEmoji,
+    polarity: state.habitKind === 'avoid' ? 'avoid' : 'do',
+    /*
+     * «N раз в неделю» — свободный график: конкретные дни не заданы, поэтому
+     * активна привычка каждый день, а норму держит счёт за неделю.
+     */
+    scheduleMask: state.habitPlan === 'times' ? 127 : (mask || 127),
+    timesPerWeek: state.habitPlan === 'times' ? state.habitTimes : null,
+    mode: target > 0 ? 'challenge' : 'ongoing',
+    ...(target > 0 ? { challengeTargetDays: target } : {}),
+  };
+
+  busy(state.habitId === 'new' ? data.createHabit(body) : data.updateHabit(state.habitId, body));
+}
+
+// ── Приём пищи ───────────────────────────────────────────────
+
+/**
+ * Приём пищи. Режим времени восстанавливаем из самих времён — отдельного
+ * поля нет, и это нарочно: два источника правды однажды разошлись бы.
+ */
+function openMeal(m) {
+  const mode = m?.mode ?? 'none';
+  const start = m?.start ?? 12 * 60;
+  set({
+    modal: 'meal', mealId: m?.id ?? 'new', notice: null,
+    mealTitle: m?.title === 'Без названия' ? '' : (m?.title ?? ''),
+    mealKcal: m?.kcal === null || m?.kcal === undefined ? '' : String(m.kcal),
+    mealMode: mode,
+    mealStart: start,
+    mealEnd: m?.end ?? start + 120,
+    mealDur: m?.raw?.schedule_item_id && m?.mode === 'exact' ? state.mealDur : 30,
+    mealLeads: m ? m.leads : ['at'],
+    mealSched: Boolean(m?.scheduled),
+    mealSchedId: m?.raw?.schedule_item_id ?? null,
+    mealConflict: 'overlap',
+  });
+}
+
+const mealConflictBlock = () => {
+  const end = state.mealStart + state.mealDur;
+  const other = crossingIn(state.date, state.mealStart, end, state.mealSchedId);
+  return other ? conflictCard(other, end, state.mealConflict, k => setIn({ mealConflict: k })) : null;
+};
+
+/**
+ * Сохранение приёма пищи вместе с его блоком в расписании.
+ *
+ * Раньше «Добавить в расписание» был нарисован, но ничего не делал: сам приём
+ * писался, а блока не появлялось. Ссылка `schedule_item_id` нужна в обе
+ * стороны — иначе выключенный переключатель оставлял бы в расписании блок,
+ * которому больше нечего означать.
+ */
+function saveMeal() {
+  const body = adapt.mealToServer({
+    title: state.mealTitle, mode: state.mealMode,
+    start: state.mealStart, end: state.mealEnd,
+    kcal: state.mealKcal, leads: state.mealLeads,
+  });
+  if (!body.title) { setIn({ notice: 'Впишите, что едим' }); return; }
+
+  const date = state.date;
+  const wantBlock = state.mealMode === 'exact' && state.mealSched;
+  const end = state.mealStart + state.mealDur;
+  const blockBody = {
+    title: body.title, startMin: state.mealStart, endMin: end, kind: 'meal',
+    ...(state.mealLeads.length ? { remindBefore: adapt.leadMinutes(state.mealLeads) } : {}),
+  };
+
+  const job = (async () => {
+    const other = wantBlock ? crossingIn(date, state.mealStart, end, state.mealSchedId) : null;
+    await applyConflict(date, other, state.mealConflict, end);
+
+    const meal = state.mealId === 'new'
+      ? await data.createMeal(date, body)
+      : await data.updateMeal(date, state.mealId, body);
+    const mealId = meal?.id ?? state.mealId;
+
+    if (wantBlock && state.mealSchedId) {
+      await data.updateRow(date, state.mealSchedId, blockBody);
+    } else if (wantBlock) {
+      const block = await data.createRow(date, blockBody);
+      if (block?.id) await data.updateMeal(date, mealId, { scheduleItemId: block.id });
+    } else if (state.mealSchedId) {
+      await data.removeRow(date, state.mealSchedId);
+      await data.updateMeal(date, mealId, { scheduleItemId: null });
+    }
+  })();
+
   busy(job);
+}
+
+/** Удаление приёма забирает и его блок: иначе в расписании останется сирота. */
+function deleteMeal() {
+  if (state.mealId === 'new') { closeModal(); return; }
+  const date = state.date;
+  busy((async () => {
+    if (state.mealSchedId) await data.removeRow(date, state.mealSchedId);
+    await data.removeMeal(date, state.mealId);
+  })());
 }
 
 function deleteRow() {
@@ -1095,14 +1444,50 @@ function deleteRow() {
  * при сохранении.
  */
 function openNote(n) {
-  const [first, ...rest] = String(n?.text ?? '').split('\n');
   set({
     modal: 'note',
-    noteId: n?.id ?? state.date,
-    noteTitle: n ? first : '',
-    noteText: n ? rest.join('\n') : '',
-    noteDated: true,
+    noteId: n?.id ?? 'new',
+    noteTitle: n?.raw?.title ?? '',
+    noteText: n?.text ?? '',
+    // новая заметка по умолчанию на открытый день: чаще всего пишут про него
+    noteDated: n ? n.dated : true,
+    noteDate: n?.dateKey ?? state.date,
+    notice: null,
   });
+}
+
+/**
+ * Заметка сохраняется туда, где ей место по её же дате: с датой — в день,
+ * без даты — в свой список. Смена типа переносит её: иначе заметка осталась
+ * бы в прежнем хранилище и показалась дважды.
+ */
+function saveNote() {
+  const title = String(state.noteTitle ?? '').trim();
+  const text = String(state.noteText ?? '');
+  if (!title && !text.trim()) { setIn({ notice: 'Заметка пустая' }); return; }
+
+  const wasDated = typeof state.noteId === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(state.noteId);
+  const wasFree = state.noteId !== 'new' && !wasDated;
+  const date = state.noteDate ?? state.date;
+
+  busy((async () => {
+    if (state.noteDated) {
+      if (wasFree) await data.removeFreeNote(state.noteId);
+      // при переносе на другой день прежний освобождаем: заметка одна на день
+      if (wasDated && state.noteId !== date) await data.saveDayNote(state.noteId, '');
+      await data.saveDayNote(date, [title, text].filter(Boolean).join('\n'));
+      return;
+    }
+    if (wasDated) await data.saveDayNote(state.noteId, '');
+    if (wasFree) { await data.updateFreeNote(state.noteId, { title, text }); return; }
+    await data.createFreeNote({ title, text });
+  })());
+}
+
+function deleteNote() {
+  if (state.noteId === 'new') { closeModal(); return; }
+  const isDated = /^\d{4}-\d{2}-\d{2}$/.test(String(state.noteId));
+  busy(isDated ? data.saveDayNote(state.noteId, '') : data.removeFreeNote(state.noteId));
 }
 
 // ── Напоминание ──────────────────────────────────────────────
@@ -1126,37 +1511,66 @@ const FREQ_OF = {
   Ежемесячно: 'monthly', Ежегодно: 'yearly',
 };
 
+const REPEAT_OF = Object.fromEntries(Object.entries(FREQ_OF).map(([k, v]) => [v, k]));
+
 function openReminder(row) {
-  set({
+  const r = row?.raw ?? row ?? null;
+  const seriesId = r?.series_id ?? null;
+  const rule = seriesId ? (store.series ?? []).find(s => s.id === seriesId) : null;
+  const mask = rule?.byweekday ?? 0;
+  return set({
     modal: 'reminder',
     remId: row?.id ?? 'new',
     remTitle: row?.title ?? '',
     remDate: RU_DATE(state.date),
-    remTime: hhmm(row?.start_min ?? row?.start ?? 600),
-    remLeads: row ? leadsOf(adapt.scheduleRow(row, { isToday: false, minutes: 0 })) : ['at'],
-    remRepeat: 'Разово',
+    remTime: hhmm(r?.start_min ?? row?.start ?? 600),
+    remLeads: row ? leadsOf(row.raw ? row : adapt.scheduleRow(r, { isToday: false, minutes: 0 })) : ['at'],
+    remAlarm: row?.alarm ?? 'notify',
+    remRepeat: rule ? (REPEAT_OF[rule.freq] ?? 'Разово') : 'Разово',
+    remSeriesId: seriesId,
+    // дни недели для еженедельного повтора: пусто значит «в тот же день недели»
+    remDays: Object.fromEntries(Array.from({ length: 7 }, (_, i) => [i, Boolean(mask & (1 << i))])),
+    notice: null,
   });
 }
 
 function saveReminder() {
   const title = String(state.remTitle ?? '').trim();
-  if (!title) { note('О чём напомнить?'); return; }
+  if (!title) { setIn({ notice: 'О чём напомнить?' }); return; }
   const date = fromRuDate(state.remDate);
-  if (!date) { note('Дата пишется как 05.08.2026'); return; }
+  if (!date) { setIn({ notice: 'Дата пишется как 05.08.2026' }); return; }
   const startMin = parseHhmm(state.remTime);
-  if (startMin === null) { note('Время пишется как 10:00'); return; }
+  if (startMin === null) { setIn({ notice: 'Время пишется как 10:00' }); return; }
 
   const body = adapt.rowToServer({
-    title, start: startMin, end: null, alarm: 'notify', leads: state.remLeads,
+    title, start: startMin, end: null, kind: 'reminder',
+    alarm: state.remAlarm, leads: state.remLeads,
   });
   const freq = FREQ_OF[state.remRepeat];
+  const mask = Object.entries(state.remDays)
+    .reduce((acc, [i, on]) => (on ? acc | (1 << Number(i)) : acc), 0);
+  // дни недели имеют смысл только у еженедельного: у остальных период задан иначе
+  const byweekday = freq === 'weekly' && mask ? mask : undefined;
 
   const job = state.remId === 'new'
     ? (freq
-      ? data.createRepeat({ freq, startDate: date, row: body })
+      ? data.createRepeat({ freq, startDate: date, row: body, byweekday })
       : data.createRow(date, body))
     : data.updateRow(date, state.remId, body);
   busy(job);
+}
+
+/**
+ * Удаление напоминания. У повтора это три разных желания, и путать их нельзя:
+ * убрать только этот день, прекратить с этого дня и дальше, убрать весь
+ * повтор вместе с историей.
+ */
+function removeReminder(scope) {
+  if (state.remId === 'new') { closeModal(); return; }
+  const date = state.date;
+  if (scope === 'series') { busy(data.removeSeries(state.remSeriesId)); return; }
+  if (scope === 'from') { busy(data.endSeries(state.remSeriesId, date)); return; }
+  busy(data.removeRow(date, state.remId));
 }
 
 // ── Шаблон дня ───────────────────────────────────────────────
@@ -1231,6 +1645,8 @@ const TITLES = {
   task: () => 'Задача',
   meal: () => 'Приём пищи',
   reminder: () => 'Напоминание',
+  calendar: () => 'Выбор дня',
+  account: () => 'Аккаунт',
   sound: () => state.soundKind,
   template: () => 'Общее расписание',
   tplRow: () => 'Строка шаблона',
@@ -1240,9 +1656,19 @@ const TITLES = {
 
 const WIDE = new Set(['ai', 'schedule', 'note', 'habit']);
 
+/*
+ * Содержимое шторки отдельно от её рамки: `setIn` меняет только его, и
+ * заголовок с крестиком при этом не пересоздаются.
+ */
+const modalBody = () => [
+  // Отказ, случившийся в шторке, виден в ней же: на экране под затемнением
+  // его никто не прочитает — а «Готово» без названия молчала бы совсем
+  state.notice ? h('div.wnotice', { text: state.notice }) : null,
+  BODIES[state.modal]?.() ?? h('div'),
+];
+
 function modal() {
   if (!state.modal) return null;
-  const body = BODIES[state.modal]?.() ?? h('div');
 
   const card = h('div.wmodal', {
     class: WIDE.has(state.modal) ? 'wide' : '',
@@ -1252,10 +1678,7 @@ function modal() {
     h('div.wmodal-hd',
       h('b', { text: TITLES[state.modal]?.() ?? '' }),
       iconBtn('x', { title: 'Закрыть', onclick: closeModal, cls: 'wmodal-x' })),
-    // Отказ, случившийся в шторке, виден в ней же: на экране под затемнением
-    // его никто не прочитает — а «Готово» без названия молчала бы совсем
-    state.notice ? h('div.wnotice', { text: state.notice }) : null,
-    body);
+    h('div.wmodal-body', ...modalBody()));
 
   return h('div.wveil', { onclick: closeModal }, card);
 }
@@ -1265,6 +1688,109 @@ const footer = (quiet, main, onMain = closeModal) =>
   h('div.wrow-end',
     h('button.wbtn-quiet', { type: 'button', text: quiet, onclick: closeModal }),
     h('button.wbtn-wide', { type: 'button', text: main, onclick: onMain }));
+
+/** Готовые длительности: от четверти часа до четырёх — как в эталоне. */
+const DURS = [15, 30, 45, 60, 90, 120, 180, 240];
+
+const durLabel = min => {
+  const hrs = Math.floor(min / 60);
+  const mins = min % 60;
+  return (hrs ? `${hrs} ч` : '') + (hrs && mins ? ' ' : '') + (mins ? `${mins} мин` : (hrs ? '' : '0 мин'));
+};
+
+/**
+ * «Длится» — это длительность, а не время.
+ *
+ * Раньше плитка «длится» открывала ту же сетку часов, что и «начало», и
+ * нажатие на час меняло начало: выбрать длительность было нечем. Здесь
+ * готовые значения и своё число минут, а конец считается сам.
+ */
+function durPicker(rs, dur) {
+  const chips = h('div.wwrap');
+  add(chips, ...DURS.map(v => sheetChip(durLabel(v), dur === v,
+    () => setIn({ rowEnd: Math.min(1439, rs + v) }), 'wchip-dur')));
+
+  return h('div.wclock',
+    h('div.wclock-cap', { text: 'конец посчитается сам' }),
+    chips,
+    h('div.wrow', { style: { marginTop: '12px' } },
+      h('span.wclock-cap', { text: 'своё:', style: { margin: '0' } }),
+      h('input.wnum', {
+        name: 'rowDur', value: String(dur), inputMode: 'numeric',
+        oninput: e => {
+          const n = Number(String(e.target.value).replace(/\D+/g, ''));
+          // пустое поле — ещё не значение: человек стирает, чтобы вписать другое
+          if (!n) return;
+          setIn({ rowEnd: Math.min(1439, rs + n) });
+        },
+      }),
+      h('span.wclock-cap', { text: 'минут', style: { margin: '0' } })));
+}
+
+/**
+ * С чем пересекается новый конец. Вложение пересечением не считается:
+ * созвон внутри рабочего блока — обычное дело, эталон рисует его склеенной
+ * карточкой. Пересечение — это когда конец режет соседний блок пополам.
+ */
+function crossingIn(date, start, end, skipId) {
+  return rowsForDate(date)
+    .filter(r => r.id !== skipId && r.end !== null && !r.isReminder)
+    .filter(r => r.start >= start && r.start < end && r.end > end)
+    .sort((a, b) => a.start - b.start)[0] ?? null;
+}
+
+const crossing = () => (state.rowKind === 'reminder' ? null : crossingIn(
+  state.rowDate ?? state.date, state.rowStart ?? 0, state.rowEnd ?? 0, state.rowId));
+
+/**
+ * Пересечение показываем, но сами ничего не двигаем: способ расхождения
+ * выбирает человек, и применяется он при сохранении.
+ */
+function conflictCard(other, end, current, pick) {
+  const ways = [
+    { k: 'shift', label: 'Сдвинуть следующие', icon: 'arrows-down-up' },
+    // сократить можно только то, от чего что-то останется
+    ...(other.end > end + 5 ? [{ k: 'trim', label: 'Сократить следующее', icon: 'arrows-in-line-vertical' }] : []),
+    { k: 'overlap', label: 'Оставить внахлёст', icon: 'stack-simple' },
+  ];
+
+  const list = h('div.wstack-tight', { style: { marginTop: '11px' } });
+  add(list, ...ways.map(w => opt(w.label, w.icon, current === w.k, () => pick(w.k), true)));
+
+  return h('div.wconflict',
+    h('div.wconflict-hd', ico('warning-circle-fill', '16px'),
+      h('span', { text: `Пересекается с «${other.title}» в ${hhmm(other.start)}` })),
+    list);
+}
+
+const conflictBlock = () => {
+  const other = crossing();
+  return other ? conflictCard(other, state.rowEnd ?? 0, state.rowConflict, k => setIn({ rowConflict: k })) : null;
+};
+
+/** Способ расхождения применяется до записи: иначе сдвиг ляжет на старые времена. */
+function applyConflict(date, other, way, end) {
+  if (!other || way === 'overlap') return Promise.resolve();
+  if (way === 'shift') return data.shiftRows(date, other.id, end - other.start);
+  return data.updateRow(date, other.id, { startMin: end });
+}
+
+/** Цвет блока. Пусто — цвет приложения: тогда блок красится вместе с ним. */
+function colorRow() {
+  const row = h('div.wrow');
+  const auto = h('button.wpaint.wpaint-auto', {
+    type: 'button', class: state.rowColor ? '' : 'on',
+    title: 'Как у приложения', 'aria-label': 'Как у приложения',
+    onclick: () => setIn({ rowColor: null }),
+  });
+  add(row, auto, ...Object.entries(PALETTE).map(([k, p]) => h('button.wpaint', {
+    type: 'button', class: state.rowColor === k ? 'on' : '',
+    title: p.label, 'aria-label': p.label,
+    style: { background: p[dark() ? 'dark' : 'light'] },
+    onclick: () => setIn({ rowColor: k }),
+  })));
+  return h('div', h('div.wfield-label', { text: 'цвет' }), row);
+}
 
 function clockGrid(count, step, value, onPick) {
   const grid = h('div.wclock-grid');
@@ -1287,57 +1813,120 @@ const BODIES = {
     const re = state.rowEnd ?? rs + 60;
     const dur = Math.max(5, re - rs);
     const field = state.rowField;
-    const target = field === 'end' ? re : rs;
+    const moment = state.rowKind === 'reminder';
 
-    const tiles = h('div.wgrid3');
+    const kinds = h('div.wrow');
+    add(kinds, ...[
+      ['normal', 'Блок времени'],
+      ['reminder', 'Напоминание'],
+    ].map(([k, label]) => sheetChip(label, (state.rowKind ?? 'normal') === k,
+      // У момента конца нет — и править нечего, поэтому возвращаем на «начало»
+      () => setIn({ rowKind: k, rowField: k === 'reminder' ? 'start' : field }))));
+
+    /*
+     * Три плитки времени. У напоминания их одна: момент длительности не имеет,
+     * а пустые «длится» и «конец» только сбивали бы с толку.
+     */
+    const tiles = h('div', { class: moment ? 'wgrid1' : 'wgrid3' });
     add(tiles, ...[
       ['start', 'начало', hhmm(rs)],
-      ['dur', 'длится', hhmm(dur)],
+      ['dur', 'длится', durLabel(dur)],
       ['end', 'конец', hhmm(re)],
-    ].map(([k, label, value]) => {
-      const tile = h('div.wtile', { class: field === k ? 'on' : '', onclick: () => set({ rowField: k }) });
-      add(tile, h('span.wtile-cap', { text: label }), h('input', { value, readOnly: true }));
+    ].filter(([k]) => !moment || k === 'start').map(([k, label, value]) => {
+      const tile = h('div.wtile', { class: field === k ? 'on' : '', onclick: () => setIn({ rowField: k }) });
+      add(tile, h('span.wtile-cap', { text: label }), h('input', { value, readOnly: true, tabIndex: -1 }));
       return tile;
     }));
 
-    const setHour = hv => {
-      const mins = target % 60;
-      if (field === 'end') set({ rowEnd: hv * 60 + mins });
-      else set({ rowStart: hv * 60 + mins, rowEnd: hv * 60 + mins + dur });
-    };
-    const setMin = mv => {
-      const hv = Math.floor(target / 60);
-      if (field === 'end') set({ rowEnd: hv * 60 + mv });
-      else set({ rowStart: hv * 60 + mv, rowEnd: hv * 60 + mv + dur });
+    /*
+     * Правка начала двигает конец, сохраняя длительность; правка конца
+     * длительность меняет. Так же ведут себя все календари, и так же
+     * описано в эталоне.
+     */
+    const target = field === 'end' ? re : rs;
+    const setClock = (hv, mv) => {
+      const at = hv * 60 + mv;
+      if (field === 'end') setIn({ rowEnd: Math.max(rs + 5, at) });
+      else setIn({ rowStart: at, rowEnd: at + dur });
     };
 
-    const leads = h('div.wwrap');
-    add(leads, ...LEADS.map(l => sheetChip(l.label, state.rowLeads.includes(l.k), () => set({ rowLeads: toggleLead(state.rowLeads, l.k) }))));
+    const picker = field === 'dur'
+      ? durPicker(rs, dur)
+      : h('div.wclock',
+        h('div.wclock-cap', { text: 'выберите час' }),
+        clockGrid(24, 1, target, hv => setClock(hv, target % 60)),
+        h('div.wclock-cap', { text: 'минуты', style: { margin: '12px 0 9px' } }),
+        clockGrid(12, 5, target, mv => setClock(Math.floor(target / 60), mv)));
+
+    const leads = h('div.wwrap.wleads');
+    add(leads, ...LEADS.map(l => sheetChip(l.label, state.rowLeads.includes(l.k),
+      () => setIn({ rowLeads: toggleLead(state.rowLeads, l.k) }))));
 
     const modes = h('div.wgrid2');
-    add(modes, ...ALARM.map(a => opt(a.label, a.icon, state.rowAlarm === a.k, () => set({ rowAlarm: a.k }))));
+    add(modes, ...ALARM.map(a => opt(a.label, a.icon, state.rowAlarm === a.k, () => setIn({ rowAlarm: a.k }))));
 
     return h('div.wstack',
-      h('label', h('span.wfield-label', { text: 'что делаем' }),
+      h('label', h('span.wfield-label', { text: moment ? 'о чём напомнить' : 'что делаем' }),
         h('input.winput', {
+          name: 'rowTitle',
           value: state.rowTitle,
-          placeholder: 'Например, работа над отчётом',
+          placeholder: moment ? 'Например, забрать документы' : 'Например, работа над отчётом',
           oninput: e => { state.rowTitle = e.target.value; },
         })),
+      kinds,
       tiles,
-      h('div.wclock',
-        h('div.wclock-cap', { text: 'можно вписать вручную выше или выбрать час' }),
-        clockGrid(24, 1, target, setHour),
-        h('div.wclock-cap', { text: 'минуты', style: { margin: '12px 0 9px' } }),
-        clockGrid(12, 5, target, setMin)),
+      moment ? null : picker,
+      moment ? null : conflictBlock(),
+      colorRow(),
       h('div', h('div.wfield-label', { text: 'предупредить · можно несколько' }), leads),
       h('div', h('div.wfield-label', { text: 'чем предупредить' }), modes),
       h('div.wrow-end',
-        h('button.wbtn-quiet', { type: 'button', text: 'Удалить', onclick: deleteRow }),
+        h('button.wbtn-quiet', {
+          type: 'button', text: state.rowId === 'new' ? 'Отменить' : 'Удалить', onclick: deleteRow,
+        }),
         h('button.wbtn-wide', {
           type: 'button', text: state.busy ? 'Сохраняю…' : 'Готово',
           disabled: state.busy, onclick: saveRow,
         })));
+  },
+
+  /*
+   * Выбор дня. Своя пара «год-месяц» нужна затем, чтобы листать календарь,
+   * никуда не переходя: месяц перед глазами меняется, а открытый день
+   * остаётся прежним, пока по нему не нажали.
+   */
+  calendar() {
+    const y = state.calY, m = state.calM;
+    const chosen = state.calFor === 'note' ? (state.noteDate ?? state.date)
+      : state.calFor === 'reminder' ? (fromRuDate(state.remDate) ?? state.date)
+        : state.date;
+
+    const grid = h('div.wcal');
+    add(grid, ...DOW_SHORT.map(d => h('span.wcal-dow', { text: d })));
+    add(grid, ...monthCells(y, m).map(c => {
+      const key = keyOf(c.dt);
+      return h('button.wcal-day', {
+        type: 'button',
+        class: [c.out ? 'out' : '', key === chosen ? 'on' : '', key === todayKey() ? 'today' : ''].filter(Boolean).join(' '),
+        text: String(c.n),
+        onclick: () => pickDate(key),
+      });
+    }));
+
+    const [cy, cm, cd] = chosen.split('-').map(Number);
+    return h('div.wstack',
+      h('div.wrow',
+        iconBtn('caret-left', { title: 'Предыдущий месяц', onclick: () => setIn(shiftCal(-1)) }),
+        h('span.wcal-title', { text: `${MONTHS_NOM[m]} ${y}` }),
+        iconBtn('caret-right', { title: 'Следующий месяц', onclick: () => setIn(shiftCal(1)) })),
+      grid,
+      h('button.wbtn-wide', {
+        type: 'button',
+        text: state.calFor === 'day'
+          ? `Открыть ${cd} ${MONTHS[cm - 1]}`
+          : `Оставить ${cd} ${MONTHS[cm - 1]} ${cy}`,
+        onclick: () => (state.calFor === 'day' ? closeModal() : set({ modal: state.calBack })),
+      }));
   },
 
   // ── Расписание дня списком ──
@@ -1443,20 +2032,60 @@ const BODIES = {
 
   // ── Новая привычка ──
   habit() {
+    /*
+     * Значок — предложенные шесть и плюсик на все остальные: выбранный смайлик
+     * почти всегда среди предложенных, а когда нет — искать его в шести
+     * вариантах бессмысленно. Пикер тот же, что был в прежней версии.
+     */
     const emoji = h('div.wrow');
-    add(emoji, ...HABIT_EMOJI.map(e =>
-      h('button.wemoji', { type: 'button', text: e, class: state.habitEmoji === e ? 'on' : '', onclick: () => set({ habitEmoji: e }) })));
-    add(emoji, h('span', { style: { flex: '1' } }),
+    add(emoji, ...[...new Set([state.habitEmoji, ...HABIT_EMOJI])].slice(0, 6).map(e =>
+      h('button.wemoji', {
+        type: 'button', text: e, class: state.habitEmoji === e ? 'on' : '',
+        onclick: () => setIn({ habitEmoji: e }),
+      })));
+    const more = h('button.wemoji.wemoji-more', {
+      type: 'button', title: 'Все смайлики', 'aria-label': 'Все смайлики',
+      class: state.habitPicker ? 'on' : '',
+      onclick: () => setIn({ habitPicker: !state.habitPicker }),
+    });
+    add(more, ico('plus', '15px'));
+    add(emoji, more, h('span', { style: { flex: '1' } }),
       ...[['do', 'Выполнять'], ['avoid', 'Бросаю']].map(([k, label]) =>
-        sheetChip(label, state.habitKind === k, () => set({ habitKind: k }))));
+        sheetChip(label, state.habitKind === k, () => setIn({ habitKind: k }))));
+
+    const picker = h('div.wemoji-box');
+    if (state.habitPicker) {
+      renderEmojiPicker(picker, e => setIn({ habitEmoji: e, habitPicker: false })).catch(fail);
+    }
+
+    /*
+     * График — выбор, а не два поля рядом: «по дням недели» и «N раз в неделю»
+     * это разные способы считать, и вместе они противоречат друг другу.
+     */
+    const plan = h('div.wrow');
+    add(plan, ...[['days', 'По дням недели'], ['times', 'Сколько раз в неделю']].map(([k, label]) =>
+      sheetChip(label, state.habitPlan === k, () => setIn({ habitPlan: k }))));
 
     const days = h('div.wdays7');
     add(days, ...DOW_SHORT.map((d, i) =>
-      h('button', { type: 'button', text: d, class: state.habitDays[i] ? 'on' : '', onclick: () => set(s => ({ habitDays: { ...s.habitDays, [i]: !s.habitDays[i] } })) })));
+      h('button', {
+        type: 'button', text: d, class: state.habitDays[i] ? 'on' : '',
+        onclick: () => setIn(s => ({ habitDays: { ...s.habitDays, [i]: !s.habitDays[i] } })),
+      })));
+
+    const times = h('div.wrow',
+      h('input.wnum', {
+        name: 'habitTimes', value: String(state.habitTimes), inputMode: 'numeric',
+        oninput: e => {
+          const n = Number(String(e.target.value).replace(/\D+/g, ''));
+          if (n >= 1 && n <= 7) setIn({ habitTimes: n });
+        },
+      }),
+      h('span.wsmall', { text: 'раз в неделю — день выбираете сами' }));
 
     const goals = h('div.wrow');
     add(goals, ...[[30, '30 дней'], [100, '100 дней'], [0, '∞'], [-1, 'Своё']].map(([v, label]) => {
-      const c = sheetChip(label, state.habitGoal === v, () => set({ habitGoal: v, habitGoalCustom: v === -1 }), 'wchip-flex');
+      const c = sheetChip(label, state.habitGoal === v, () => setIn({ habitGoal: v, habitGoalCustom: v === -1 }), 'wchip-flex');
       if (v === 0) c.style.font = '500 19px/1 var(--ui)';
       return c;
     }));
@@ -1464,40 +2093,44 @@ const BODIES = {
     return h('div.wstack',
       h('label', h('span.wfield-label', { text: 'название' }),
         h('input.winput', {
-          value: state.habitTitle, placeholder: 'Например, вода — 2 литра',
+          name: 'habitTitle', value: state.habitTitle, placeholder: 'Например, вода — 2 литра',
           oninput: e => { state.habitTitle = e.target.value; },
         })),
-      h('div', h('div.wfield-label', { text: 'значок и тип' }), emoji),
+      h('div', h('div.wfield-label', { text: 'значок и тип' }), emoji,
+        state.habitPicker ? picker : null,
+        // Человек прямо сказал, что не понимает разницы — значит она должна быть написана
+        h('div.wclock-cap', {
+          style: { marginTop: '9px' },
+          text: state.habitKind === 'avoid'
+            ? 'бросаю: отмечаете день, в который удержались — серия растёт за каждый такой день'
+            : 'выполнять: отмечаете день, в который сделали',
+        })),
       h('div',
-        h('div.wfield-label', { text: 'дни недели' }), days,
-        h('div.wrow', { style: { marginTop: '10px' } },
-          h('span.wsmall', { text: 'или свободно' }),
-          h('input.wnum', { value: String(state.habitTimes) }),
-          h('span.wsmall', { text: 'раз в неделю' }))),
+        h('div.wfield-label', { text: 'график' }), plan,
+        h('div', { style: { marginTop: '10px' } }, state.habitPlan === 'times' ? times : days)),
       h('div',
         h('div.wfield-label', { text: 'челлендж' }), goals,
         state.habitGoalCustom
           ? h('div.wrow', { style: { marginTop: '10px' } },
-            h('input.wnum', { value: '730' }), h('span.wsmall', { text: 'дней подряд' }))
+            h('input.wnum', {
+              name: 'habitGoalDays', value: String(state.habitGoalDays), inputMode: 'numeric',
+              oninput: e => {
+                const n = Number(String(e.target.value).replace(/\D+/g, ''));
+                if (n >= 1 && n <= 3650) setIn({ habitGoalDays: n });
+              },
+            }),
+            h('span.wsmall', { text: 'дней подряд' }))
           : null),
       h('div.wrow-end',
-        h('button.wbtn-quiet', { type: 'button', text: 'Отмена', onclick: closeModal }),
+        h('button.wbtn-quiet', {
+          type: 'button',
+          text: state.habitId === 'new' ? 'Отмена' : 'Удалить',
+          onclick: () => (state.habitId === 'new' ? closeModal() : busy(data.removeHabit(state.habitId))),
+        }),
         h('button.wbtn-wide', {
-          type: 'button', text: state.busy ? 'Создаю…' : 'Создать привычку', disabled: state.busy,
-          onclick: () => {
-            const title = state.habitTitle.trim();
-            if (!title) { state.notice = 'Впишите название'; render(); return; }
-            // Маска дней недели битами: понедельник — младший
-            const mask = Object.entries(state.habitDays)
-              .reduce((acc, [i, on]) => (on ? acc | (1 << Number(i)) : acc), 0);
-            busy(data.createHabit({
-              title, emoji: state.habitEmoji,
-              polarity: state.habitKind === 'avoid' ? 'avoid' : 'do',
-              scheduleMask: mask || 127,
-              mode: state.habitGoal > 0 ? 'challenge' : 'ongoing',
-              ...(state.habitGoal > 0 ? { challengeTargetDays: state.habitGoal } : {}),
-            }));
-          },
+          type: 'button',
+          text: state.busy ? 'Сохраняю…' : (state.habitId === 'new' ? 'Создать привычку' : 'Сохранить'),
+          disabled: state.busy, onclick: saveHabit,
         })));
   },
 
@@ -1505,45 +2138,33 @@ const BODIES = {
   note() {
     const kinds = h('div.wrow');
     add(kinds, ...[[false, 'Просто заметка'], [true, 'На дату']].map(([v, label]) =>
-      sheetChip(label, state.noteDated === v, () => set({ noteDated: v }))));
+      sheetChip(label, state.noteDated === v, () => setIn({ noteDated: v }))));
     if (state.noteDated) {
-      const cur = dayOf();
-      const badge = h('span.wdate-chip');
-      add(badge, ico('calendar-blank', '15px'), h('span', { text: `${cur.getDate()} ${MONTHS[cur.getMonth()]} · покажется в делах` }));
+      const [y, m, d] = String(state.noteDate ?? state.date).split('-').map(Number);
+      const badge = h('button.wdate-chip', { type: 'button', onclick: () => openCalendar('note') });
+      add(badge, ico('calendar-blank', '15px'),
+        h('span', { text: `${d} ${MONTHS[m - 1]} ${y} · покажется в делах` }));
       add(kinds, badge);
     }
 
-    /*
-     * Заголовок и текст — двумя полями, как на эталоне. Заметка при этом
-     * по-прежнему одна на день: сервер держит её полем дня, и первая
-     * строка и есть заголовок. Здесь их только разделили; склеиваются
-     * они обратно при сохранении.
-     */
-    const save = () => {
-      const title = String(state.noteTitle ?? '').trim();
-      const body = String(state.noteText ?? '');
-      busy(data.saveNote(state.noteId ?? state.date,
-        title ? [title, body].filter(Boolean).join('\n') : body));
-    };
-
     return h('div.wstack',
       h('input.winput', {
-        value: state.noteTitle, placeholder: 'Заголовок',
+        name: 'noteTitle', value: state.noteTitle, placeholder: 'Заголовок — можно оставить пустым',
         oninput: e => { state.noteTitle = e.target.value; },
       }),
       kinds,
       h('textarea.wtextarea', {
-        value: state.noteText, placeholder: 'О чём не хочется забыть',
+        name: 'noteText', value: state.noteText, placeholder: 'О чём не хочется забыть',
         oninput: e => { state.noteText = e.target.value; },
       }),
       h('div.wrow-end',
         h('button.wbtn-quiet', {
-          type: 'button', text: 'Удалить', disabled: state.busy,
-          onclick: () => busy(data.saveNote(state.noteId ?? state.date, '')),
+          type: 'button', text: state.noteId === 'new' ? 'Отменить' : 'Удалить', disabled: state.busy,
+          onclick: deleteNote,
         }),
         h('button.wbtn-wide', {
           type: 'button', text: state.busy ? 'Сохраняю…' : 'Сохранить', disabled: state.busy,
-          onclick: save,
+          onclick: saveNote,
         })));
   },
 
@@ -1583,102 +2204,198 @@ const BODIES = {
       ['none', 'Без времени', 'list-dashes'],
       ['window', 'Окно', 'arrows-out-line-horizontal'],
       ['exact', 'Точное время', 'clock'],
-    ].map(([k, label, iconName]) => opt(label, iconName, state.mealMode === k, () => set({ mealMode: k }), true)));
+    ].map(([k, label, iconName]) => opt(label, iconName, state.mealMode === k, () => setIn({ mealMode: k }), true)));
 
-    const hasTime = state.mealMode !== 'none';
+    const window_ = state.mealMode === 'window';
     const exact = state.mealMode === 'exact';
 
-    const durs = h('div.wrow');
-    add(durs, ...[15, 30, 45, 60].map(v =>
-      sheetChip(v < 60 ? `${v} мин` : '1 ч', state.mealDur === v, () => set({ mealDur: v }), 'wchip-flex')));
+    const durs = h('div.wwrap');
+    add(durs, ...[15, 30, 45, 60, 90].map(v =>
+      sheetChip(durLabel(v), state.mealDur === v, () => setIn({ mealDur: v }), 'wchip-dur')));
 
     const leads = h('div.wwrap');
-    add(leads, ...LEADS.map(l => sheetChip(l.label, (state.mealLead ?? 'at') === l.k, () => set({ mealLead: l.k }))));
+    add(leads, ...LEADS.map(l => sheetChip(l.label, state.mealLeads.includes(l.k),
+      () => setIn({ mealLeads: toggleLead(state.mealLeads, l.k) }))));
 
-    const schedCard = h('button.wtoggle-card', { type: 'button', onclick: () => set(s => ({ mealSched: !s.mealSched })) },
+    const schedCard = h('button.wtoggle-card', { type: 'button', onclick: () => setIn(s => ({ mealSched: !s.mealSched })) },
       h('div.wtoggle-card-body',
         h('div.wrow-sw-title', { text: 'Добавить в расписание' }),
-        h('div.wrow-sw-hint', { text: `займёт блок ${state.mealDur < 60 ? state.mealDur + ' мин' : '1 ч'}, ничего не сдвинет без подтверждения` })),
+        h('div.wrow-sw-hint', { text: `займёт блок ${durLabel(state.mealDur)}, ничего не сдвинет без подтверждения` })),
       sw(state.mealSched));
+
+    /*
+     * Времена вписываются руками: сетка часов здесь была бы третьей по счёту
+     * на одном экране. Разбор мягкий — «19», «1930» и «19:30» одинаково
+     * понятны, и это уже умеет parseHhmm.
+     */
+    const timeField = (name, value, onDone) => h('input.wtime', {
+      name, value: hhmm(value),
+      onchange: e => {
+        const at = parseHhmm(e.target.value);
+        if (at === null) { setIn({ notice: 'Время не понял. Например: 12:30' }); return; }
+        setIn({ notice: null, ...onDone(at) });
+      },
+    });
 
     return h('div.wstack',
       h('label', h('span.wfield-label', { text: 'что едим' }),
         h('input.winput', {
-          value: state.mealTitle, placeholder: 'Например, курица с рисом',
+          name: 'mealTitle', value: state.mealTitle, placeholder: 'Например, курица с рисом',
           oninput: e => { state.mealTitle = e.target.value; },
         })),
       h('div',
         h('div.wfield-label', { text: 'время' }), modes,
-        hasTime
-          ? h('div.wrow', { style: { marginTop: '12px' } },
-            h('input.wtime', { value: state.mealMode === 'window' ? '12:00' : '19:30' }),
-            h('span.whint', { text: state.mealMode === 'window' ? '—' : '+' }),
-            h('input.wtime', { value: state.mealMode === 'window' ? '14:00' : '00:30' }))
+        state.mealMode === 'none' ? null : h('div.wrow', { style: { marginTop: '12px' } },
+          timeField('mealFrom', state.mealStart, at => ({
+            mealStart: at,
+            // окно двигается целиком: правя начало, человек не хочет менять его ширину
+            mealEnd: window_ ? at + Math.max(15, state.mealEnd - state.mealStart) : state.mealEnd,
+          })),
+          h('span.whint', { text: window_ ? '—' : '+' }),
+          window_
+            ? timeField('mealTo', state.mealEnd, at => ({ mealEnd: Math.max(state.mealStart + 15, at) }))
+            : h('span.wtime.wtime-flat', { text: durLabel(state.mealDur) })),
+        window_
+          ? h('div.wclock-cap', { text: 'мягкая рамка: съесть где-то внутри окна', style: { marginTop: '8px' } })
           : null),
       h('div.wrow',
         h('input.wnum', {
-          value: state.mealKcal, placeholder: '—', inputMode: 'numeric',
+          name: 'mealKcal', value: state.mealKcal, placeholder: '—', inputMode: 'numeric',
           oninput: e => { state.mealKcal = e.target.value; },
         }),
         h('span.wsmall', { text: 'ккал — можно оставить пустым' })),
       exact ? h('div', h('div.wfield-label', { text: 'сколько занять в расписании' }), durs) : null,
       exact ? schedCard : null,
-      h('div', h('div.wfield-label', { text: 'напомнить · можно несколько' }), leads),
+      exact && state.mealSched ? mealConflictBlock() : null,
+      state.mealMode === 'none' ? null : h('div',
+        h('div.wfield-label', { text: 'напомнить · можно несколько' }), leads,
+        window_
+          ? h('div.wclock-cap', { text: 'считаем от начала окна', style: { marginTop: '8px' } })
+          : null),
       h('div.wrow-end',
         h('button.wbtn-quiet', {
-          type: 'button', text: 'Удалить',
-          onclick: () => (state.mealId === 'new' ? closeModal() : busy(data.removeMeal(state.date, state.mealId))),
+          type: 'button', text: state.mealId === 'new' ? 'Отменить' : 'Удалить', onclick: deleteMeal,
         }),
         h('button.wbtn-wide', {
           type: 'button', text: state.busy ? 'Сохраняю…' : 'Готово', disabled: state.busy,
-          onclick: () => {
-            const body = adapt.mealToServer({
-              title: state.mealTitle,
-              kcal: Number.parseInt(state.mealKcal, 10),
-            });
-            if (!body.title) { state.notice = 'Впишите, что едим'; render(); return; }
-            busy(state.mealId === 'new'
-              ? data.createMeal(state.date, body)
-              : data.updateMeal(state.date, state.mealId, body));
-          },
+          onclick: saveMeal,
         })));
   },
 
   // ── Напоминание ──
   reminder() {
     const repeats = h('div.wwrap');
-    add(repeats, ...REPEATS.map(r => sheetChip(r, state.remRepeat === r, () => set({ remRepeat: r }))));
+    add(repeats, ...REPEATS.map(r => sheetChip(r, state.remRepeat === r, () => setIn({ remRepeat: r }))));
 
-    const leads = h('div.wwrap');
+    const days = h('div.wdays7');
+    add(days, ...DOW_SHORT.map((d, i) =>
+      h('button', {
+        type: 'button', text: d, class: state.remDays[i] ? 'on' : '',
+        onclick: () => setIn(s => ({ remDays: { ...s.remDays, [i]: !s.remDays[i] } })),
+      })));
+
+    const leads = h('div.wwrap.wleads');
     add(leads, ...[...LEADS, { k: 'week', label: 'за неделю' }].map(l =>
-      sheetChip(l.label, state.remLeads.includes(l.k), () => set({ remLeads: toggleLead(state.remLeads, l.k) }))));
+      sheetChip(l.label, state.remLeads.includes(l.k), () => setIn({ remLeads: toggleLead(state.remLeads, l.k) }))));
+
+    const modes = h('div.wgrid2');
+    add(modes, ...ALARM.filter(a => a.k !== 'off').map(a =>
+      opt(a.label, a.icon, state.remAlarm === a.k, () => setIn({ remAlarm: a.k }))));
+
+    /*
+     * У повтора удаление — это три разных желания. Показываем их отдельными
+     * кнопками, иначе «Удалить» тихо решает за человека: то ли один день, то
+     * ли весь повтор — а вернуть уже нечем.
+     */
+    const repeating = Boolean(state.remSeriesId);
+    const removes = h('div.wstack-tight',
+      h('button.wbtn-quiet', {
+        type: 'button', text: 'Убрать только этот день', disabled: state.busy,
+        onclick: () => removeReminder('day'),
+      }),
+      h('button.wbtn-quiet', {
+        type: 'button', text: 'Не напоминать с этого дня', disabled: state.busy,
+        onclick: () => removeReminder('from'),
+      }),
+      h('button.wbtn-quiet', {
+        type: 'button', text: 'Убрать повтор целиком', disabled: state.busy,
+        onclick: () => removeReminder('series'),
+      }));
 
     return h('div.wstack',
       h('label', h('span.wfield-label', { text: 'о чём напомнить' }),
         h('input.winput', {
-          value: state.remTitle, placeholder: 'Например, забрать документы',
+          name: 'remTitle', value: state.remTitle, placeholder: 'Например, забрать документы',
           oninput: e => { state.remTitle = e.target.value; },
         })),
       h('div.wrow',
         h('input.wtime', {
-          value: state.remDate, 'aria-label': 'Дата',
+          name: 'remDate', value: state.remDate, 'aria-label': 'Дата',
           oninput: e => { state.remDate = e.target.value; },
         }),
         h('input.wtime', {
-          value: state.remTime, 'aria-label': 'Время',
+          name: 'remTime', value: state.remTime, 'aria-label': 'Время',
           oninput: e => { state.remTime = e.target.value; },
         }),
-        h('span.whint', { text: 'дата и время — можно вписать вручную' })),
-      h('div', h('div.wfield-label', { text: 'повтор' }), repeats),
+        (() => {
+          const b = h('button.wbtn-ghost', { type: 'button', onclick: () => openCalendar('reminder') });
+          add(b, ico('calendar-blank', '15px'), h('span', { text: 'Выбрать' }));
+          return b;
+        })()),
+      h('div', h('div.wfield-label', { text: 'повтор' }), repeats,
+        state.remRepeat === 'Еженедельно'
+          ? h('div', { style: { marginTop: '10px' } }, days,
+            h('div.wclock-cap', { text: 'пусто — в тот же день недели, что и дата', style: { marginTop: '8px' } }))
+          : null),
       h('div', h('div.wfield-label', { text: 'предупредить · можно несколько' }), leads),
+      h('div', h('div.wfield-label', { text: 'чем предупредить' }), modes),
+      repeating ? h('div', h('div.wfield-label', { text: 'убрать' }), removes) : null,
       h('div.wrow-end',
-        h('button.wbtn-quiet', {
-          type: 'button', text: 'Удалить', disabled: state.busy,
-          onclick: () => (state.remId === 'new' ? closeModal() : busy(data.removeRow(state.date, state.remId))),
+        repeating ? null : h('button.wbtn-quiet', {
+          type: 'button', text: state.remId === 'new' ? 'Отменить' : 'Удалить', disabled: state.busy,
+          onclick: () => removeReminder('day'),
         }),
         h('button.wbtn-wide', {
           type: 'button', text: state.busy ? 'Сохраняю…' : 'Готово', disabled: state.busy,
           onclick: saveReminder,
+        })));
+  },
+
+  // ── Аккаунт ──
+  account() {
+    const field = (label, key, type = 'text') => h('label',
+      h('span.wfield-label', { text: label }),
+      h('input.winput', {
+        name: key, type, value: state[key],
+        autocomplete: type === 'password' ? 'new-password' : 'off',
+        oninput: e => { state[key] = e.target.value; },
+      }));
+
+    return h('div.wstack',
+      h('div.wfile',
+        ico('envelope-simple', '24px'),
+        h('div.wfile-body',
+          h('div.wfile-name', { text: store.user?.email ?? '—' }),
+          h('div.wfile-meta', {
+            text: store.settings?.emailVerified ? 'почта подтверждена' : 'почта не подтверждена',
+          }))),
+      field('как вас звать', 'accName'),
+      h('button.wbtn-wide', {
+        type: 'button', text: state.busy ? 'Сохраняю…' : 'Сохранить имя',
+        disabled: state.busy, onclick: saveName,
+      }),
+      h('div.wclock-cap', { text: 'пароль' }),
+      field('текущий пароль', 'passOld', 'password'),
+      field('новый пароль', 'passNew', 'password'),
+      field('новый пароль ещё раз', 'passNew2', 'password'),
+      h('div.wrow-end',
+        h('button.wbtn-quiet', {
+          type: 'button', text: 'Выйти из аккаунта',
+          onclick: () => api.POST('/auth/logout').finally(() => { location.href = '/login.html'; }),
+        }),
+        h('button.wbtn-wide', {
+          type: 'button', text: state.busy ? 'Меняю…' : 'Сменить пароль',
+          disabled: state.busy, onclick: savePassword,
         })));
   },
 

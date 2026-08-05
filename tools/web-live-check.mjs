@@ -272,12 +272,21 @@ await wait(600);
 await nav('Настройки');
 await waitFor('Boolean(document.querySelector(".wsettings"))');
 await wait(700);
-проба('в настройках четыре панели эталона',
+/*
+ * Панелей пять: четыре эталонных плюс «аккаунт». В эталоне веб-версии её нет,
+ * но она есть в описании функционала, и без неё имя и пароль поменять нечем.
+ */
+проба('в настройках пять панелей: аккаунт и четыре эталонных',
   (await js(`[...document.querySelectorAll('.wsettings .wcap')].map(e => e.textContent).join(',')`))
-    === 'оформление,день и питание,звуки и данные,устройства',
+    === 'аккаунт,оформление,день и питание,звуки и данные,устройства',
   await js(`[...document.querySelectorAll('.wsettings .wcap')].map(e => e.textContent).join(',')`));
+const строкиДанных = `(() => {
+  const panel = [...document.querySelectorAll('.wsettings .wpanel-list')]
+    .find(p => p.querySelector('.wcap')?.textContent === 'звуки и данные');
+  return panel ? panel.querySelectorAll('.wrow-link').length : -1;
+})()`;
 проба('в «звуках и данных» пять строк',
-  (await js(`document.querySelectorAll('.wrow-link').length`)) === 5);
+  (await js(строкиДанных)) === 5, `${await js(строкиДанных)}`);
 
 // Звук: выбор сохраняется в настройках человека
 await js(`[...document.querySelectorAll('.wrow-link')].find(r => r.textContent.includes('Звук будильника')).click()`);
@@ -388,11 +397,11 @@ await js(`[...document.querySelectorAll('.wblock')].find(b => b.textContent.incl
 проба('подпись про несколько сроков на месте',
   await js(`[...document.querySelectorAll('.wmodal .wfield-label')].some(e => e.textContent === 'предупредить · можно несколько')`));
 
-await js(`[...document.querySelectorAll('.wmodal .wchip-sheet')].find(c => c.textContent === 'за день').click()`);
-await js(`[...document.querySelectorAll('.wmodal .wchip-sheet')].find(c => c.textContent === 'за час').click()`);
+await js(`[...document.querySelectorAll('.wmodal .wleads .wchip-sheet')].find(c => c.textContent === 'за день').click()`);
+await js(`[...document.querySelectorAll('.wmodal .wleads .wchip-sheet')].find(c => c.textContent === 'за час').click()`);
 проба('два срока горят одновременно',
-  (await js(`document.querySelectorAll('.wmodal .wchip-sheet.on').length`)) === 2,
-  `${await js(`document.querySelectorAll('.wmodal .wchip-sheet.on').length`)} горит`);
+  (await js(`document.querySelectorAll('.wmodal .wleads .wchip-sheet.on').length`)) === 2,
+  `${await js(`document.querySelectorAll('.wmodal .wleads .wchip-sheet.on').length`)} горит`);
 await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
 await waitFor('!document.querySelector(".wveil")', 40);
 await wait(1000);
@@ -412,6 +421,232 @@ await js(`(async () => {
     body: JSON.stringify({ remindBefore: [0] }),
   });
 })()`, true);
+
+/*
+ * «Длится» — это длительность.
+ *
+ * Раньше плитка «длится» открывала ту же сетку часов, что «начало», и нажатие
+ * на час меняло начало: выбрать длительность было нечем. Человек поймал это
+ * руками, поэтому проверяем именно то, что он делал.
+ */
+await js(`[...document.querySelectorAll('.wblock')].find(b => b.textContent.includes('Зарядка')).click()`);
+await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Строка расписания'`);
+const плитки = () => js(`[...document.querySelectorAll('.wmodal .wtile')].map(t =>
+  t.querySelector('.wtile-cap').textContent + '=' + t.querySelector('input').value).join(' ')`);
+const доПравки = await плитки();
+проба('три плитки времени на месте', /начало=.* длится=.* конец=/.test(доПравки), доПравки);
+
+await js(`[...document.querySelectorAll('.wmodal .wtile')].find(t => t.textContent.includes('длится')).click()`);
+проба('«длится» открывает длительности, а не часы',
+  (await js(`Boolean([...document.querySelectorAll('.wmodal .wchip-dur')].length)`))
+  && !(await js(`Boolean(document.querySelector('.wmodal .wclock-grid'))`)));
+
+await js(`[...document.querySelectorAll('.wmodal .wchip-dur')].find(c => c.textContent === '45 мин').click()`);
+const послеПравки = await плитки();
+проба('выбор длительности меняет конец, а не начало',
+  послеПравки.includes('длится=45 мин') && послеПравки.split(' ')[0] === доПравки.split(' ')[0],
+  послеПравки);
+
+await js(`[...document.querySelectorAll('.wmodal .wtile')].find(t => t.textContent.includes('начало')).click()`);
+await js(`[...document.querySelectorAll('.wmodal .wclock-grid')][0].querySelectorAll('button')[9].click()`);
+const послеНачала = await плитки();
+проба('правка начала двигает конец, длительность держится',
+  послеНачала.includes('начало=09:') && послеНачала.includes('длится=45 мин'), послеНачала);
+
+// цвет блока: выбор есть и он запоминается
+проба('в редакторе есть выбор цвета',
+  (await js(`document.querySelectorAll('.wmodal .wpaint').length`)) === 5,
+  `${await js(`document.querySelectorAll('.wmodal .wpaint').length`)}`);
+await js(`document.querySelectorAll('.wmodal .wpaint')[3].click()`);
+проба('цвет отметился', await js(`document.querySelectorAll('.wmodal .wpaint.on').length === 1
+  && !document.querySelectorAll('.wmodal .wpaint')[0].classList.contains('on')`));
+await js(`document.querySelector('.wmodal-x').click()`);
+await waitFor('!document.querySelector(".wveil")', 40);
+
+/*
+ * Пересечение: конец, залезающий на соседний блок, должен предложить три
+ * способа разойтись — и ничего не двигать до выбора.
+ */
+// «Обед» 13:00–13:30, за ним «Работа: второй блок» 13:30–17:00 — конец в 14:30 режет его
+await js(`[...document.querySelectorAll('.wblock')].find(b => b.textContent.includes('Обед')).click()`);
+await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Строка расписания'`);
+await js(`[...document.querySelectorAll('.wmodal .wtile')].find(t => t.textContent.includes('конец')).click()`);
+await js(`[...document.querySelectorAll('.wmodal .wclock-grid')][0].querySelectorAll('button')[14].click()`);
+await wait(300);
+проба('пересечение показано и предложены способы',
+  (await js(`Boolean(document.querySelector('.wmodal .wconflict'))`))
+  && (await js(`document.querySelectorAll('.wmodal .wconflict .wopt').length`)) >= 2,
+  await js(`document.querySelector('.wmodal .wconflict-hd')?.textContent ?? 'нет'`));
+await js(`document.querySelector('.wmodal-x').click()`);
+await waitFor('!document.querySelector(".wveil")', 40);
+
+/* Месяц: «+ ещё N» когда строк больше, чем влезает, и добавление по клику. */
+await js(`[...document.querySelectorAll('.wseg button')].find(b => b.textContent === 'Месяц').click()`);
+await waitFor('document.querySelectorAll(".wcell").length === 42', 40);
+await wait(900);
+проба('в месяце сказано, сколько строк не влезло',
+  await js(`[...document.querySelectorAll('.wcell-more')].some(e => /\\+ ещё \\d+/.test(e.textContent))`),
+  await js(`[...document.querySelectorAll('.wcell-more')].map(e => e.textContent).join('|') || 'нет'`));
+
+await js(`[...document.querySelectorAll('.wcell:not(.out)')].find(c => !c.querySelector('.wcell-item')).click()`);
+проба('клик по пустому месту в месяце открывает новый блок',
+  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Новый блок'`));
+проба('в новом блоке можно выбрать напоминание вместо блока',
+  await js(`[...document.querySelectorAll('.wmodal .wchip-sheet')].some(c => c.textContent === 'Напоминание')`));
+await js(`document.querySelector('.wmodal-x').click()`);
+await waitFor('!document.querySelector(".wveil")', 40);
+
+/* Календарь: выбор дня из шапки и листание месяцев. */
+await js(`[...document.querySelectorAll('.wtop .wbtn-ghost')].find(b => b.textContent.includes('Календарь')).click()`);
+проба('календарь открылся',
+  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Выбор дня'`));
+const месяцДо = await js(`document.querySelector('.wcal-title').textContent`);
+await js(`document.querySelectorAll('.wmodal .wsq')[1].click()`);
+проба('календарь листает месяцы',
+  (await js(`document.querySelector('.wcal-title').textContent`)) !== месяцДо,
+  `${месяцДо} → ${await js(`document.querySelector('.wcal-title').textContent`)}`);
+await js(`document.querySelector('.wmodal-x').click()`);
+await waitFor('!document.querySelector(".wveil")', 40);
+
+/* Стрелки листают выбранный период, а не всегда день. */
+await js(`[...document.querySelectorAll('.wseg button')].find(b => b.textContent === 'Месяц').click()`);
+await wait(600);
+const шапкаДо = await js(`document.querySelector('.wtop-num').textContent`);
+await js(`document.querySelectorAll('.wtop-strip .wsq')[1].click()`);
+await wait(900);
+const шапкаПосле = await js(`document.querySelector('.wtop-num').textContent`);
+проба('на месяце стрелка листает месяц', шапкаДо !== шапкаПосле, `${шапкаДо} → ${шапкаПосле}`);
+проба('в шапке месяца написан месяц, а не число', /^[а-я]+ \d{4}$/.test(шапкаПосле), шапкаПосле);
+
+/*
+ * Возвращаемся на сегодня. Иначе всё, что проверки создают дальше, ложится в
+ * пролистанный месяц — и следующий прогон видит это в клетках чужого месяца.
+ * Один раз уже поймались: приём пищи создавался пятого сентября.
+ */
+await js(`[...document.querySelectorAll('.wtop-nav .wchip')].find(c => c.textContent === 'Сегодня').click()`);
+await wait(900);
+await js(`[...document.querySelectorAll('.wseg button')].find(b => b.textContent === 'День').click()`);
+await wait(700);
+проба('«Сегодня» возвращает на сегодняшний день',
+  (await js(`document.querySelector('.wtop-num').textContent`)) === '5 августа',
+  await js(`document.querySelector('.wtop-num').textContent`));
+
+/*
+ * Питание: окно и точное время — это разные вещи, и «Добавить в расписание»
+ * должен действительно добавлять блок. Раньше он был нарисован и молчал.
+ */
+await nav('Сейчас');
+await waitFor('Boolean(document.querySelector(".wfood"))');
+await wait(600);
+await js(`[...document.querySelectorAll('.wadd')].find(b => b.textContent.includes('приём пищи')).click()`);
+проба('шторка приёма пищи открылась',
+  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Приём пищи'`));
+await js(`(() => { const i = document.querySelector('.wmodal .winput');
+  i.value = 'Обед проверкой'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+await js(`[...document.querySelectorAll('.wmodal .wopt')].find(o => o.textContent.includes('Окно')).click()`);
+проба('у окна два времени и подпись про рамку',
+  (await js(`document.querySelectorAll('.wmodal .wtime').length`)) === 2
+  && (await js(`[...document.querySelectorAll('.wmodal .wclock-cap')].some(e => e.textContent.includes('внутри окна'))`)));
+await js(`[...document.querySelectorAll('.wmodal .wopt')].find(o => o.textContent.includes('Точное время')).click()`);
+проба('у точного времени есть выбор длительности и переключатель расписания',
+  (await js(`document.querySelectorAll('.wmodal .wchip-dur').length`)) >= 4
+  && (await js(`Boolean(document.querySelector('.wmodal .wtoggle-card'))`)));
+await js(`document.querySelector('.wmodal .wtoggle-card').click()`);
+await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
+await wait(1500);
+const отказПитания = await js(`document.querySelector('.wnotice')?.textContent ?? ''`);
+if (отказПитания) console.log('    отказ:', отказПитания);
+await waitFor('!document.querySelector(".wveil")', 40);
+await wait(600);
+const питание = await js(`fetch('/api/v1/days/${DAY}/full').then(r=>r.json()).then(d => {
+  const m = d.meals.find(x => x.title === 'Обед проверкой');
+  const row = d.schedule.find(x => x.title === 'Обед проверкой');
+  return { есть: Boolean(m), связан: Boolean(m && m.schedule_item_id), блок: Boolean(row),
+           окно: m ? m.end_min : null };
+})`, true);
+проба('приём пищи сохранён и появился блоком в расписании',
+  питание.есть && питание.блок && питание.связан, JSON.stringify(питание));
+
+// убираем за собой
+await js(`(async () => {
+  const d = await (await fetch('/api/v1/days/${DAY}/full')).json();
+  const m = d.meals.find(x => x.title === 'Обед проверкой');
+  const row = d.schedule.find(x => x.title === 'Обед проверкой');
+  if (row) await fetch('/api/v1/days/${DAY}/schedule/' + row.id, { method: 'DELETE' });
+  if (m) await fetch('/api/v1/days/${DAY}/meals/' + m.id, { method: 'DELETE' });
+})()`, true);
+const питаниеУбрано = await js(`fetch('/api/v1/days/${DAY}/full').then(r=>r.json())
+  .then(d => d.meals.filter(x => x.title === 'Обед проверкой').length
+    + d.schedule.filter(x => x.title === 'Обед проверкой').length)`, true);
+проба('прогон убрал за собой приём пищи и его блок', питаниеУбрано === 0, `осталось ${питаниеУбрано}`);
+
+/* Привычка: значок, тип и график — и правка существующей, а не только создание. */
+await nav('Привычки');
+await waitFor('Boolean(document.querySelector(".whabits"))');
+await wait(600);
+await js(`document.querySelector('.whabit-more').click()`);
+проба('правка привычки открывается из карточки',
+  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Новая привычка'`));
+проба('в шторке привычки есть плюсик на все смайлики',
+  await js(`Boolean(document.querySelector('.wmodal .wemoji-more'))`));
+проба('график — выбор между днями недели и разами в неделю',
+  await js(`[...document.querySelectorAll('.wmodal .wchip-sheet')].some(c => c.textContent === 'Сколько раз в неделю')`));
+await js(`[...document.querySelectorAll('.wmodal .wchip-sheet')].find(c => c.textContent === 'Сколько раз в неделю').click()`);
+проба('свободный график показывает число раз, а не дни недели',
+  (await js(`Boolean(document.querySelector('.wmodal input[name=habitTimes]'))`))
+  && !(await js(`Boolean(document.querySelector('.wmodal .wdays7'))`)));
+await js(`document.querySelector('.wmodal-x').click()`);
+await waitFor('!document.querySelector(".wveil")', 40);
+
+/* Заметка без даты — настоящая: она сохраняется и видна в фильтре «Без даты». */
+await nav('Заметки');
+await waitFor('Boolean(document.querySelector(".wnotes"))');
+await wait(600);
+await js(`[...document.querySelectorAll('.wbtn')].find(b => b.textContent.includes('Новая заметка')).click()`);
+await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Заметка'`);
+await js(`(() => { const i = document.querySelector('.wmodal input[name=noteTitle]');
+  i.value = 'Книги на осень'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+await js(`[...document.querySelectorAll('.wmodal .wchip-sheet')].find(c => c.textContent === 'Просто заметка').click()`);
+await js(`(() => { const t = document.querySelector('.wmodal textarea');
+  t.value = 'Без привязки к дню'; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
+await waitFor('!document.querySelector(".wveil")', 40);
+await wait(1200);
+const безДаты = await js(`fetch('/api/v1/notes').then(r=>r.json())
+  .then(l => l.filter(n => !n.date && n.title === 'Книги на осень').length)`, true);
+проба('заметка без даты сохранена как заметка без даты', безДаты === 1, `нашлось ${безДаты}`);
+
+await js(`[...document.querySelectorAll('.wchip')].find(c => c.textContent === 'Без даты').click()`);
+await wait(500);
+проба('фильтр «Без даты» её показывает',
+  await js(`[...document.querySelectorAll('.wnote-title')].some(e => e.textContent === 'Книги на осень')`));
+
+// убираем за собой
+await js(`(async () => {
+  const list = await (await fetch('/api/v1/notes')).json();
+  for (const n of list.filter(x => !x.date && x.title === 'Книги на осень')) {
+    await fetch('/api/v1/notes/' + n.id, { method: 'DELETE' });
+  }
+})()`, true);
+проба('прогон убрал за собой заметку без даты',
+  (await js(`fetch('/api/v1/notes').then(r=>r.json())
+    .then(l => l.filter(n => !n.date && n.title === 'Книги на осень').length)`, true)) === 0);
+
+/* Настройки пользователя: имя правится и доезжает до профиля. */
+await nav('Настройки');
+await waitFor('Boolean(document.querySelector(".wsettings"))');
+await wait(600);
+await js(`[...document.querySelectorAll('.wrow-link')][0].click()`);
+проба('шторка аккаунта открылась',
+  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Аккаунт'`));
+await js(`(() => { const i = document.querySelector('.wmodal input[name=accName]');
+  i.value = 'Проверка имени'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+await js(`[...document.querySelectorAll('.wmodal .wbtn-wide')].find(b => b.textContent.includes('имя')).click()`);
+await wait(1200);
+проба('имя сохранено в профиле',
+  (await js(`fetch('/api/v1/settings').then(r=>r.json()).then(s => s.displayName)`, true)) === 'Проверка имени');
+await js(`fetch('/api/v1/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ displayName: '' }) })`, true);
 
 console.log('\n── Итог ──');
 const плохо = пробы.filter(([, ok]) => !ok).length;

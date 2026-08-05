@@ -155,6 +155,8 @@
 .wtop-num { font: 500 24px/1.1 var(--ui); letter-spacing: -.02em; margin-top: 7px; }
 
 .wtop-nav { display: flex; align-items: center; gap: 6px; margin-left: 6px; }
+/* Стрелки обнимают полоску недель: листается именно она */
+.wtop-strip { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; }
 .wsq {
   width: 34px; height: 34px; border-radius: 10px;
   border: 1px solid var(--line); background: transparent;
@@ -367,6 +369,38 @@ select.winput { appearance: auto; cursor: pointer; }
 .wopt-sm { min-height: 44px; font: 400 14px/1.2 var(--ui); }
 
 /* Часы и минуты в редакторе строки */
+.wgrid1 { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+/* Длительность рядом с временем начала: то же поле, но менять его нечем — оно счётное */
+.wtime-flat {
+  display: grid; place-items: center; color: var(--dim);
+  background: transparent; box-shadow: inset 0 0 0 1px var(--line);
+}
+.wchip-dur { height: 40px; padding: 0 16px; }
+
+/* Цвет блока: точка цвета, а не плитка — выбор рядом с остальными полями */
+.wpaint {
+  width: 30px; height: 30px; border-radius: 50%; flex: none; cursor: pointer;
+  border: 2px solid transparent; padding: 0;
+  box-shadow: inset 0 0 0 2px var(--surface);
+}
+.wpaint.on { border-color: var(--text); }
+.wpaint-auto { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent); }
+
+/*
+ * Пересечение. Предупреждение акцентом, а не красным: это не ошибка, а
+ * выбор — расписание бывает и внахлёст, если человек так хочет.
+ */
+.wconflict {
+  border-radius: 14px; padding: 13px;
+  background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+.wconflict-hd {
+  display: flex; align-items: center; gap: 8px;
+  font: 500 13px/1.3 var(--ui); color: var(--accent);
+}
+.wconflict .wopt { background: var(--surface); }
+.wconflict .wopt.on { background: var(--accent-soft); }
+
 .wclock { border-radius: 14px; background: var(--raise); padding: 14px; }
 .wclock-cap { font: 400 11px/1 var(--ui); color: var(--faint); margin-bottom: 9px; }
 .wclock-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 5px; }
@@ -416,6 +450,7 @@ select.winput { appearance: auto; cursor: pointer; }
 /* Список расписания на «Сейчас» */
 .wsched { border-radius: 16px; background: var(--surface); padding: 8px 4px; }
 .wsched-row {
+  --pin: var(--accent);
   display: grid; grid-template-columns: 90px 20px minmax(0, 1fr) auto;
   align-items: center; gap: 6px; padding: 2px 12px; cursor: pointer;
   border: 0; background: transparent; color: inherit; width: 100%; text-align: left;
@@ -431,11 +466,11 @@ select.winput { appearance: auto; cursor: pointer; }
 }
 .wsched-row.past .wsched-dot { width: 10px; height: 10px; background: var(--faint); border: none; }
 .wsched-row.now .wsched-dot {
-  width: 12px; height: 12px; background: var(--accent); border: none;
-  box-shadow: 0 0 0 4px var(--accent-soft);
+  width: 12px; height: 12px; background: var(--pin); border: none;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--pin) 18%, transparent);
 }
 .wsched-row.inner .wsched-dot {
-  width: 8px; height: 8px; background: var(--surface); border: 2px solid var(--accent);
+  width: 8px; height: 8px; background: var(--surface); border: 2px solid var(--pin);
 }
 .wsched-body { min-width: 0; padding: 10px 12px; }
 /* Блок, внутри которого лежит другой: у родителя скруглён верх, у вложенного низ */
@@ -549,20 +584,21 @@ select.winput { appearance: auto; cursor: pointer; }
 .wplan-col.on { background-color: var(--accent-soft); }
 
 .wblock {
+  --pin: var(--accent);
   position: absolute; left: 3px; right: 3px; overflow: hidden; cursor: pointer;
   border-radius: 10px; padding: 5px 7px; border: 0; text-align: left;
   display: flex; flex-direction: column; align-items: flex-start;
-  background: color-mix(in srgb, var(--accent) 22%, var(--bg));
-  box-shadow: inset 3px 0 0 var(--accent);
+  background: color-mix(in srgb, var(--pin) 22%, var(--bg));
+  box-shadow: inset 3px 0 0 var(--pin);
   color: var(--text);
 }
 /* Вложенный блок приподнят и темнее — видно, что он внутри другого */
 .wblock.inner {
   background: var(--raise);
-  box-shadow: inset 3px 0 0 var(--accent), 0 4px 12px rgba(0, 0, 0, .25);
+  box-shadow: inset 3px 0 0 var(--pin), 0 4px 12px rgba(0, 0, 0, .25);
 }
 .wblock.compact { padding: 0 8px; flex-direction: row; align-items: center; gap: 7px; }
-.wblock-time { font: 500 10px/1 var(--mono); color: var(--accent); white-space: nowrap; flex: none; }
+.wblock-time { font: 500 10px/1 var(--mono); color: var(--pin); white-space: nowrap; flex: none; }
 .wblock-title {
   font: 400 12px/1.3 var(--ui); margin-top: 4px; width: 100%;
   display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word;
@@ -598,16 +634,57 @@ select.winput { appearance: auto; cursor: pointer; }
 .wcell.out { opacity: .4; cursor: default; }
 .wcell.on { box-shadow: inset 0 0 0 1.5px var(--accent); }
 .wcell-hd { display: flex; align-items: center; gap: 6px; }
-.wcell-num { font: 500 15px/1 var(--mono); }
+.wcell-num {
+  font: 500 15px/1 var(--mono); border: 0; background: transparent; color: inherit;
+  padding: 0; cursor: pointer;
+}
 .wcell.on .wcell-num { color: var(--accent); }
 .wcell-count { font: 500 10px/1 var(--mono); color: var(--faint); white-space: nowrap; flex: none; }
 .wcell-items { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+
+/*
+ * Строка дня в месяце. `--pin` — цвет блока; по умолчанию цвет приложения,
+ * поэтому день, заполненный до появления выбора, выглядит как прежде.
+ */
 .wcell-item {
+  --pin: var(--accent);
+  display: flex; align-items: center; gap: 5px; width: 100%; min-width: 0;
   font: 400 11px/1.3 var(--ui); padding: 5px 7px; border-radius: 7px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  box-shadow: inset 2px 0 0 var(--accent);
+  border: 0; cursor: pointer; color: inherit; text-align: left;
+  background: color-mix(in srgb, var(--pin) 16%, transparent);
+  box-shadow: inset 2px 0 0 var(--pin);
 }
+.wcell-pin { display: none; }
+.wcell-time { font: 500 10px/1.3 var(--mono); color: var(--dim); flex: none; }
+.wcell-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/*
+ * Напоминание — момент, а не отрезок: заливки нет, только точка и контур.
+ * Так в месяце сразу видно, где занято время, а где просто напомнить.
+ */
+.wcell-item.rem {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pin) 40%, transparent);
+}
+.wcell-item.rem .wcell-pin {
+  display: block; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--pin); flex: none;
+}
+.wcell-more {
+  align-self: flex-start; border: 0; background: transparent; cursor: pointer;
+  padding: 2px 0 0; font: 500 11px/1.3 var(--ui); color: var(--dim);
+}
+
+/* Календарь выбора дня */
+.wcal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
+.wcal-dow { text-align: center; font: 400 11px/1 var(--ui); color: var(--faint); padding-bottom: 5px; }
+.wcal-title { flex: 1; text-align: center; font: 500 16px/1 var(--ui); }
+.wcal-day {
+  height: 38px; border-radius: 10px; border: 0; cursor: pointer;
+  font: 500 14px/1 var(--mono); background: transparent; color: var(--text);
+}
+.wcal-day.out { opacity: .35; color: var(--faint); }
+.wcal-day.today { box-shadow: inset 0 0 0 1px var(--accent-line); }
+.wcal-day.on { background: var(--accent); color: #fff; }
 
 /* ── Привычки, заметки, настройки ──────────────────────────── */
 
@@ -771,6 +848,32 @@ select.winput { appearance: auto; cursor: pointer; }
   border: 1px solid transparent; background: var(--raise);
 }
 .wemoji.on { border-color: var(--accent); background: var(--accent-soft); }
+.wemoji-more { display: grid; place-items: center; color: var(--dim); }
+
+/*
+ * Все смайлики. Пикер тот же, что был в прежней версии, — здесь только его
+ * рамка: список длинный, поэтому он прокручивается внутри себя, а не растит
+ * шторку до высоты экрана.
+ */
+.wemoji-box { margin-top: 10px; border-radius: 14px; background: var(--raise); padding: 12px; }
+.wemoji-box .input {
+  width: 100%; height: 40px; box-sizing: border-box; padding: 0 12px; border-radius: 11px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--text);
+  font: 400 15px/1 var(--ui); outline: none;
+}
+.wemoji-box .input:focus { border-color: var(--accent); }
+.wemoji-box .emoji-grid { max-height: 230px; overflow-y: auto; margin-top: 10px; }
+.wemoji-box .emoji-row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.wemoji-box .emoji-cell {
+  width: 34px; height: 34px; border-radius: 9px; border: 0; cursor: pointer;
+  background: transparent; font-size: 18px;
+}
+.wemoji-box .emoji-cell:hover { background: var(--surface); }
+.wemoji-box .eyebrow {
+  font: 500 10px/1 var(--ui); letter-spacing: .12em; text-transform: uppercase;
+  color: var(--faint); margin: 4px 0 7px;
+}
+.wemoji-box .empty { font: 400 13px/1.4 var(--ui); color: var(--faint); }
 .wdays7 { display: flex; gap: 6px; }
 .wdays7 button {
   flex: 1; height: 42px; border-radius: 10px; border: 0; cursor: pointer;
@@ -795,6 +898,7 @@ select.winput { appearance: auto; cursor: pointer; }
 .wdate-chip {
   display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 13px;
   border-radius: 10px; background: var(--raise); font: 400 13px/1 var(--ui); color: var(--dim);
+  border: 0; cursor: pointer;
 }
 .wdate-chip i { color: var(--accent); }
 

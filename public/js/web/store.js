@@ -47,6 +47,7 @@ export const store = {
   notes: [],
   devices: [],
   template: null,     // именованное правило-шаблон, применяется вручную
+  series: [],         // правила повторов без имени: ими живут повторяющиеся напоминания
   ai: { ready: false, voice: false },
 };
 
@@ -128,8 +129,25 @@ export async function removeTemplate() {
  * Повтор — правило без имени: сервер сам достраивает им дни. Так живут
  * «ежедневно», «еженедельно», «ежемесячно» и «ежегодно» у напоминаний.
  */
-export const createRepeat = ({ freq, startDate, row }) =>
-  api.series.create({ target: 'schedule', freq, startDate, rows: [row] });
+export const createRepeat = ({ freq, startDate, row, byweekday }) =>
+  api.series.create({
+    target: 'schedule', freq, startDate, rows: [row],
+    ...(byweekday ? { byweekday } : {}),
+  });
+
+/** Правила повторов нужны редактору напоминания: по ним видно, что за повтор. */
+export async function loadSeries() {
+  const rows = await api.series.list({ templates: false });
+  store.series = Array.isArray(rows) ? rows : [];
+  return store.series;
+}
+
+export const removeSeries = id => api.series.remove(id);
+/*
+ * «Не напоминать с этого дня» — это конец правила, а не удаление: прошлые дни
+ * остаются как были. Сервер сам обрезает правило датой окончания.
+ */
+export const endSeries = (id, date) => api.series.endFrom(id, date);
 
 // ── Правки ───────────────────────────────────────────────────
 
@@ -199,6 +217,8 @@ export function toggleHabit(habit, done) {
 export const createRow = (date, body) => api.schedule.create(date, body);
 export const updateRow = (date, id, body) => api.schedule.update(date, id, body);
 export const removeRow = (date, id) => api.schedule.remove(date, id);
+/** Сдвиг блока вместе со всем, что начинается позже: способ разойтись при пересечении. */
+export const shiftRows = (date, fromId, minutes) => api.schedule.shift(date, fromId, minutes, true);
 
 export const createTask = (date, body) => api.tasks.create(date, body);
 export const updateTask = (date, id, body) => api.tasks.update(date, id, body);
@@ -208,9 +228,23 @@ export const createMeal = (date, body) => api.meals.create(date, body);
 export const updateMeal = (date, id, body) => api.meals.update(date, id, body);
 export const removeMeal = (date, id) => api.meals.remove(date, id);
 
-export const saveNote = (date, text) => api.patchDay(date, { notes: text }, store.day?.rev);
+/*
+ * Заметка с датой — это заметка дня, поэтому пишется в день. Заметка без даты
+ * живёт своим списком. Вид определяется датой, и других правил тут нет.
+ */
+export const saveDayNote = (date, text) => api.patchDay(date, { notes: text }, store.day?.rev);
+export const createFreeNote = body => api.POST('/notes', body);
+export const updateFreeNote = (id, body) => api.PATCH(`/notes/${id}`, body);
+export const removeFreeNote = id => api.DELETE(`/notes/${id}`);
 
 export const createHabit = body => api.habits.create(body);
+export const updateHabit = (id, body) => api.habits.update(id, body);
+/*
+ * Убираем в архив, а не стираем: журнал отметок — это история, и удалить её
+ * вместе с привычкой значит переписать прошлое. Архивная привычка исчезает
+ * из списка, но дни, в которые она была выполнена, остаются правдой.
+ */
+export const removeHabit = id => api.habits.archive(id);
 
 /** Настройки приложения: тема, акцент, масштаб, переключатели дня. */
 export async function saveSettings(patch) {
