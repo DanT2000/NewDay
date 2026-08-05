@@ -4,6 +4,14 @@ process.env.DB_PATH = process.env.SEED_DB || require('node:path').join(require('
 process.env.SESSION_SECRET = 'local-preview-secret-0123456789012345';
 process.env.PORT = '4010';
 process.env.TRUST_PROXY = '0';
+/*
+ * Своя пара VAPID для стенда: без неё раздел уведомлений показывает
+ * «не настроены», и проверить его нечем. Пара сгенерирована для стенда
+ * и никак не связана с рабочим сервером.
+ */
+process.env.VAPID_PUBLIC_KEY = 'BDA9gPQ1b8cc-SifnADg6vs4tOQKsLCY3uLNz4TSqAg4inEucDSqCRsuvuUXcFzx48kRzTp186D9l4OI0Al_fMU';
+process.env.VAPID_PRIVATE_KEY = 'DmFl4f9dWbd9OgU9m0L6797qkFWYvBQ7DtiUPRgOOPY';
+process.env.VAPID_SUBJECT = 'mailto:dev@newday.local';
 
 const bcrypt = require('bcryptjs');
 const { loadConfig } = require('../server/config');

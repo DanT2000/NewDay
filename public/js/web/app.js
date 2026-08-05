@@ -17,12 +17,13 @@ import { h, add, replace, $ } from '../dom.js';
 import { icon } from '../vendor/icons.js';
 import {
   DARK, LIGHT, PALETTE, ALARM, LEADS, CATS, NAV, MONTHS, DOW_LONG, DOW_SHORT,
-  SOUNDS, REPEATS, PRINT_PARTS, HABIT_EMOJI,
+  REPEATS, PRINT_PARTS, HABIT_EMOJI,
 } from './data.js';
 import * as adapt from './adapt.js';
 import * as data from './store.js';
 import { store } from './store.js';
 import * as api from '../api.js';
+import * as push from '../push.js';
 import { printSheet } from './sheet.js';
 
 /** Часовая сетка: 18 часов с 06:00, строка часа — 44 px. */
@@ -44,7 +45,10 @@ const state = {
   sportId: null, sportTitle: '', sportSets: '', sportReps: '', sportWeight: '',
   noteId: null, noteText: '', noteDated: true,
   remId: null, remRepeat: 'Ежегодно',
-  sound: 'Рассвет', soundKind: 'Звук будильника', fileKind: 'export',
+  fileKind: 'export',
+  tplRows: null, tplEdit: null, tplStart: 420, tplEnd: 480, tplField: 'start',
+  tplTitle: '', tplAlarm: 'off', tplLead: 'at',
+  quietFrom: '23:00', quietTo: '07:00',
   habitKind: 'do', habitEmoji: '💧', habitGoal: 30, habitGoalCustom: false,
   habitTitle: '', habitTimes: 5,
   habitDays: { 0: true, 1: true, 2: true, 3: true, 4: true, 5: false, 6: false },
@@ -70,14 +74,23 @@ const todayKey = () => store.settings?.today ?? data.todayFor();
 
 // ── Мелкие помощники ─────────────────────────────────────────
 
-const set = patch => { Object.assign(state, typeof patch === 'function' ? patch(state) : patch); /*
- * Крючок для снимков экрана: tools/shots.mjs открывает каждую шторку по
- * имени. Иначе половину макета нечем показать — шторки не страницы, по
- * адресу их не откроешь.
- */
-window.__wopen = name => set({ modal: name });
+const set = patch => {
+  Object.assign(state, typeof patch === 'function' ? patch(state) : patch);
+  render();
+};
 
-render(); };
+/*
+ * Крючок для снимков экрана и живых проверок: шторку открывают по имени.
+ * Иначе половину макета нечем показать — шторки не страницы, по адресу их
+ * не откроешь. Те, что читают данные, открываются своим путём: пустая
+ * шторка на снимке ничего не рассказывает.
+ */
+window.__wopen = name => {
+  if (name === 'notify' || name === 'template') return openLink(name);
+  if (name === 'file') return openLink('export');
+  if (name === 'tplRow') return openTplRow('new');
+  return set({ modal: name });
+};
 
 const dark = () => state.theme !== 'light';
 const accent = () => PALETTE[state.color][dark() ? 'dark' : 'light'];
@@ -131,11 +144,28 @@ const hasPlans = date => {
   return (store.range?.days ?? []).some(d => d.date === date && d.counts.schedule > 0);
 };
 
-/** Сообщение об отказе. Молчаливая неудача — худшее, что может быть. */
-function fail(e) {
-  state.notice = e?.message || 'Не удалось сохранить';
+/** Короткое сообщение поверх экрана. Через четыре секунды убирается само. */
+function note(text) {
+  state.notice = text;
   render();
-  setTimeout(() => { if (state.notice) { state.notice = null; render(); } }, 4000);
+  setTimeout(() => { if (state.notice === text) { state.notice = null; render(); } }, 4000);
+}
+
+/** Сообщение об отказе. Молчаливая неудача — худшее, что может быть. */
+const fail = e => note(e?.message || 'Не удалось сохранить');
+
+/**
+ * Действие в шторке: кнопка занята, пока запрос в пути, исход виден.
+ * Шторка при этом остаётся открытой — в отличие от `busy`, которая её
+ * закрывает: «проверить уведомление» не повод уходить с экрана.
+ */
+function act(job, okText) {
+  state.busy = true;
+  state.notice = null;
+  render();
+  return Promise.resolve(job)
+    .then(() => { state.busy = false; if (okText) note(okText); else render(); })
+    .catch(e => { state.busy = false; fail(e); });
 }
 
 /**
@@ -151,6 +181,11 @@ async function reload() {
     if (needsRange) jobs.push(data.loadRange(state.date, state.view));
     if (state.screen === 'habits') jobs.push(data.loadDay(state.date));
     if (state.screen === 'notes') jobs.push(data.loadNotes());
+    if (state.screen === 'settings') {
+      // Обе строки показывают состояние, а не заглушку: сколько строк в
+      // шаблоне и включены ли уведомления в этом браузере
+      jobs.push(data.loadTemplate().catch(() => null), data.loadPush().catch(() => null));
+    }
     await Promise.all(jobs);
     fill();
     render();
@@ -287,6 +322,7 @@ function topBar() {
     h('div.wtop-nav',
       iconBtn('caret-left', { title: 'Предыдущий день', onclick: () => shiftDay(-1) }),
       iconBtn('caret-right', { title: 'Следующий день', onclick: () => shiftDay(1) }),
+      datePick(),
       chip('Сегодня', state.date === todayKey(), () => go(todayKey()))),
     days,
     (() => {
@@ -294,6 +330,25 @@ function topBar() {
       add(b, ico('printer', '16px'), h('span', { text: 'Печать' }));
       return b;
     })());
+}
+
+/**
+ * Выбор даты. Стрелки хороши для соседнего дня, но до «двадцать третьего
+ * сентября» ими идти полсотни нажатий. Календарь берём у браузера: он
+ * знает раскладку, клавиатуру и родной язык лучше нарисованного.
+ */
+function datePick() {
+  const input = h('input', {
+    type: 'date', value: state.date, 'aria-label': 'Выбрать дату',
+    onchange: e => { if (e.target.value) go(e.target.value); },
+  });
+  const btn = h('button.wsq', {
+    type: 'button', title: 'Выбрать дату', 'aria-label': 'Выбрать дату',
+    // showPicker есть не везде; там, где нет, помогает обычное нажатие
+    onclick: () => { try { input.showPicker(); } catch { input.click(); } },
+  });
+  add(btn, ico('calendar-blank', '15px'));
+  return h('span.wtop-pick', input, btn);
 }
 
 // ── Экран «Сейчас» ───────────────────────────────────────────
@@ -960,21 +1015,23 @@ function settingsScreen() {
     return row;
   }));
 
+  /*
+   * Звук будильника выбирает телефон, а не браузер: в вебе играть его
+   * некому. Поэтому вместо двух выдуманных строк со звуками — одна
+   * настоящая: уведомления, которые действительно приходят.
+   */
+  const tplCount = adapt.templateRows(store.template).length;
   const links = [
-    { icon: 'alarm-fill', label: 'Звук будильника', value: 'Рассвет', m: 'sound' },
-    { icon: 'bell', label: 'Звук уведомлений', value: 'Капля', m: 'sound' },
-    { icon: 'calendar-check', label: 'Общее расписание', value: 'шаблон дня', m: 'template' },
+    { icon: 'bell', label: 'Уведомления', value: pushValue(), m: 'notify' },
+    { icon: 'calendar-check', label: 'Общее расписание', value: tplCount ? `${tplCount} ${adapt.plural(tplCount, 'строка', 'строки', 'строк')}` : 'не создан', m: 'template' },
     { icon: 'file-arrow-down', label: 'Экспорт данных', value: 'JSON', m: 'export' },
     { icon: 'file-arrow-up', label: 'Импорт данных', value: 'JSON', m: 'import' },
   ];
-  const dataPanel = h('div.wpanel-list', cap('звуки и данные'));
+  const dataPanel = h('div.wpanel-list', cap('уведомления и данные'));
   add(dataPanel, ...links.map(l => {
     const row = h('button.wrow-link', {
       type: 'button',
-      onclick: () => set({
-        modal: l.m === 'export' || l.m === 'import' ? 'file' : l.m,
-        fileKind: l.m, soundKind: l.label,
-      }),
+      onclick: () => openLink(l.m),
     });
     add(row, ico(l.icon, '17px'), h('span', { text: l.label }),
       h('span.wrow-link-val', { text: l.value }), ico('caret-right', '14px'));
@@ -1001,6 +1058,41 @@ function settingsScreen() {
   return h('div',
     h('div.whead-title', { text: 'Настройки', style: { marginBottom: '18px' } }),
     h('div.wsettings', look, day, dataPanel, devices));
+}
+
+/** Короткая правда справа в строке настроек — без неё строка ни о чём. */
+function pushValue() {
+  const st = store.push;
+  if (!st) return '…';
+  if (!st.enabled) return 'не настроены';
+  if (!push.supported()) return 'браузер не умеет';
+  if (push.permission() === 'denied') return 'заблокированы';
+  return st.subscriptions?.length ? 'включены' : 'выключены';
+}
+
+/**
+ * Шторки из настроек открываются с уже загруженными данными, а не с
+ * пустотой, которая через секунду заполнится: мигание списком читается
+ * как ошибка.
+ */
+function openLink(kind) {
+  if (kind === 'export' || kind === 'import') {
+    // Вид выгрузки сбрасываем: «календарь», выбранный в экспорте, в
+    // импорте не значит ничего, и ни одна кнопка не выглядела бы нажатой
+    set({ modal: 'file', fileKind: kind, fileScope: null, notice: null });
+    return;
+  }
+  if (kind === 'template') {
+    set({ modal: 'template', tplRows: adapt.templateRows(store.template), tplEdit: null });
+    // День нужен свежий: «взять из этого дня» берёт то, что в нём сейчас,
+    // а на экране настроек день сам по себе не перечитывается
+    Promise.all([data.loadTemplate(), data.loadDay(state.date)])
+      .then(() => { fill(); set({ tplRows: adapt.templateRows(store.template) }); })
+      .catch(fail);
+    return;
+  }
+  set({ modal: 'notify' });
+  data.loadPush().then(render).catch(() => {});
 }
 
 // ── Шторки ───────────────────────────────────────────────────
@@ -1041,6 +1133,56 @@ function deleteRow() {
   busy(data.removeRow(state.rowDate ?? state.date, state.rowId));
 }
 
+// ── Шаблон дня ───────────────────────────────────────────────
+
+/** Открыть строку шаблона. `new` — добавление. */
+function openTplRow(index) {
+  const r = index === 'new' ? null : (state.tplRows ?? [])[index];
+  set({
+    modal: 'tplRow', tplEdit: index, tplField: 'start',
+    tplStart: r?.start ?? 420,
+    tplEnd: r?.end ?? (r ? r.start + 60 : 480),
+    tplTitle: r?.title ?? '',
+    tplAlarm: r?.alarm ?? 'off',
+    tplLead: (r?.leads ?? ['at'])[0],
+  });
+}
+
+function saveTplRow() {
+  const title = String(state.tplTitle ?? '').trim();
+  if (!title) { note('Впишите, что делаем'); return; }
+  const rows = [...(state.tplRows ?? [])];
+  const row = {
+    start: state.tplStart, end: state.tplEnd, title,
+    alarm: state.tplAlarm, leads: [state.tplLead],
+  };
+  if (state.tplEdit === 'new') rows.push(row);
+  else rows[state.tplEdit] = row;
+  saveTemplate(rows);
+}
+
+function removeTplRow() {
+  if (state.tplEdit === 'new') { set({ modal: 'template' }); return; }
+  const rows = (state.tplRows ?? []).filter((_, i) => i !== state.tplEdit);
+  saveTemplate(rows, rows.length ? undefined : 'Шаблон опустел и больше не хранится');
+}
+
+/**
+ * Шаблон пишется целиком: правка одной строки — это новая версия всего
+ * набора. Набор маленький, а частичное обновление потребовало бы у строк
+ * шаблона своих идентификаторов, которых у них нет.
+ */
+function saveTemplate(rows, okText) {
+  const sorted = [...rows].sort((a, b) => a.start - b.start);
+  return act(
+    data.saveTemplate(adapt.templateToServer(sorted)).then(() => {
+      state.tplRows = adapt.templateRows(store.template);
+      state.modal = 'template';
+    }),
+    okText,
+  );
+}
+
 /**
  * Пока запрос в пути — кнопка занята. Иначе двойное нажатие создаёт две
  * строки, и это замечают уже в расписании.
@@ -1063,8 +1205,9 @@ const TITLES = {
   task: () => 'Задача',
   meal: () => 'Приём пищи',
   sport: () => 'Упражнение',
-  sound: () => state.soundKind,
+  notify: () => 'Уведомления',
   template: () => 'Общее расписание',
+  tplRow: () => 'Строка шаблона',
   file: () => (state.fileKind === 'import' ? 'Импорт данных' : 'Экспорт данных'),
   print: () => 'Печать дня',
 };
@@ -1083,6 +1226,9 @@ function modal() {
     h('div.wmodal-hd',
       h('b', { text: TITLES[state.modal]?.() ?? '' }),
       iconBtn('x', { title: 'Закрыть', onclick: closeModal, cls: 'wmodal-x' })),
+    // Отказ, случившийся в шторке, виден в ней же: на экране под затемнением
+    // его никто не прочитает — а «Готово» без названия молчала бы совсем
+    state.notice ? h('div.wnotice', { text: state.notice }) : null,
     body);
 
   return h('div.wveil', { onclick: closeModal }, card);
@@ -1505,20 +1651,108 @@ const BODIES = {
         })));
   },
 
-  // ── Звук ──
-  sound() {
-    const list = h('div.wstack-tight');
-    add(list, ...SOUNDS.map(s => {
-      const b = h('button.wopt', { type: 'button', class: state.sound === s.k ? 'on' : '', onclick: () => set({ sound: s.k }) });
-      add(b, ico(s.k === 'Случайный' ? 'shuffle' : 'music-note-simple', '17px'),
-        h('div', { style: { flex: '1', textAlign: 'left' } },
-          h('div', { text: s.k, style: { font: '500 15px/1.2 var(--ui)' } }),
-          h('div', { text: s.hint, style: { font: '400 12px/1.4 var(--ui)', opacity: '.75', marginTop: '4px' } })));
-      return b;
-    }));
-    const own = h('button.wbtn-dashed', { type: 'button' });
-    add(own, ico('plus', '15px'), h('span', { text: 'Добавить свой звук' }));
-    return h('div.wstack', list, own,
+  // ── Уведомления в браузере ──
+  notify() {
+    const st = store.push;
+    if (!st) return h('div.wstack', h('div.whint', { text: 'Смотрю, что с подпиской…' }));
+
+    if (!st.enabled) {
+      return h('div.wstack',
+        h('div.whint', { text: 'На сервере не заданы VAPID-ключи — отправлять уведомления нечем. Их добавляет администратор в настройках экземпляра.' }),
+        h('button.wbtn-wide', { type: 'button', text: 'Понятно', onclick: closeModal }));
+    }
+
+    const perm = push.permission();
+    const subscribed = (st.subscriptions?.length ?? 0) > 0;
+    const cfg = st.settings ?? {};
+    const quietOn = cfg.quietFrom !== null && cfg.quietTo !== null;
+
+    const head = perm === 'unsupported'
+      ? h('div.whint', { text: 'Этот браузер не умеет уведомления. Подойдёт Chrome, Firefox или Edge — либо приложение на телефоне.' })
+      : perm === 'denied'
+        ? h('div.whint', {
+          text: 'Уведомления заблокированы в самом браузере — вернуть разрешение можно там же, где оно спрашивалось: значок слева от адреса, «Уведомления».',
+          style: { color: 'var(--accent)' },
+        })
+        : h('div.whint', { text: 'Приходят к строкам расписания с колокольчиком или будильником. Работают, даже когда вкладка закрыта.' });
+
+    const actions = h('div.wrow');
+    if (perm === 'granted' && subscribed) {
+      add(actions,
+        h('button.wbtn-quiet', {
+          type: 'button', text: 'Проверить', disabled: state.busy,
+          onclick: () => act(push.sendTest(), 'Отправил — уведомление придёт через пару секунд'),
+        }),
+        h('button.wbtn-quiet', {
+          type: 'button', text: 'Отключить здесь', disabled: state.busy,
+          onclick: () => act(push.disable().then(data.loadPush), 'Этот браузер отписан'),
+        }));
+    } else if (perm !== 'unsupported' && perm !== 'denied') {
+      add(actions, h('button.wbtn-wide', {
+        type: 'button', text: state.busy ? 'Спрашиваю…' : 'Разрешить уведомления',
+        disabled: state.busy, onclick: enablePush,
+      }));
+    }
+
+    const leads = h('div.wwrap');
+    add(leads, ...[[0, 'вовремя'], [5, 'за 5 мин'], [10, 'за 10 мин'], [15, 'за 15 мин'], [30, 'за 30 мин']]
+      .map(([v, label]) => sheetChip(label, (cfg.notifyDefaultBeforeMin ?? 10) === v,
+        () => act(data.saveNotify({ notifyDefaultBeforeMin: v })))));
+
+    const enabled = cfg.notifyEnabled !== false;
+    const master = h('button.wrow-sw', {
+      type: 'button',
+      onclick: () => act(data.saveNotify({ notifyEnabled: !enabled })),
+    });
+    add(master,
+      h('div.wrow-sw-body',
+        h('div.wrow-sw-title', { text: 'Напоминания включены' }),
+        h('div.wrow-sw-hint', { text: 'выключатель снимает всё запланированное; колокольчики на строках остаются' })),
+      sw(enabled));
+
+    // Тихие часы: два поля и один выключатель. Промежуток может проходить
+    // через полночь — 23:00–07:00 сервер понимает как два отрезка
+    const from = h('input.winput', {
+      value: quietOn ? hhmm(cfg.quietFrom) : state.quietFrom,
+      'aria-label': 'Тихие часы с', style: { textAlign: 'center' },
+      oninput: e => { state.quietFrom = e.target.value; },
+    });
+    const to = h('input.winput', {
+      value: quietOn ? hhmm(cfg.quietTo) : state.quietTo,
+      'aria-label': 'Тихие часы до', style: { textAlign: 'center' },
+      oninput: e => { state.quietTo = e.target.value; },
+    });
+    const quiet = h('div',
+      h('div.wfield-label', { text: 'тихие часы' }),
+      h('div.wrow',
+        from, h('span.whint', { text: '—' }), to,
+        h('button.wbtn-quiet', {
+          type: 'button', text: quietOn ? 'Выключить' : 'Включить', disabled: state.busy,
+          onclick: () => {
+            if (quietOn) return act(data.saveNotify({ quietFrom: null, quietTo: null }));
+            const a = parseHhmm(from.value);
+            const b = parseHhmm(to.value);
+            if (a === null || b === null) { note('Время пишется как 23:00'); return undefined; }
+            return act(data.saveNotify({ quietFrom: a, quietTo: b }));
+          },
+        })),
+      h('div.whint', { text: quietOn ? 'В этот промежуток уведомления не приходят.' : 'Пока выключены: уведомления приходят в любое время.', style: { marginTop: '8px' } }));
+
+    const pending = st.pending ?? [];
+    const soon = pending.length
+      ? h('div',
+        h('div.wfield-label', { text: `ближайшие · ${pending.length}` }),
+        h('div.wstack-tight', ...pending.slice(0, 5).map(p => h('div.wsheet-row',
+          h('span.wlead', { text: new Date(p.fireAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) }),
+          h('span.wtitle', { text: p.payload?.body ?? '' })))))
+      : h('div.whint', { text: 'Пока ничего не запланировано: поставьте колокольчик на строке расписания.' });
+
+    return h('div.wstack',
+      head, actions,
+      h('div', h('div.wfield-label', { text: 'предупреждать по умолчанию' }), leads,
+        h('div.whint', { text: 'у отдельной строки может быть своё время', style: { marginTop: '8px' } })),
+      h('div.wpanel-list', { style: { padding: '0' } }, master),
+      quiet, soon,
       h('button.wbtn-wide', { type: 'button', text: 'Готово', onclick: closeModal }));
   },
 
@@ -1575,21 +1809,109 @@ const BODIES = {
 
   // ── Общее расписание ──
   template() {
+    const rows = state.tplRows ?? [];
+
     const list = h('div.wstack-tight');
-    add(list, ...SCHEDULE.slice(0, 6).map(r => {
-      const row = h('button.wsheet-row', { type: 'button', onclick: () => openRow(r.id) });
+    add(list, ...rows.map((r, i) => {
+      const row = h('button.wsheet-row', { type: 'button', onclick: () => openTplRow(i) });
       add(row, ico('dots-six-vertical', '16px', 'wgrab'),
-        h('span.wlead', { text: hhmm(r.start) }),
+        h('span.wlead', { text: r.end === null ? hhmm(r.start) : `${hhmm(r.start)}–${hhmm(r.end)}` }),
         h('span.wtitle', { text: r.title }),
+        r.alarm === 'off' ? null : ico(bellOf(r.alarm).icon, '16px', 'wbell'),
         ico('caret-right', '14px', 'wchev'));
       return row;
     }));
-    const addRow = h('button.wbtn-dashed', { type: 'button' });
+
+    const addRow = h('button.wbtn-dashed', { type: 'button', onclick: () => openTplRow('new') });
     add(addRow, ico('plus', '15px'), h('span', { text: 'Строка шаблона' }));
+
+    // Шаблон почти всегда собирают не с нуля, а из дня, который получился
+    const fromDay = h('button.wbtn-dashed', {
+      type: 'button', disabled: state.busy || !SCHEDULE.length,
+      onclick: () => saveTemplate(SCHEDULE.map(r => ({
+        start: r.start, end: r.end, title: r.title, alarm: r.alarm, leads: r.leads,
+      })), 'Шаблон собран из этого дня'),
+    });
+    add(fromDay, ico('list-dashes', '15px'), h('span', { text: 'Взять из этого дня' }));
+
     return h('div.wstack-tight',
-      h('div.whint', { text: 'Шаблон без дат. Новые дни заполняются им, если ничего не запланировано.', style: { marginBottom: '4px' } }),
-      list, addRow,
-      h('button.wbtn-wide', { type: 'button', text: 'Готово', onclick: closeModal }));
+      h('div.whint', {
+        text: 'Шаблон без дат: набор строк, которым можно заполнить любой день. Сам он ничего не делает — день заполняется кнопкой ниже.',
+        style: { marginBottom: '4px' },
+      }),
+      rows.length ? list : h('div.whint', { text: 'Пока пусто.' }),
+      h('div.wrow', { style: { marginTop: '6px' } }, addRow, fromDay),
+      h('button.wbtn-wide', {
+        type: 'button',
+        text: state.busy ? 'Работаю…' : `Добавить в ${state.date === todayKey() ? 'сегодняшний день' : 'выбранный день'}`,
+        disabled: state.busy || !rows.length,
+        onclick: () => act(
+          data.applyTemplate(state.date).then(reload),
+          `Строк добавлено: ${rows.length}`,
+        ),
+      }));
+  },
+
+  // ── Строка шаблона ──
+  tplRow() {
+    const rs = state.tplStart ?? 420;
+    const re = state.tplEnd ?? rs + 60;
+    const dur = Math.max(5, re - rs);
+    const field = state.tplField;
+    const target = field === 'end' ? re : rs;
+
+    const tiles = h('div.wgrid3');
+    add(tiles, ...[
+      ['start', 'начало', hhmm(rs)],
+      ['dur', 'длится', hhmm(dur)],
+      ['end', 'конец', hhmm(re)],
+    ].map(([k, label, value]) => {
+      const tile = h('div.wtile', { class: field === k ? 'on' : '', onclick: () => set({ tplField: k }) });
+      add(tile, h('span.wtile-cap', { text: label }), h('input', { value, readOnly: true }));
+      return tile;
+    }));
+
+    const setHour = hv => {
+      const mins = target % 60;
+      if (field === 'end') set({ tplEnd: hv * 60 + mins });
+      else set({ tplStart: hv * 60 + mins, tplEnd: hv * 60 + mins + dur });
+    };
+    const setMin = mv => {
+      const hv = Math.floor(target / 60);
+      if (field === 'end') set({ tplEnd: hv * 60 + mv });
+      else set({ tplStart: hv * 60 + mv, tplEnd: hv * 60 + mv + dur });
+    };
+
+    const leads = h('div.wwrap');
+    add(leads, ...LEADS.map(l => sheetChip(l.label, state.tplLead === l.k, () => set({ tplLead: l.k }))));
+
+    const modes = h('div.wgrid2');
+    add(modes, ...ALARM.map(a => opt(a.label, a.icon, state.tplAlarm === a.k, () => set({ tplAlarm: a.k }))));
+
+    return h('div.wstack',
+      h('label', h('span.wfield-label', { text: 'что делаем' }),
+        h('input.winput', {
+          value: state.tplTitle,
+          placeholder: 'Например, подъём',
+          oninput: e => { state.tplTitle = e.target.value; },
+        })),
+      tiles,
+      h('div.wclock',
+        h('div.wclock-cap', { text: 'можно выбрать час' }),
+        clockGrid(24, 1, target, setHour),
+        h('div.wclock-cap', { text: 'минуты', style: { margin: '12px 0 9px' } }),
+        clockGrid(12, 5, target, setMin)),
+      h('div', h('div.wfield-label', { text: 'предупредить' }), leads),
+      h('div', h('div.wfield-label', { text: 'чем предупредить' }), modes),
+      h('div.wrow-end',
+        h('button.wbtn-quiet', {
+          type: 'button', text: state.tplEdit === 'new' ? 'Отмена' : 'Удалить',
+          disabled: state.busy, onclick: removeTplRow,
+        }),
+        h('button.wbtn-wide', {
+          type: 'button', text: state.busy ? 'Сохраняю…' : 'Готово',
+          disabled: state.busy, onclick: saveTplRow,
+        })));
   },
 
   // ── Печать ──
@@ -1668,6 +1990,38 @@ async function downloadExport(kind) {
     state.busy = false;
     fail(e);
   }
+}
+
+// ── Уведомления ──────────────────────────────────────────────
+
+/** «23:00», «23.00», «2300» — всё это время. Иначе null. */
+function parseHhmm(text) {
+  const m = /^(\d{1,2})[:. ]?(\d{2})$/.exec(String(text).trim());
+  if (!m) return null;
+  const hours = Number(m[1]);
+  const mins = Number(m[2]);
+  if (hours > 23 || mins > 59) return null;
+  return hours * 60 + mins;
+}
+
+/**
+ * Разрешение спрашиваем только по нажатию: браузеры наказывают за вопрос
+ * при загрузке, а человек, не понявший, зачем его спросили, жмёт
+ * «Блокировать» — и это навсегда.
+ */
+function enablePush() {
+  const why = {
+    UNSUPPORTED: 'Этот браузер не умеет уведомления',
+    SERVER_DISABLED: 'На сервере не настроены VAPID-ключи',
+    DENIED: 'Разрешение не выдано. Вернуть его можно в настройках сайта в браузере',
+  };
+  return act(
+    push.enable().then(async res => {
+      if (!res.ok) throw new Error(why[res.reason] ?? 'Не получилось включить уведомления');
+      await data.loadPush();
+    }),
+    'Уведомления включены в этом браузере',
+  );
 }
 
 const authHeader = () => {

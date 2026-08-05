@@ -163,6 +163,22 @@ export const tasks = entity('tasks');
 export const meals = entity('meals');
 export const sport = entity('sport');
 
+// ── Повторы и шаблоны ────────────────────────────────────────
+/*
+ * Одна таблица, два смысла: правило без имени — повтор, он сам достраивает
+ * дни; правило с именем — шаблон, он применяется вручную. Разделяет их
+ * `?templates=1`, поэтому список шаблонов и список повторов не смешиваются.
+ */
+export const series = {
+  list:      ({ templates = null } = {}) =>
+    GET(`/series${templates === null ? '' : `?templates=${templates ? 1 : 0}`}`),
+  create:    data       => POST('/series', data),
+  update:    (id, data) => PATCH(`/series/${id}`, data),
+  remove:    id         => DELETE(`/series/${id}`),
+  endFrom:   (id, date) => DELETE(`/series/${id}?from=${date}`),
+  applyTo:   (id, date) => POST(`/series/${id}/apply`, { date }),
+};
+
 // ── Привычки ─────────────────────────────────────────────────
 export const habits = {
   list:    (archived = false) => GET(`/habits${archived ? '?archived=1' : ''}`),

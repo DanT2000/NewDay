@@ -45,6 +45,8 @@ export const store = {
   range: null,        // { from, to, days: [...] } — для сетки недели и месяца
   habits: [],
   notes: [],
+  template: null,     // именованное правило-шаблон, применяется вручную
+  push: null,         // подписка браузера на уведомления и её настройки
   ai: { ready: false, voice: false },
   error: null,
 };
@@ -93,6 +95,64 @@ export async function loadNotes() {
   const rows = await api.GET('/notes');
   store.notes = Array.isArray(rows) ? rows : (rows.days ?? []);
   return store.notes;
+}
+
+// ── Шаблон дня ───────────────────────────────────────────────
+
+/*
+ * Шаблон — это правило с именем. Повтор сам достраивает дни, шаблон ждёт
+ * нажатия: набор строк, которым можно заполнить любой день. Имя одно, и
+ * шаблон в веб-версии тоже один — «общее расписание» человек держит в
+ * голове в единственном числе.
+ */
+export const TEMPLATE_NAME = 'Общее расписание';
+
+export async function loadTemplate() {
+  const rows = await api.series.list({ templates: true });
+  const list = Array.isArray(rows) ? rows : [];
+  store.template = list.find(r => r.name === TEMPLATE_NAME) ?? list[0] ?? null;
+  return store.template;
+}
+
+/** Сохраняем целиком: правка строки — это новая версия всего набора. */
+export async function saveTemplate(rows) {
+  if (!rows.length) return removeTemplate();
+  const body = { name: TEMPLATE_NAME, target: 'schedule', rows, forceRows: true };
+  store.template = store.template
+    ? await api.series.update(store.template.id, body)
+    : await api.series.create(body);
+  return store.template;
+}
+
+export async function removeTemplate() {
+  if (!store.template) return null;
+  await api.series.remove(store.template.id);
+  store.template = null;
+  return null;
+}
+
+/** Кладёт строки шаблона в день. Сервер добавляет, а не замещает. */
+export async function applyTemplate(date) {
+  if (!store.template) throw new Error('Шаблон ещё не создан');
+  return api.series.applyTo(store.template.id, date);
+}
+
+// ── Уведомления в браузере ───────────────────────────────────
+
+export async function loadPush() {
+  store.push = await api.GET('/push/status').catch(() => null);
+  return store.push;
+}
+
+/**
+ * Настройки уведомлений лежат в общем блоке настроек, но после их правки
+ * очередь надо пересчитать: иначе «за 30 минут» начнёт действовать только
+ * с завтрашнего дня.
+ */
+export async function saveNotify(patch) {
+  await api.saveSettings({ settings: patch });
+  await api.POST('/push/replan').catch(() => {});
+  return loadPush();
 }
 
 // ── Правки ───────────────────────────────────────────────────

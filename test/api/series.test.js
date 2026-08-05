@@ -175,6 +175,91 @@ test('шаблон применяется вручную и не появляе�
   } finally { await s.close(); }
 });
 
+/*
+ * Шаблон дня в веб-версии: один именованный набор строк, который пишется
+ * целиком при каждой правке. Проверяем ровно то, на что она опирается.
+ */
+const template = (extra = {}) => ({
+  name: 'Общее расписание', target: 'schedule', forceRows: true,
+  rows: [{ startMin: 420, endMin: 450, title: 'Подъём', alarmMode: 'alarm', alarmProfile: 'wakeup' }],
+  ...extra,
+});
+
+test('шаблоны и повторы в списке не смешиваются', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/series', daily());
+    await api(s.url, s.cookie, 'POST', '/api/v1/series', template());
+
+    const templates = await getJson(s.url, s.cookie, '/api/v1/series?templates=1');
+    const repeats = await getJson(s.url, s.cookie, '/api/v1/series?templates=0');
+
+    assert.deepStrictEqual(templates.map(r => r.name), ['Общее расписание']);
+    assert.deepStrictEqual(repeats.map(r => r.name), [null]);
+  } finally { await s.close(); }
+});
+
+test('правка шаблона заменяет набор строк, а не дописывает', async () => {
+  const s = await loggedIn();
+  try {
+    const tpl = await api(s.url, s.cookie, 'POST', '/api/v1/series', template());
+    await api(s.url, s.cookie, 'PATCH', `/api/v1/series/${tpl.id}`, template({
+      rows: [
+        { startMin: 420, endMin: 450, title: 'Подъём' },
+        { startMin: 540, endMin: 780, title: 'Работа' },
+      ],
+    }));
+
+    await api(s.url, s.cookie, 'POST', `/api/v1/series/${tpl.id}/apply`, { date: '2026-08-12' });
+    const day = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-12/full');
+    assert.deepStrictEqual(day.schedule.map(r => r.title), ['Подъём', 'Работа']);
+  } finally { await s.close(); }
+});
+
+test('шаблон из одной строки остаётся шаблоном, а не повтором', async () => {
+  const s = await loggedIn();
+  try {
+    const tpl = await api(s.url, s.cookie, 'POST', '/api/v1/series', template());
+    // Одна строка без forceRows легла бы в payload как повтор — а веб-версия
+    // всегда шлёт набор, и разбирать его должно одинаково
+    assert.deepStrictEqual(JSON.parse(tpl.payload_json).rows.length, 1);
+
+    const day = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-12/full');
+    assert.strictEqual(day.schedule.length, 0, 'шаблон сам не появляется');
+
+    await api(s.url, s.cookie, 'POST', `/api/v1/series/${tpl.id}/apply`, { date: '2026-08-12' });
+    const after = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-12/full');
+    assert.deepStrictEqual(after.schedule.map(r => r.title), ['Подъём']);
+    assert.strictEqual(after.schedule[0].alarm_mode, 'alarm');
+  } finally { await s.close(); }
+});
+
+test('шаблон добавляет строки к тем, что в дне уже есть', async () => {
+  const s = await loggedIn();
+  try {
+    const tpl = await api(s.url, s.cookie, 'POST', '/api/v1/series', template());
+    await api(s.url, s.cookie, 'POST', '/api/v1/days/2026-08-13/schedule', { title: 'Своё дело', startMin: 600 });
+    await api(s.url, s.cookie, 'POST', `/api/v1/series/${tpl.id}/apply`, { date: '2026-08-13' });
+
+    const day = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-13/full');
+    // Кнопка так и называется — «Добавить в день»; своё дело не пропало
+    assert.deepStrictEqual(day.schedule.map(r => r.title).sort(), ['Подъём', 'Своё дело']);
+  } finally { await s.close(); }
+});
+
+test('удаление шаблона не трогает дни, куда его уже положили', async () => {
+  const s = await loggedIn();
+  try {
+    const tpl = await api(s.url, s.cookie, 'POST', '/api/v1/series', template());
+    await api(s.url, s.cookie, 'POST', `/api/v1/series/${tpl.id}/apply`, { date: '2026-08-14' });
+    await api(s.url, s.cookie, 'DELETE', `/api/v1/series/${tpl.id}`);
+
+    const day = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-14/full');
+    assert.deepStrictEqual(day.schedule.map(r => r.title), ['Подъём']);
+    assert.deepStrictEqual(await getJson(s.url, s.cookie, '/api/v1/series?templates=1'), []);
+  } finally { await s.close(); }
+});
+
 test('повтор без даты начала отвергается', async () => {
   const s = await loggedIn();
   try {

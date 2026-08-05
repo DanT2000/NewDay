@@ -21,6 +21,13 @@
 </head>
 <body>
   <div class="wroot" id="wapp" data-theme="dark"></div>
+  <script>
+    // Без него не будет уведомлений: подписка живёт в service worker, и
+    // `serviceWorker.ready` не разрешится, пока его никто не зарегистрировал
+    if ('serviceWorker' in navigator) {
+      addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js').catch(() => {}));
+    }
+  </script>
   <script type="module" src="/js/web/app.js"></script>
 </body>
 </html>

@@ -199,6 +199,36 @@ export const rowToServer = ({ title, start, end, alarm, lead }) => ({
   remindBeforeMin: LEAD_MIN[lead ?? 'at'] ?? 0,
 });
 
+/**
+ * Шаблон дня. Правило с именем хранит набор строк в `payload_json` теми же
+ * полями, что и строка расписания, — поэтому редактор строки подошёл без
+ * переделки, а `applyTemplate` на сервере кладёт их в день как есть.
+ */
+export function templateRows(rule) {
+  if (!rule) return [];
+  let payload;
+  try { payload = JSON.parse(rule.payload_json ?? '{}'); } catch { return []; }
+  const rows = Array.isArray(payload.rows) ? payload.rows : [payload];
+  return rows
+    .filter(r => r && typeof r === 'object')
+    .map(r => ({
+      start: r.startMin ?? 0,
+      end: r.endMin ?? null,
+      title: r.title || 'Без названия',
+      // В шаблоне поля camelCase, у строки дня — snake_case; переводим
+      // в общий вид, чтобы обе читались одним кодом
+      alarm: alarmOf({ alarm_mode: r.alarmMode, alarm_profile: r.alarmProfile }),
+      leads: leadsOf({ remind_before_min: r.remindBeforeMin }),
+    }))
+    .sort((a, b) => a.start - b.start);
+}
+
+/** Обратно: то, что уходит в `POST /series` и `PATCH /series/:id`. */
+export const templateToServer = rows => rows.map(r => rowToServer({
+  title: r.title, start: r.start, end: r.end,
+  alarm: r.alarm, lead: (r.leads ?? ['at'])[0],
+}));
+
 export const taskToServer = ({ title, cat }) => ({
   text: String(title ?? '').trim(),
   bucket: cat === 'work' ? 'work' : 'home',

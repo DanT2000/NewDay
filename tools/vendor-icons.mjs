@@ -94,7 +94,7 @@ export function icon(name, { size = '1em', label = null, cls = '' } = {}) {
   if (label) { svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', label); }
   else svg.setAttribute('aria-hidden', 'true');
   svg.style.flex = 'none';
-  svg.innerHTML = ICONS[name] ?? ICONS.circle ?? '';
+  svg.innerHTML = ICONS[name] ?? ICONS['circle-fill'] ?? '';
   return svg;
 }
 `;

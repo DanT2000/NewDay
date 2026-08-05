@@ -5,8 +5,8 @@ const { inQuietHours } = require('../../server/services/notificationService');
 
 const VAPID = {
   // тестовая пара, наружу ничего не уходит: push.send в NODE_ENV=test не шлёт
-  VAPID_PUBLIC_KEY: 'BK4HJB_Mb9Uz9H66xlas5-RELrPKhXeVSSe9h9hz33S6VvVCEJ0j9nLPXt4H8pRZmqBl4uCq3iC7QZlYfHmMPBw',
-  VAPID_PRIVATE_KEY: 'Zx3nJ0KQ0uS1cQ8k9Yy0oJ1n2Z3a4B5c6D7e8F9g0hI',
+  VAPID_PUBLIC_KEY: 'BDA9gPQ1b8cc-SifnADg6vs4tOQKsLCY3uLNz4TSqAg4inEucDSqCRsuvuUXcFzx48kRzTp186D9l4OI0Al_fMU',
+  VAPID_PRIVATE_KEY: 'DmFl4f9dWbd9OgU9m0L6797qkFWYvBQ7DtiUPRgOOPY',
   VAPID_SUBJECT: 'mailto:test@example.com',
 };
 
@@ -175,6 +175,59 @@ test('таймзона пользователя влияет на момент �
     const status = await getJson(s.url, s.cookie, '/api/v1/push/status');
     const iso = new Date(status.pending[0].fireAt).toISOString();
     assert.strictEqual(iso.slice(11, 16), '03:00', '15:00 на Камчатке — это 03:00 UTC');
+  } finally { await s.close(); }
+});
+
+/*
+ * На это опирается шторка «Уведомления» в веб-версии: она рисует состояние
+ * из `settings`, а после правки зовёт `replan`. Без пересчёта новое «за
+ * сколько предупреждать» начало бы действовать только со следующего дня.
+ */
+test('статус несёт настройки уведомлений со значениями по умолчанию', async () => {
+  const s = await loggedIn(withPush());
+  try {
+    const status = await getJson(s.url, s.cookie, '/api/v1/push/status');
+    assert.deepStrictEqual(status.settings, {
+      notifyEnabled: true, notifyDefaultBeforeMin: 10, quietFrom: null, quietTo: null,
+    });
+  } finally { await s.close(); }
+});
+
+test('правка «предупреждать за» с пересчётом двигает уже запланированное', async () => {
+  const s = await loggedIn(withPush());
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/push/subscribe', { subscription: SUB });
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    // без своего remindBeforeMin строка берёт время из настроек
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/schedule`,
+      { time: '09:00-10:00', title: 'Совещание', alarmMode: 'notify' });
+
+    const before = await getJson(s.url, s.cookie, '/api/v1/push/status');
+    assert.strictEqual(new Date(before.pending[0].fireAt).toISOString(), `${tomorrow}T05:50:00.000Z`);
+
+    await api(s.url, s.cookie, 'PATCH', '/api/v1/settings', { settings: { notifyDefaultBeforeMin: 30 } });
+    await api(s.url, s.cookie, 'POST', '/api/v1/push/replan');
+
+    const after = await getJson(s.url, s.cookie, '/api/v1/push/status');
+    assert.strictEqual(after.settings.notifyDefaultBeforeMin, 30);
+    assert.strictEqual(after.pending.length, 1, 'дубля нет');
+    assert.strictEqual(new Date(after.pending[0].fireAt).toISOString(), `${tomorrow}T05:30:00.000Z`);
+  } finally { await s.close(); }
+});
+
+test('тихие часы включаются и выключаются настройками', async () => {
+  const s = await loggedIn(withPush());
+  try {
+    await api(s.url, s.cookie, 'PATCH', '/api/v1/settings',
+      { settings: { quietFrom: 23 * 60, quietTo: 7 * 60 } });
+    let status = await getJson(s.url, s.cookie, '/api/v1/push/status');
+    assert.strictEqual(status.settings.quietFrom, 1380);
+    assert.strictEqual(status.settings.quietTo, 420);
+
+    await api(s.url, s.cookie, 'PATCH', '/api/v1/settings', { settings: { quietFrom: null, quietTo: null } });
+    status = await getJson(s.url, s.cookie, '/api/v1/push/status');
+    assert.strictEqual(status.settings.quietFrom, null, 'выключение возвращает «в любое время»');
+    assert.strictEqual(status.settings.quietTo, null);
   } finally { await s.close(); }
 });
 

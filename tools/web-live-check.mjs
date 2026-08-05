@@ -274,6 +274,138 @@ const roundtrip = await js(`(async () => {
 })()`, true);
 проба('загрузка своей же выгрузки проходит', roundtrip === true);
 
+// ── Шаблон дня ──
+/*
+ * База стенда живёт между прогонами, поэтому начинаем с чистого места:
+ * иначе вторая проверка считала бы строки, оставшиеся от первой.
+ */
+await js(`(async () => {
+  const list = await (await fetch('/api/v1/series?templates=1')).json();
+  for (const t of list) await fetch('/api/v1/series/' + t.id, { method: 'DELETE' });
+})()`, true);
+
+const свободный = '2026-08-20';
+const очиститьДень = () => js(`(async () => {
+  const day = await (await fetch('/api/v1/days/${свободный}/full')).json();
+  for (const r of day.schedule) await fetch('/api/v1/days/${свободный}/schedule/' + r.id, { method: 'DELETE' });
+})()`, true);
+await очиститьДень();
+
+await js(`document.querySelectorAll('.wnav-item')[4].click()`);
+await waitFor('Boolean(document.querySelector(".wsettings"))');
+await wait(700);
+
+const строкаНастроек = имя => js(`[...document.querySelectorAll('.wrow-link')]
+  .find(r => r.textContent.includes(${JSON.stringify(имя)}))?.querySelector('.wrow-link-val')?.textContent`);
+
+проба('в настройках честно сказано, что шаблона нет',
+  (await строкаНастроек('Общее расписание')) === 'не создан', await строкаНастроек('Общее расписание'));
+
+await js(`[...document.querySelectorAll('.wrow-link')].find(r => r.textContent.includes('Общее расписание')).click()`);
+проба('шторка шаблона открылась',
+  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Общее расписание'`));
+await wait(600);
+
+await js(`[...document.querySelectorAll('.wmodal .wbtn-dashed')].find(b => b.textContent.includes('Взять из этого дня')).click()`);
+проба('шаблон собрался из дня', await waitFor(`document.querySelectorAll('.wmodal .wsheet-row').length >= 8`),
+  `${await js(`document.querySelectorAll('.wmodal .wsheet-row').length`)} строк`);
+
+const шаблон = () => js(`fetch('/api/v1/series?templates=1').then(r=>r.json())
+  .then(l => l.map(t => ({ name: t.name, rows: JSON.parse(t.payload_json).rows?.length ?? 1 })))`, true);
+проба('шаблон сохранён на сервере набором строк',
+  (await шаблон()).length === 1 && (await шаблон())[0].rows === 8, JSON.stringify(await шаблон()));
+
+// Правка строки шаблона: открыть, переименовать, сохранить
+await js(`document.querySelectorAll('.wmodal .wsheet-row')[0].click()`);
+проба('строка шаблона открылась', await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Строка шаблона'`));
+await js(`(() => {
+  const i = document.querySelector('.wmodal .winput');
+  i.value = 'Ранний подъём';
+  i.dispatchEvent(new Event('input', { bubbles: true }));
+})()`);
+await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
+проба('после сохранения вернулись к списку шаблона',
+  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Общее расписание'`));
+await wait(500);
+
+const названия = await js(`fetch('/api/v1/series?templates=1').then(r=>r.json())
+  .then(l => JSON.parse(l[0].payload_json).rows.map(r => r.title))`, true);
+проба('правка строки ушла на сервер', названия.includes('Ранний подъём'), названия.slice(0, 3).join(', '));
+проба('правка не размножила строки', названия.length === 8, `${названия.length} строк`);
+
+// Пустая строка не сохраняется, и человеку об этом говорят
+await js(`[...document.querySelectorAll('.wmodal .wbtn-dashed')].find(b => b.textContent.includes('Строка шаблона')).click()`);
+await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Строка шаблона'`);
+await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
+await wait(400);
+проба('строка без названия не сохраняется молча',
+  (await js(`document.querySelector('.wmodal .wnotice')?.textContent`)) === 'Впишите, что делаем',
+  await js(`document.querySelector('.wmodal .wnotice')?.textContent ?? 'нет сообщения'`));
+await js(`document.querySelector('.wmodal .wbtn-quiet').click()`);
+await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Общее расписание'`);
+
+// Применение к дню: уходим на свободную дату и заполняем её шаблоном
+await js(`document.querySelector('.wmodal-x').click()`);
+await waitFor('!document.querySelector(".wveil")');
+await js(`(() => {
+  const i = document.querySelector('.wtop-pick input');
+  i.value = '${свободный}';
+  i.dispatchEvent(new Event('change', { bubbles: true }));
+})()`);
+проба('кнопка выбора даты переводит день',
+  await waitFor(`document.querySelector('.wtop-num')?.textContent === '20 августа'`),
+  await js(`document.querySelector('.wtop-num')?.textContent`));
+await wait(600);
+
+await js(`[...document.querySelectorAll('.wrow-link')].find(r => r.textContent.includes('Общее расписание')).click()`);
+await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Общее расписание'`);
+await wait(500);
+проба('в настройках видно, сколько строк в шаблоне',
+  (await строкаНастроек('Общее расписание')) === '8 строк', await строкаНастроек('Общее расписание'));
+
+await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
+await wait(1200);
+const вДне = await js(`fetch('/api/v1/days/${свободный}/full').then(r=>r.json()).then(d => d.schedule.map(r => r.title))`, true);
+проба('шаблон заполнил выбранный день', вДне.length === 8, `${вДне.length} строк: ${вДне.slice(0, 2).join(', ')}`);
+проба('переименованная строка пришла из шаблона', вДне.includes('Ранний подъём'));
+
+await очиститьДень();
+await js(`(async () => {
+  const list = await (await fetch('/api/v1/series?templates=1')).json();
+  for (const t of list) await fetch('/api/v1/series/' + t.id, { method: 'DELETE' });
+})()`, true);
+
+// ── Уведомления ──
+await js(`document.querySelector('.wmodal-x')?.click()`);
+await waitFor('!document.querySelector(".wveil")');
+await js(`[...document.querySelectorAll('.wrow-link')].find(r => r.textContent.includes('Уведомления')).click()`);
+проба('шторка уведомлений открылась',
+  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Уведомления'`));
+await wait(700);
+
+проба('ключи стенда подхвачены, а не «не настроены»',
+  !(await js(`document.querySelector('.wmodal').textContent.includes('не заданы VAPID')`)));
+
+const настройки = () => js(`fetch('/api/v1/push/status').then(r=>r.json()).then(s => s.settings)`, true);
+await js(`[...document.querySelectorAll('.wmodal .wchip-sheet')].find(c => c.textContent === 'за 30 мин').click()`);
+await wait(1200);
+проба('«предупреждать за» сохраняется', (await настройки()).notifyDefaultBeforeMin === 30,
+  String((await настройки()).notifyDefaultBeforeMin));
+
+await js(`[...document.querySelectorAll('.wmodal .wbtn-quiet')].find(b => b.textContent === 'Включить').click()`);
+await wait(1200);
+const тихие = await настройки();
+проба('тихие часы включаются', тихие.quietFrom === 1380 && тихие.quietTo === 420,
+  `${тихие.quietFrom}–${тихие.quietTo}`);
+
+await js(`[...document.querySelectorAll('.wmodal .wbtn-quiet')].find(b => b.textContent === 'Выключить').click()`);
+await wait(1200);
+проба('тихие часы выключаются', (await настройки()).quietFrom === null);
+
+// возвращаем стенд к значению по умолчанию, чтобы прогон был повторяемым
+await js(`fetch('/api/v1/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ settings: { notifyDefaultBeforeMin: 10 } }) }).then(r => r.ok)`, true);
+
 console.log('\n── Итог ──');
 const плохо = пробы.filter(([, ok]) => !ok).length;
 console.log(`${пробы.length - плохо} из ${пробы.length}`);

@@ -79,7 +79,7 @@ function createApp({ db, config, fetchImpl, env = process.env }) {
   const ai = aiService(db, { env, fetchImpl });
   app.locals.ai = ai;
 
-  app.use('/api/health', healthRouter(db, { ai }));
+  app.use('/api/health', healthRouter(db, { ai, push }));
   // Спецификация и документация доступны без входа
   app.use('/api/v1', openapiRouter({ config }));
   app.get('/api/docs', (_req, res) => res.sendFile(path.join(__dirname, '../public/api-docs.html')));

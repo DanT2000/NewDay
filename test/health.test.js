@@ -54,3 +54,36 @@ test('без подключения помощника признак говор
     await srv.close();
   }
 });
+
+/*
+ * То же и про уведомления: без VAPID-ключей они не работают, а узнать об
+ * этом иначе можно только войдя в настройки — то есть уже после того, как
+ * человек не дождался напоминания.
+ */
+test('в /api/health виден признак уведомлений, но не ключи', async () => {
+  const секрет = 'Zx3nJ0KQ0uS1cQ8k9Yy0oJ1n2Z3a4B5c6D7e8F9g0hI';
+  const srv = await startTestServer({
+    env: {
+      VAPID_PUBLIC_KEY: 'BK4HJB_Mb9Uz9H66xlas5-RELrPKhXeVSSe9h9hz33S6VvVCEJ0j9nLPXt4H8pRZmqBl4uCq3iC7QZlYfHmMPBw',
+      VAPID_PRIVATE_KEY: секрет,
+      VAPID_SUBJECT: 'mailto:test@example.com',
+    },
+  });
+  try {
+    const body = await (await fetch(`${srv.url}/api/health`)).json();
+    assert.deepStrictEqual(body.push, { enabled: true });
+    assert.ok(!JSON.stringify(body).includes(секрет), 'закрытый ключ наружу не отдаём');
+  } finally {
+    await srv.close();
+  }
+});
+
+test('без VAPID-ключей признак уведомлений честно выключен', async () => {
+  const srv = await startTestServer();
+  try {
+    const body = await (await fetch(`${srv.url}/api/health`)).json();
+    assert.deepStrictEqual(body.push, { enabled: false });
+  } finally {
+    await srv.close();
+  }
+});

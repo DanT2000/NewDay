@@ -149,6 +149,16 @@
 }
 .wsq:hover { color: var(--text); }
 
+/*
+ * Выбор даты: родное поле лежит поверх кнопки прозрачным, чтобы календарь
+ * браузера открывался там же, где нажали, а видна была своя иконка.
+ */
+.wtop-pick { position: relative; display: inline-flex; }
+.wtop-pick input {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; pointer-events: none; border: 0; padding: 0;
+}
+
 .wdays { flex: 1; min-width: 0; display: flex; gap: 4px; justify-content: center; }
 .wday {
   display: flex; flex-direction: column; align-items: center;
@@ -182,6 +192,14 @@
   color: var(--dim); font: 500 13px/1 var(--ui); cursor: pointer;
 }
 .wbtn-ghost:hover { color: var(--text); border-color: var(--accent); }
+
+/*
+ * Недоступная кнопка должна выглядеть недоступной. Иначе «Готово», пока
+ * запрос в пути, ничем не отличается от рабочей, нажатие ничего не делает,
+ * и это читается как поломка приложения.
+ */
+.wroot button:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+.wroot button:disabled:hover { filter: none; }
 
 /* Главная кнопка шторки: 56 px и тень акцентом — так в эталоне */
 .wbtn-wide {
