@@ -6,16 +6,22 @@
  * сказать, что связи нет.
  */
 
-const VERSION = 'newday-v3';
+const VERSION = 'newday-v4';
 const SHELL = [
-  '/app.html', '/habits.html', '/stats.html', '/settings.html',
+  '/now.html', '/app.html', '/habits.html', '/stats.html', '/settings.html',
   '/login.html', '/register.html', '/index.html', '/install.html',
-  '/css/tokens.css', '/css/base.css', '/css/components.css', '/css/print.css',
-  '/js/main.js', '/js/habits.js', '/js/stats.js', '/js/settings.js',
+  '/css/fonts.css', '/css/tokens.css', '/css/base.css', '/css/components.css',
+  '/css/shell.css', '/css/print.css',
+  // Шрифт вшит в проект: без него интерфейс поедет системным
+  '/fonts/inter-cyrillic-71d5ee93.woff2', '/fonts/inter-latin-3100e775.woff2',
+  '/js/boot-theme.js', '/js/shell.js', '/js/vendor/icons.js',
+  '/js/now.js', '/js/main.js', '/js/habits.js', '/js/stats.js', '/js/settings.js',
   '/js/api.js', '/js/store.js', '/js/dates.js', '/js/dom.js',
   '/js/theme.js', '/js/toast.js', '/js/emoji.js', '/js/emoji-data.json', '/js/qr.js',
+  '/js/update.js', '/js/install-banner.js', '/js/native.js',
   '/js/vendor/qrcode.js',
-  '/js/components/drag.js', '/js/components/sheet.js', '/js/push.js',
+  '/js/components/drag.js', '/js/components/sheet.js', '/js/components/calendar.js',
+  '/js/components/timepicker.js', '/js/push.js',
   '/js/views/schedule.js', '/js/views/schedule-timeline.js', '/js/views/schedule-actions.js',
   '/js/views/lists.js', '/js/views/progress.js', '/js/views/habits-today.js',
   '/js/views/datestrip.js', '/js/views/print.js',

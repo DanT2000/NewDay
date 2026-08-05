@@ -5,18 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Вход — NewDay</title>
   <link rel="manifest" href="/manifest.webmanifest">
-  <meta name="theme-color" content="#2E7BE4">
+  <meta name="theme-color" content="#f3f5fe">
+  <link rel="stylesheet" href="/css/fonts.css">
   <link rel="stylesheet" href="/css/tokens.css">
   <link rel="stylesheet" href="/css/base.css">
   <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/shell.css">
   <link rel="stylesheet" href="/css/auth.css">
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon.png">
   <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
-  <script>
-    try { var t = localStorage.getItem('newday.theme');
-      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
-  </script>
+  <script src="/js/boot-theme.js"></script>
 </head>
 <body class="auth-page">
   <div class="auth-card">
@@ -105,7 +104,7 @@
       if (res.ok) {
         // в приложении сессии нет — живём на токене устройства
         if (data.deviceToken) localStorage.setItem('newday.deviceToken', data.deviceToken);
-        window.location.replace('/app.html');
+        window.location.replace('/now.html');
       } else {
         // сервер отвечает { error: { code, message } }
         errEl.textContent = data.error?.message || data.error || 'Ошибка входа';

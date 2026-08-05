@@ -18,6 +18,7 @@ const statsRouter = require('./routes/v1/stats');
 const seriesRouter = require('./routes/v1/series');
 const pushRouter = require('./routes/v1/push');
 const settingsRouter = require('./routes/v1/settings');
+const notesRouter = require('./routes/v1/notes');
 const exportRouter = require('./routes/v1/export');
 const openapiRouter = require('./routes/v1/openapi');
 const appVersionRouter = require('./routes/v1/app');
@@ -112,6 +113,7 @@ function createApp({ db, config }) {
   app.use('/api/v1/series', seriesRouter({ db }));
   app.use('/api/v1/push', pushRouter({ db, push }));
 
+  app.use('/api/v1/notes', notesRouter({ db }));
   app.use('/api/v1/settings', settingsRouter({ db }));
   app.use('/api/v1', exportRouter({ db }));
 

@@ -2,7 +2,7 @@
   "name": "NewDay — планировщик дня и привычек",
   "short_name": "NewDay",
   "description": "Планирование дня, контроль привычек и статистика прогресса",
-  "start_url": "/app.html",
+  "start_url": "/now.html",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
@@ -16,7 +16,7 @@
     { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ],
   "shortcuts": [
-    { "name": "Сегодня", "url": "/app.html", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
-    { "name": "Привычки", "url": "/app.html#habits", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
+    { "name": "Сейчас", "url": "/now.html", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Привычки", "url": "/habits.html", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
   ]
 }

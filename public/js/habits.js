@@ -11,6 +11,7 @@ import './theme.js';
 import { h, clear, $, replace, add } from './dom.js';
 import * as api from './api.js';
 import { toast } from './toast.js';
+import { bottomNav } from './shell.js';
 import { openSheet, confirmSheet } from './components/sheet.js';
 import { emojiButton } from './emoji.js';
 import { cycleTheme, getTheme, THEME_ICON, THEME_LABEL } from './theme.js';
@@ -54,7 +55,8 @@ function layout() {
           onclick: e => { const n = cycleTheme(); e.currentTarget.textContent = THEME_ICON[n]; },
         }),
         h('a.btn.btn-sm', { href: '/app.html', text: '← К дню' }))),
-    body);
+    body,
+    bottomNav('habits'));
   return $('#habits-col');
 }
 

@@ -12,6 +12,7 @@ import { formatLong, addDays } from './dates.js';
 import { state, subscribe, emit, loadUser, loadDay, loadDaysIndex, today, optimistic, debounce } from './store.js';
 import * as api from './api.js';
 import { toast } from './toast.js';
+import { bottomNav } from './shell.js';
 import { cycleTheme, getTheme, THEME_ICON, THEME_LABEL } from './theme.js';
 import { renderDateStrip, attachSwipe } from './views/datestrip.js';
 import { renderSchedule } from './views/schedule.js';
@@ -105,7 +106,7 @@ function buildLayout() {
 
   els.printHead = h('div', { class: 'no-screen' });
   els.body = h('div.app-body', els.printHead, main, side);
-  replace(app, els.header, els.body);
+  replace(app, els.header, els.body, bottomNav('tasks'));
   attachSwipe(els.body, () => go(addDays(state.date, -1)), () => go(addDays(state.date, 1)));
 }
 

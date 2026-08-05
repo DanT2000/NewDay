@@ -9,6 +9,7 @@ import './theme.js';
 import { h, replace, add, $ } from './dom.js';
 import * as api from './api.js';
 import { toast } from './toast.js';
+import { bottomNav } from './shell.js';
 import { openSheet, confirmSheet } from './components/sheet.js';
 import { cycleTheme, getTheme, setTheme, THEME_ICON, THEME_LABEL } from './theme.js';
 import { qrSvg } from './qr.js';
@@ -43,7 +44,8 @@ function layout() {
         h('b', { text: 'NewDay' })),
       h('span.grow', h('span.eyebrow', { text: 'настройки' })),
       h('div.hdr-actions', h('a.btn.btn-sm', { href: '/app.html', text: '← К дню' }))),
-    body);
+    body,
+    bottomNav('settings'));
   return $('#settings-col');
 }
 

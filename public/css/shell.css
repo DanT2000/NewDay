@@ -1,0 +1,222 @@
+/* ============================================================
+   NewDay — каркас мобильного интерфейса по макету Nocturne.
+
+   Экран рассчитан на телефон: одна колонка, крупный текст,
+   всё редактирование — в нижних шторках. На широком экране
+   колонка ограничена по ширине и центрируется, а не растягивается:
+   строка длиной в монитор не читается.
+   ============================================================ */
+
+.screen {
+  display: flex; flex-direction: column; gap: var(--s-5);
+  width: 100%; max-width: 560px; margin: 0 auto;
+  padding: var(--s-1) var(--s-4) calc(var(--bottomnav-h) + var(--s-8));
+  box-sizing: border-box;
+}
+
+/* ── Верхняя полоса ─────────────────────────────────────────── */
+.topbar {
+  display: flex; align-items: center; gap: var(--s-2);
+  padding-top: var(--s-4);
+}
+.topbar-title {
+  flex: 1; min-width: 0; margin: 0;
+  font: var(--t-display); letter-spacing: var(--track-tight);
+}
+.topbar-actions { display: flex; align-items: center; gap: var(--s-2); flex: none; }
+
+/*
+ * Кнопка-иконка 38×38 в рамке. Не меньше: по иконке в 30 px пальцем
+ * не попасть — на это уже наступали в полоске дней.
+ */
+.roundbtn {
+  width: 38px; height: 38px; flex: none;
+  display: grid; place-items: center;
+  border: 1px solid var(--hairline); border-radius: var(--r-md);
+  background: transparent; color: var(--ink-2);
+  font-size: 17px; line-height: 1; cursor: pointer;
+  transition: color var(--dur-fast), background var(--dur-fast), border-color var(--dur-fast);
+}
+.roundbtn:hover { color: var(--ink); background: var(--surface-2); }
+.roundbtn:active { transform: translateY(1px); }
+.roundbtn.is-accent { border-color: var(--accent); color: var(--accent); }
+.roundbtn.is-accent:hover { background: var(--accent-soft); }
+
+/* ── Нижняя навигация ───────────────────────────────────────── */
+.tabbar {
+  position: fixed; z-index: 45; left: 0; right: 0; bottom: 0;
+  display: grid; grid-template-columns: repeat(5, 1fr);
+  padding: var(--s-2) var(--s-1) calc(var(--s-4) + env(safe-area-inset-bottom));
+  background: var(--bg);
+  box-shadow: 0 -1px 0 var(--hairline);
+}
+.tab-item {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: var(--s-2) 0; border-radius: var(--r-lg);
+  color: var(--ink-3); text-decoration: none;
+  font: 500 11px/1 var(--font-ui);
+}
+.tab-item.is-active { color: var(--accent); }
+/* Центральная вкладка выделена заливкой — это главный экран */
+.tab-item.is-center.is-active { background: var(--accent-soft); }
+.tab-item:not(.is-active):hover { color: var(--ink-2); }
+
+/* ── Крупные карточки ───────────────────────────────────────── */
+.bigcard {
+  position: relative; overflow: hidden;
+  border-radius: var(--r-card); padding: var(--s-5);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+/* Карточка «сейчас» подсвечена акцентом: единственное место на экране,
+   которое говорит о текущем моменте */
+.bigcard.is-now { box-shadow: inset 0 0 0 1px var(--accent-line); }
+.bigcard.is-now::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(120% 80% at 12% 0%, var(--accent-soft), transparent 62%);
+}
+.bigcard > * { position: relative; }
+
+.kicker {
+  display: flex; align-items: center; gap: 7px;
+  font: var(--t-section); letter-spacing: var(--track-caps);
+  text-transform: uppercase; color: var(--accent); white-space: nowrap;
+}
+/* Точка «идёт сейчас» дышит: движение отличает текущее от прошедшего
+   быстрее, чем цвет */
+.livedot {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--accent); animation: ndPulse 2.4s ease-in-out infinite;
+}
+@keyframes ndPulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+@media (prefers-reduced-motion: reduce) { .livedot { animation: none; } }
+
+.bigcard-title {
+  font: 500 30px/1.15 var(--font-ui); letter-spacing: -.025em;
+  margin-top: var(--s-3);
+}
+.bigcard-left { display: flex; align-items: baseline; gap: var(--s-2); margin-top: 15px; }
+.bigcard-left b { font: var(--t-num); font-weight: 500; }
+.bigcard-left span { font: var(--t-small); color: var(--ink-3); }
+
+.pbar { height: 5px; border-radius: 3px; background: var(--hairline); overflow: hidden; margin-top: 14px; }
+.pbar > i { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width var(--dur-slow) var(--ease); }
+
+/* ── Полоска недели ─────────────────────────────────────────── */
+.weekstrip { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.wday {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: var(--s-2) 2px; min-height: 60px;
+  border: 0; border-radius: var(--r-md); cursor: pointer;
+  background: transparent; color: var(--ink-3);
+}
+.wday .dow { font: 400 11px/1 var(--font-ui); letter-spacing: .06em; opacity: .8; }
+.wday .num { font: var(--t-num); font-weight: 500; }
+.wday:hover { background: var(--surface-2); color: var(--ink-2); }
+.wday.is-sel { background: var(--accent); color: var(--on-accent); }
+.wday.is-today .num { text-decoration: underline; text-underline-offset: 3px; }
+/* Точка снизу — в дне что-то есть */
+.wday .mark { width: 4px; height: 4px; border-radius: 50%; background: transparent; }
+.wday.has-data .mark { background: var(--accent); }
+.wday.is-sel.has-data .mark { background: var(--on-accent); }
+
+/* ── Мини-расписание: «было» и «дальше» ─────────────────────── */
+.miniline {
+  display: grid; grid-template-columns: 6.5ch minmax(0, 1fr) auto;
+  align-items: center; gap: var(--s-3);
+  padding: var(--s-3) 0;
+}
+.miniline + .miniline { border-top: 1px solid var(--hairline); }
+.miniline time { font: var(--t-time); color: var(--ink-3); }
+.miniline .t { font: var(--t-body-md); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.miniline.is-past { color: var(--ink-3); }
+.miniline.is-past .t { color: var(--ink-3); }
+
+/* ── Три плитки прогресса ───────────────────────────────────── */
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-2); }
+.tile {
+  display: flex; flex-direction: column; gap: 6px; min-width: 0;
+  padding: var(--s-3); border-radius: var(--r-md);
+  background: var(--surface); box-shadow: inset 0 0 0 1px var(--hairline);
+  text-align: left; border: 0; cursor: pointer; color: inherit;
+}
+.tile:hover { background: var(--surface-2); }
+.tile .cap {
+  font: var(--t-section); letter-spacing: var(--track-caps);
+  text-transform: uppercase; color: var(--ink-3);
+}
+.tile .val { font: 500 22px/1 var(--font-ui); letter-spacing: -.02em; }
+.tile .sub { font: var(--t-small); color: var(--ink-3); }
+
+/* ── Пустое состояние ───────────────────────────────────────── */
+.emptybox {
+  display: flex; flex-direction: column; align-items: center; gap: var(--s-2);
+  padding: var(--s-8) var(--s-4); text-align: center; color: var(--ink-3);
+}
+.emptybox p { margin: 0; font: var(--t-body); }
+
+/* ── Секция экрана ──────────────────────────────────────────── */
+.sect { display: flex; flex-direction: column; gap: var(--s-2); }
+.sect-hd {
+  display: flex; align-items: center; gap: var(--s-2);
+  padding: 0 2px;
+}
+.sect-hd .eyebrow { flex: 1 1 auto; }
+
+/* ── Главная кнопка шторки: во всю ширину, 52 px ────────────── */
+.btn-sheet {
+  width: 100%; height: var(--sheet-btn-h);
+  border: 0; border-radius: var(--r-md);
+  background: var(--accent); color: var(--on-accent);
+  font: var(--t-body-md); cursor: pointer;
+}
+.btn-sheet:hover { filter: brightness(1.06); }
+.btn-sheet:active { transform: translateY(1px); }
+
+@media (max-width: 380px) {
+  /* На узком экране трекинг подписей плиток съедал буквы */
+  .tile { padding: var(--s-2); }
+  .tile .cap { letter-spacing: .06em; }
+  .topbar-title { font-size: 24px; }
+  .bigcard-title { font-size: 26px; }
+  .tile .val { font-size: 19px; }
+}
+
+/* ── Календарь месяца ───────────────────────────────────────── */
+.cal { display: flex; flex-direction: column; gap: var(--s-3); }
+.cal-hd { display: flex; align-items: center; gap: var(--s-2); }
+.cal-title { flex: 1; font: var(--t-title); text-transform: capitalize; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.cal-dow {
+  font: var(--t-section); letter-spacing: var(--track-caps);
+  text-transform: uppercase; color: var(--ink-3);
+  text-align: center; padding-bottom: 2px;
+}
+.cal-day {
+  aspect-ratio: 1; min-height: 40px;
+  display: grid; place-items: center;
+  border: 0; border-radius: var(--r-md); cursor: pointer;
+  background: transparent; color: var(--ink);
+  font: var(--t-num); font-weight: 500;
+}
+.cal-day:hover { background: var(--surface-2); }
+.cal-day.is-today { text-decoration: underline; text-underline-offset: 3px; }
+.cal-day.is-sel { background: var(--accent); color: var(--on-accent); }
+
+/* ── Карточка заметки ───────────────────────────────────────── */
+.notecard {
+  display: block; width: 100%; text-align: left;
+  border: 0; border-radius: var(--r-md); cursor: pointer;
+  padding: var(--s-3) var(--s-4);
+  background: var(--surface); color: inherit;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+.notecard:hover { background: var(--surface-2); }
+.notecard-hd { display: flex; align-items: center; gap: var(--s-2); color: var(--ink-3); }
+.notecard-hd .eyebrow { flex: 1 1 auto; }
+/* Три строки: узнать заметку хватает, а список остаётся списком */
+.notecard-text {
+  margin: 6px 0 0; font: var(--t-body); color: var(--ink-2);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden;
+}

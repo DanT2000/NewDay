@@ -4,27 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Привычки — NewDay</title>
-  <meta name="theme-color" content="#ffffff">
+  <meta name="theme-color" content="#f3f5fe">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon.png">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/css/fonts.css">
   <link rel="stylesheet" href="/css/tokens.css">
   <link rel="stylesheet" href="/css/base.css">
   <link rel="stylesheet" href="/css/components.css">
-  <script>
-    try { var t = localStorage.getItem('newday.theme');
-      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) {}
-  </script>
+  <link rel="stylesheet" href="/css/shell.css">
+  <script src="/js/boot-theme.js"></script>
 </head>
 <body>
   <div class="app" id="app"></div>
-  <nav class="bottomnav" aria-label="Разделы">
-    <a class="bnav" href="/app.html"><span>◐</span>Сегодня</a>
-    <a class="bnav" href="/habits.html" aria-current="page"><span>✓</span>Привычки</a>
-    <a class="bnav" href="/stats.html"><span>▤</span>Итоги</a>
-    <a class="bnav" href="/settings.html"><span>⚙</span>Настройки</a>
-    <a class="bnav" href="/install.html"><span>⋯</span>Ещё</a>
-  </nav>
   <script type="module" src="/js/habits.js"></script>
   <script>
     if ('serviceWorker' in navigator) {

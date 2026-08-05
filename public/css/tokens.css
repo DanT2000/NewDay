@@ -1,163 +1,176 @@
 /* ============================================================
-   NewDay — дизайн-токены
+   NewDay — дизайн-токены. Основа — Nocturne из макета.
 
-   Правило: поверхности нейтральные, цвет только там, где он данные.
-   Кольца прогресса, точки стриков, маркер «сейчас» — цветные.
-   Всё остальное — оттенки серого.
+   Имена переменных остались прежними намеренно: значения меняются,
+   а вся существующая вёрстка продолжает работать без правок.
+
+   Цвет приложения (акцент) выбирается человеком из четырёх и
+   применяется ко всему: активная вкладка, чекбоксы, кольца, кнопки,
+   будильники. Текст на цветной заливке — всегда белый.
    ============================================================ */
 
 :root {
-  /* ── Поверхности ────────────────────────────────────────── */
-  --bg:            #f5f6f8;  /* фон страницы */
+  /* ── Поверхности. Светлая тема Nocturne ─────────────────── */
+  --bg:            #f3f5fe;  /* фон страницы */
   --surface:       #ffffff;  /* карточки */
-  --surface-2:     #f0f2f5;  /* вложенные блоки, ховер */
-  --surface-3:     #e6e9ee;  /* нажатое состояние */
-  --hairline:      #e2e5eb;  /* разделители */
-  --hairline-firm: #cdd3dd;  /* границы полей ввода */
+  --surface-2:     #e8ebf8;  /* вложенные блоки, ховер */
+  --surface-3:     #dbe0f2;  /* нажатое состояние */
+  --hairline:      rgba(41, 43, 49, .12);  /* разделители */
+  --hairline-firm: rgba(41, 43, 49, .22);  /* границы полей ввода */
 
   /* ── Текст ──────────────────────────────────────────────── */
-  --ink:        #141821;
-  --ink-2:      #4d5768;
-  --ink-3:      #79839a;
-  --ink-4:      #a3abbc;  /* прошедшее время, подсказки */
+  --ink:        #232530;
+  --ink-2:      #565b6e;
+  --ink-3:      #767b8d;
+  --ink-4:      #9aa0b2;  /* прошедшее время, подсказки */
   --ink-invert: #ffffff;
 
-  /* ── Данные. Пять секций дня + служебные ────────────────── */
-  --c-day:     #2e7be4;  /* общий прогресс, расписание */
+  /*
+   * Акцент. Значение подставляет theme.js по выбору человека;
+   * здесь — сиреневый по умолчанию, светлый вариант.
+   */
+  --accent:      #6a54e8;
+  --accent-soft: rgba(106, 84, 232, .16);
+  --accent-line: rgba(106, 84, 232, .34);
+  /* Текст на акцентной заливке белый в обеих темах: так в макете */
+  --on-accent:   #ffffff;
+
+  /* ── Данные ─────────────────────────────────────────────── */
+  /* Общий прогресс и расписание идут акцентом — цвет приложения */
+  --c-day:     var(--accent);
   --c-work:    #2e7be4;
   --c-home:    #16a394;
   --c-food:    #6f5df0;
   --c-sport:   #ef8b00;
-  --c-habits:  #d4409a;
-  --c-danger:  #d93a3f;  /* срыв, просрочено, удаление */
-  --c-success: #16a394;
-  --c-warn:    #ef8b00;
+  --c-habits:  var(--accent);
+  --c-danger:  #e83a30;
+  --c-success: #0fa88c;
+  --c-warn:    #f07d12;
 
-  /* Фоновые заливки под те же данные — 8% от цвета */
-  --c-day-soft:    rgba(46, 123, 228, .10);
-  --c-danger-soft: rgba(217, 58, 63, .10);
-  --c-success-soft:rgba(22, 163, 148, .12);
+  --c-day-soft:    var(--accent-soft);
+  --c-danger-soft: rgba(232, 58, 48, .12);
+  --c-success-soft:rgba(15, 168, 140, .14);
 
-  /* ── Тени. Мягкие и редкие: инструмент, а не витрина ────── */
+  /* ── Тени ───────────────────────────────────────────────── */
   --shadow-1: 0 1px 2px rgba(16, 24, 40, .05);
   --shadow-2: 0 4px 12px rgba(16, 24, 40, .08);
   --shadow-3: 0 12px 32px rgba(16, 24, 40, .14);
 
-  /* ── Геометрия ──────────────────────────────────────────── */
-  --r-xs: 4px;  --r-sm: 6px;  --r-md: 10px;  --r-lg: 14px;  --r-pill: 999px;
+  /* ── Геометрия. Скругления крупнее: так в макете ─────────── */
+  --r-xs: 6px;  --r-sm: 9px;  --r-md: 12px;  --r-lg: 18px;  --r-pill: 999px;
+  --r-sheet: 26px;   /* верхние углы нижней шторки */
+  --r-card: 20px;    /* крупные карточки экрана «Сейчас» */
 
   /* Шкала отступов, шаг 4 */
   --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
   --s-5: 20px; --s-6: 24px; --s-8: 32px; --s-10: 40px; --s-12: 48px;
 
   /* ── Типографика ────────────────────────────────────────── */
-  /* Веб-шрифты не подключаются: ассеты должны работать офлайн в APK */
-  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+  /*
+   * Inter вшит в проект (см. css/fonts.css и tools/vendor-font.mjs):
+   * веб-часть открывается внутри APK без интернета, поэтому ссылка
+   * на Google Fonts там не сработала бы.
+   */
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
              "Helvetica Neue", Arial, sans-serif;
   /* Время и счётчики — моноширинным. Расписание должно читаться как прибор */
   --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono",
                "Roboto Mono", Consolas, monospace;
 
-  --t-display: 700 28px/1.15 var(--font-ui);
-  --t-title:   650 20px/1.25 var(--font-ui);
-  --t-section: 600 11px/1.2  var(--font-ui);   /* + uppercase, tracking .08em */
-  --t-body:    400 15px/1.45 var(--font-ui);
-  --t-body-md: 500 15px/1.45 var(--font-ui);
-  --t-small:   400 13px/1.4  var(--font-ui);
+  /*
+   * Размеры из макета: заголовок экрана 26–28 px, минимум в списках 15 px.
+   * Интерфейс рассчитан в том числе на людей со слабым зрением, поэтому
+   * ниже 15 px опускаются только подписи-«надглазники» и служебные метки.
+   */
+  --t-display: 500 28px/1.1  var(--font-ui);
+  --t-title:   500 19px/1.2  var(--font-ui);
+  --t-section: 500 11px/1.2  var(--font-ui);   /* + uppercase, tracking .12em */
+  --t-body:    400 15px/1.5  var(--font-ui);
+  --t-body-md: 500 15px/1.5  var(--font-ui);
+  --t-small:   400 13px/1.45 var(--font-ui);
   --t-micro:   500 11px/1.3  var(--font-ui);
-  --t-time:    500 14px/1    var(--font-mono);
-  --t-num:     600 15px/1    var(--font-mono);
+  --t-time:    500 15px/1    var(--font-mono);
+  --t-num:     500 17px/1    var(--font-mono);
 
   --track-tight: -.02em;
-  --track-caps:  .08em;
+  --track-caps:  .12em;
 
   /* ── Прочее ─────────────────────────────────────────────── */
-  --ring-track: #e6e9ee;
-  --focus: 0 0 0 2px var(--surface), 0 0 0 4px var(--c-day);
+  --ring-track: var(--surface-3);
+  --focus: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
   --dur-fast: 120ms;
   --dur: 200ms;
   --dur-slow: 400ms;
   --ease: cubic-bezier(.22, .61, .36, 1);
   --header-h: 56px;
-  --bottomnav-h: 60px;
+  --bottomnav-h: 68px;   /* пять вкладок с подписями */
+  --sheet-btn-h: 52px;   /* главная кнопка шторки во всю ширину */
   --content-max: 1240px;
 }
 
 /* ── Тёмная тема ──────────────────────────────────────────────
-   Не инверсия: отдельный набор значений. Поверхности холодные и
-   тёмные, а цвета данных подняты по светлоте, иначе они тонут.  */
+   Не инверсия: отдельный набор значений Nocturne. Основная тема
+   макета — именно тёмная.                                      */
 :root[data-theme="dark"] {
-  --bg:            #0e1116;
-  --surface:       #161b22;
-  --surface-2:     #1c222b;
-  --surface-3:     #242b36;
-  --hairline:      #242b36;
-  --hairline-firm: #333c49;
+  --bg:            #161826;
+  --surface:       #232532;
+  --surface-2:     #2e3040;
+  --surface-3:     #383b4d;
+  --hairline:      rgba(233, 233, 237, .10);
+  --hairline-firm: rgba(233, 233, 237, .20);
 
-  --ink:        #e8ecf2;
-  --ink-2:      #aab3c2;
-  --ink-3:      #7d8798;
-  --ink-4:      #5c6675;
-  --ink-invert: #0e1116;
+  --ink:        #e9e9ed;
+  --ink-2:      #9ba0b5;
+  --ink-3:      #7b8092;
+  --ink-4:      #5f6478;
+  --ink-invert: #ffffff;
 
-  --c-day:     #5b9dff;
+  --accent:      #9d8cf0;
+  --accent-soft: rgba(157, 140, 240, .18);
+  --accent-line: rgba(157, 140, 240, .34);
+
   --c-work:    #5b9dff;
   --c-home:    #2fd0bd;
   --c-food:    #9b8dff;
   --c-sport:   #ffab2e;
-  --c-habits:  #f268b8;
-  --c-danger:  #ff6b6f;
-  --c-success: #2fd0bd;
-  --c-warn:    #ffab2e;
+  --c-danger:  #ff6a5e;
+  --c-success: #3fd0b0;
+  --c-warn:    #ff9330;
 
-  --c-day-soft:     rgba(91, 157, 255, .14);
-  --c-danger-soft:  rgba(255, 107, 111, .14);
-  --c-success-soft: rgba(47, 208, 189, .16);
+  --c-danger-soft:  rgba(255, 106, 94, .16);
+  --c-success-soft: rgba(63, 208, 176, .16);
 
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, .4);
-  --shadow-2: 0 4px 12px rgba(0, 0, 0, .45);
-  --shadow-3: 0 12px 32px rgba(0, 0, 0, .55);
-
-  --ring-track: #242b36;
-  --focus: 0 0 0 2px var(--surface), 0 0 0 4px var(--c-day);
-  color-scheme: dark;
+  --shadow-1: 0 0 0 1px rgba(233, 233, 237, .06);
+  --shadow-2: 0 6px 18px rgba(0, 0, 0, .55);
+  --shadow-3: 0 16px 40px rgba(0, 0, 0, .65);
 }
 
-/* Системная тема, пока пользователь не выбрал явно */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg:            #0e1116;
-    --surface:       #161b22;
-    --surface-2:     #1c222b;
-    --surface-3:     #242b36;
-    --hairline:      #242b36;
-    --hairline-firm: #333c49;
+/* ── Цвет приложения ──────────────────────────────────────────
+   Четыре варианта из макета. Значения разные для тем: на светлом
+   фоне сиреневый и зелёный нужно затемнить, иначе они не читаются.
+   Ставится атрибутом на <html> — как и тема, до первой отрисовки. */
+:root[data-accent="violet"] {
+  --accent: #6a54e8; --accent-soft: rgba(106, 84, 232, .16); --accent-line: rgba(106, 84, 232, .34);
+}
+:root[data-accent="orange"] {
+  --accent: #f07d12; --accent-soft: rgba(240, 125, 18, .16); --accent-line: rgba(240, 125, 18, .34);
+}
+:root[data-accent="green"] {
+  --accent: #0fa88c; --accent-soft: rgba(15, 168, 140, .16); --accent-line: rgba(15, 168, 140, .34);
+}
+:root[data-accent="red"] {
+  --accent: #e83a30; --accent-soft: rgba(232, 58, 48, .16); --accent-line: rgba(232, 58, 48, .34);
+}
 
-    --ink:        #e8ecf2;
-    --ink-2:      #aab3c2;
-    --ink-3:      #7d8798;
-    --ink-4:      #5c6675;
-    --ink-invert: #0e1116;
-
-    --c-day:     #5b9dff;
-    --c-work:    #5b9dff;
-    --c-home:    #2fd0bd;
-    --c-food:    #9b8dff;
-    --c-sport:   #ffab2e;
-    --c-habits:  #f268b8;
-    --c-danger:  #ff6b6f;
-    --c-success: #2fd0bd;
-    --c-warn:    #ffab2e;
-
-    --c-day-soft:     rgba(91, 157, 255, .14);
-    --c-danger-soft:  rgba(255, 107, 111, .14);
-    --c-success-soft: rgba(47, 208, 189, .16);
-
-    --shadow-1: 0 1px 2px rgba(0, 0, 0, .4);
-    --shadow-2: 0 4px 12px rgba(0, 0, 0, .45);
-    --shadow-3: 0 12px 32px rgba(0, 0, 0, .55);
-
-    --ring-track: #242b36;
-    color-scheme: dark;
-  }
+:root[data-theme="dark"][data-accent="violet"] {
+  --accent: #9d8cf0; --accent-soft: rgba(157, 140, 240, .18); --accent-line: rgba(157, 140, 240, .34);
+}
+:root[data-theme="dark"][data-accent="orange"] {
+  --accent: #ff9330; --accent-soft: rgba(255, 147, 48, .18); --accent-line: rgba(255, 147, 48, .34);
+}
+:root[data-theme="dark"][data-accent="green"] {
+  --accent: #3fd0b0; --accent-soft: rgba(63, 208, 176, .18); --accent-line: rgba(63, 208, 176, .34);
+}
+:root[data-theme="dark"][data-accent="red"] {
+  --accent: #ff6a5e; --accent-soft: rgba(255, 106, 94, .18); --accent-line: rgba(255, 106, 94, .34);
 }
