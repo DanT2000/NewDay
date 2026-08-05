@@ -40,7 +40,7 @@ const state = {
   catFilter: 'all', noteFilter: 'all',
   modal: null, busy: false, notice: null, noticeBad: false,
   rowId: null, rowStart: null, rowEnd: null, rowField: 'start', rowTitle: '', rowAlarm: 'off', rowLeads: ['at'],
-  rowKind: 'normal', rowColor: null, rowConflict: 'overlap',
+  rowKind: 'normal', rowColor: null, rowConflict: 'overlap', rowNote: '',
   taskId: null, taskTitle: '', taskCat: 'work',
   mealId: null, mealTitle: '', mealKcal: '', mealMode: 'none', mealDur: 30, mealSched: false,
   mealStart: 720, mealEnd: 840, mealLeads: ['at'], mealSchedId: null, mealConflict: 'overlap',
@@ -518,6 +518,8 @@ function scheduleList() {
     if (inner[r.id]) sub.push('внутри блока');
     if (r.fromFood) sub.push('из питания');
     if (mode !== 'off' && !hasLead(r, 'at')) sub.push(leadsLabel(r));
+    // комментарий — первым: это то, что человек написал сам
+    if (r.note) sub.unshift(r.note.split('\n')[0]);
 
     const row = h('button.wsched-row', {
       type: 'button',
@@ -1175,13 +1177,44 @@ function planColumn(index, dateKey) {
      * а что это за блок — больше нигде не написано.
      */
     const tight = compact && of > 1;
+    /*
+     * Комментарий видно в блоке, если под него осталось место.
+     *
+     * Столько строк, сколько влезает, и ни одной больше: блок нельзя растить
+     * под текст — он стоит на сетке времени. Полный текст в подсказке под
+     * курсором, и по многоточию понятно, что там есть продолжение.
+     */
+    const room = height - 22;
+    /*
+     * Место делим: если комментарий есть, заголовок берёт не больше двух строк,
+     * остальное достаётся комментарию. Раньше заголовок занимал всё подряд, и
+     * под комментарий не оставалось ни строки — он не показывался никогда.
+     */
+    const fits = Math.max(1, Math.floor(room / 16));
+    const titleLines = compact ? 1 : (r.note ? Math.min(2, fits) : fits);
+    const noteRoom = compact ? 0 : Math.floor((room - titleLines * 16) / 15);
+    const showNote = Boolean(r.note) && noteRoom >= 1;
+    const hint = `${hhmm(r.start)}–${hhmm(r.end)} · ${r.title}${r.note ? `\n${r.note}` : ''}`;
+
     add(block,
       tight ? null : h('span.wblock-time', { text: `${hhmm(r.start)}–${hhmm(r.end)}` }),
       h('span.wblock-title', {
         text: r.title,
-        title: `${hhmm(r.start)}–${hhmm(r.end)} · ${r.title}`,
-        style: compact ? {} : { WebkitLineClamp: String(Math.max(1, Math.floor((height - 22) / 16))) },
-      }));
+        title: hint,
+        style: compact ? {} : { WebkitLineClamp: String(titleLines) },
+      }),
+      /*
+       * В низкий блок комментарий не поместится, но знать о нём надо: ставим
+       * точку. Полный текст — в подсказке под курсором.
+       */
+      r.note && !showNote ? h('i.wblock-mark', { title: hint }) : null,
+      showNote
+        ? h('span.wblock-note', {
+          text: r.note,
+          title: r.note,
+          style: { WebkitLineClamp: String(Math.min(noteRoom, 3)) },
+        })
+        : null);
     add(col, block);
   }
 
@@ -1630,7 +1663,7 @@ function openRow(r, date = state.date) {
     rowStart: r.start, rowEnd: r.end ?? r.start + 30, rowField: 'start',
     rowTitle: r.title, rowAlarm: r.alarm, rowLeads: leadsOf(r),
     rowKind: r.isReminder ? 'reminder' : (r.kind ?? 'normal'),
-    rowColor: r.color ?? null, rowConflict: 'overlap', notice: null,
+    rowColor: r.color ?? null, rowConflict: 'overlap', rowNote: r.note ?? '', notice: null,
   });
 }
 
@@ -1640,7 +1673,7 @@ function newRow({ date = state.date, start = 600, end = 660, kind = 'normal' } =
     modal: 'row', rowId: 'new', rowDate: date,
     rowStart: start, rowEnd: end, rowField: 'start',
     rowTitle: '', rowAlarm: kind === 'reminder' ? 'notify' : 'off', rowLeads: ['at'],
-    rowKind: kind, rowColor: null, rowConflict: 'overlap', notice: null,
+    rowKind: kind, rowColor: null, rowConflict: 'overlap', rowNote: '', notice: null,
   });
 }
 
@@ -1653,7 +1686,7 @@ function saveRow() {
   const body = adapt.rowToServer({
     title: state.rowTitle, start: state.rowStart, end: state.rowEnd,
     alarm: state.rowAlarm, leads: state.rowLeads,
-    color: state.rowColor, kind: state.rowKind,
+    color: state.rowColor, kind: state.rowKind, note: state.rowNote,
   });
   if (!body.title) {
     needField('rowTitle', state.rowKind === 'reminder' ? 'Впишите, о чём напомнить' : 'Впишите, что делаем');
@@ -1760,8 +1793,19 @@ function openMeal(m) {
   });
 }
 
+/**
+ * Сколько времени приём пищи займёт в расписании.
+ *
+ * У точного времени это выбранная длительность, у окна — само окно: «обед с
+ * 12:00 до 14:00» и в расписании должен стоять окном, а не получасовой точкой
+ * в его начале.
+ */
+const mealBlockEnd = () => (state.mealMode === 'window'
+  ? Math.max(state.mealStart + 5, state.mealEnd)
+  : state.mealStart + state.mealDur);
+
 const mealConflictBlock = () => {
-  const end = state.mealStart + state.mealDur;
+  const end = mealBlockEnd();
   const other = crossingIn(state.date, state.mealStart, end, state.mealSchedId);
   return other ? conflictCard(other, end, state.mealConflict, k => setIn({ mealConflict: k })) : null;
 };
@@ -1783,8 +1827,14 @@ function saveMeal() {
   if (!body.title) { needField('mealTitle', 'Впишите, что едим'); return; }
 
   const date = state.date;
-  const wantBlock = state.mealMode === 'exact' && state.mealSched;
-  const end = state.mealStart + state.mealDur;
+  /*
+   * В расписание попадает и окно, а не только точное время: «обед с 12:00 до
+   * 14:00» — это тоже занятое время, и в сетке он должен стоять окном. Дела
+   * внутри такого окна рисуются вложенными — многодорожечность для этого и
+   * сделана.
+   */
+  const wantBlock = state.mealMode !== 'none' && state.mealSched;
+  const end = mealBlockEnd();
   /*
    * Блок создаём с включённым уведомлением, если сроки заданы. Без `alarmMode`
    * он получал «без напоминания», и планировщик пропускал его первым же
@@ -2366,6 +2416,18 @@ const BODIES = {
       tiles,
       moment ? null : picker,
       moment ? null : conflictBlock(),
+      /*
+       * Комментарий к активности: необязательный и короткий. Виден и в самом
+       * блоке расписания — иначе человек не узнает, что там что-то написано,
+       * и комментарий превращается в тайник.
+       */
+      h('label',
+        h('span.wfield-label', { text: 'комментарий · необязательно' }),
+        h('textarea.wtextarea.wtextarea-slim', {
+          name: 'rowNote', value: state.rowNote,
+          placeholder: moment ? 'Подробности напоминания' : 'Что важно помнить про этот блок',
+          oninput: e => { state.rowNote = e.target.value; },
+        })),
       colorRow(),
       h('div', h('div.wfield-label', { text: 'предупредить · можно несколько' }), leads),
       h('div', h('div.wfield-label', { text: 'чем предупредить' }), modes),
@@ -2738,10 +2800,18 @@ const BODIES = {
     add(leads, ...mealLeadOpts.map(l => sheetChip(l.label, state.mealLeads.includes(l.k),
       () => setIn({ mealLeads: toggleLead(state.mealLeads, l.k) }))));
 
+    /*
+     * Переключатель есть и у окна: окно — это тоже занятое время, и в сетке оно
+     * должно стоять окном. Дела внутри него рисуются вложенными.
+     */
     const schedCard = h('button.wtoggle-card', { type: 'button', onclick: () => setIn(s => ({ mealSched: !s.mealSched })) },
       h('div.wtoggle-card-body',
         h('div.wrow-sw-title', { text: 'Добавить в расписание' }),
-        h('div.wrow-sw-hint', { text: `займёт блок ${durLabel(state.mealDur)}, ничего не сдвинет без подтверждения` })),
+        h('div.wrow-sw-hint', {
+          text: window_
+            ? `займёт окно ${hhmm(state.mealStart)}–${hhmm(state.mealEnd)}, ничего не сдвинет без подтверждения`
+            : `займёт блок ${durLabel(state.mealDur)}, ничего не сдвинет без подтверждения`,
+        })),
       sw(state.mealSched));
 
     /*
@@ -2792,8 +2862,8 @@ const BODIES = {
         }),
         h('span.wsmall', { text: 'ккал — можно оставить пустым' })),
       exact ? h('div', h('div.wfield-label', { text: 'сколько занять в расписании' }), durs) : null,
-      exact ? schedCard : null,
-      exact && state.mealSched ? mealConflictBlock() : null,
+      state.mealMode === 'none' ? null : schedCard,
+      state.mealMode !== 'none' && state.mealSched ? mealConflictBlock() : null,
       state.mealMode === 'none' ? null : h('div',
         h('div.wfield-label', { text: 'напомнить · можно несколько' }), leads,
         window_

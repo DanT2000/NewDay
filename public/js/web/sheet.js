@@ -61,7 +61,9 @@ export function buildSheet(day, { parts, scope = 'day', range = null } = {}) {
     const rows = (day.schedule ?? []).map(r => h('div.prow',
       tick(),
       h('span.ptime', { text: r.end_min === null ? adapt.hhmm(r.start_min) : `${adapt.hhmm(r.start_min)}–${adapt.hhmm(r.end_min)}` }),
-      h('span.ptext', { text: r.title }),
+      // комментарий к активности печатается вместе со строкой: на бумаге его
+      // больше нигде не прочитать
+      h('span.ptext', { text: r.note ? `${r.title} — ${r.note}` : r.title }),
       // сколько длится — на бумаге это видно только числом
       h('span.pmeta', {
         text: r.end_min === null ? '' : durText(r.end_min - r.start_min),

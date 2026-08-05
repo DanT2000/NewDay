@@ -233,8 +233,10 @@ export const notes = (rows, todayKey, openDate = todayKey) => rows.map(n => {
  * быть несколько — уходят списком минут; сервер сам оставит первым самый
  * ранний.
  */
-export const rowToServer = ({ title, start, end, alarm, leads, color, kind }) => ({
+export const rowToServer = ({ title, start, end, alarm, leads, color, kind, note }) => ({
   title: String(title ?? '').trim(),
+  // комментарий к активности: коротко, чтобы влезал в блок и не рос в статью
+  note: String(note ?? '').slice(0, 300),
   startMin: start,
   // У напоминания конца нет по определению: это момент, а не отрезок
   endMin: kind === 'reminder' ? null : (end ?? null),

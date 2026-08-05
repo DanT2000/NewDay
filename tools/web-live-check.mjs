@@ -589,6 +589,72 @@ await wait(300);
 await js(`document.querySelector('.wmodal-x').click()`);
 await waitFor('!document.querySelector(".wveil")', 40);
 
+/*
+ * Комментарий к активности: сохраняется и виден в самом блоке. Иначе он
+ * превращается в тайник — человек не узнает, что там что-то написано.
+ */
+await js(`[...document.querySelectorAll('.wblock')].find(b => b.textContent.includes('Работа: второй')).click()`);
+await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Строка расписания'`);
+проба('в редакторе есть поле комментария',
+  await js(`Boolean(document.querySelector('.wmodal textarea[name=rowNote]'))`));
+await js(`(() => { const t = document.querySelector('.wmodal textarea[name=rowNote]');
+  t.value = 'Взять ноутбук и наушники'; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
+await waitFor('!document.querySelector(".wveil")', 40);
+await wait(1200);
+
+const коммент = await js(`fetch('/api/v1/days/${DAY}/full').then(r=>r.json())
+  .then(d => d.schedule.find(x => x.title.includes('Работа: второй'))?.note ?? '')`, true);
+проба('комментарий сохранён на сервере', коммент === 'Взять ноутбук и наушники', коммент || 'пусто');
+проба('комментарий виден в блоке расписания',
+  await js(`[...document.querySelectorAll('.wblock-note')].some(e => e.textContent.includes('наушники'))`),
+  await js(`[...document.querySelectorAll('.wblock-note')].map(e => e.textContent).join('|') || 'нет'`));
+
+/* Окно питания встаёт в расписание окном, а не точкой в его начале. */
+await nav('Сейчас');
+await waitFor('Boolean(document.querySelector(".wfood"))');
+await wait(700);
+await js(`[...document.querySelectorAll('.wadd')].find(b => b.textContent.includes('приём пищи')).click()`);
+await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Приём пищи'`);
+await js(`(() => { const i = document.querySelector('.wmodal .winput');
+  i.value = 'Обед окном в сетке'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+await js(`[...document.querySelectorAll('.wmodal .wopt')].find(o => o.textContent.includes('Окно')).click()`);
+await wait(300);
+проба('у окна тоже есть «Добавить в расписание»',
+  await js(`Boolean(document.querySelector('.wmodal .wtoggle-card'))`));
+проба('подпись говорит про окно, а не про блок',
+  (await js(`document.querySelector('.wmodal .wrow-sw-hint')?.textContent ?? ''`)).includes('займёт окно'),
+  await js(`document.querySelector('.wmodal .wrow-sw-hint')?.textContent ?? 'нет'`));
+await js(`document.querySelector('.wmodal .wtoggle-card').click()`);
+await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
+await waitFor('!document.querySelector(".wveil")', 40);
+await wait(1400);
+
+const окно = await js(`fetch('/api/v1/days/${DAY}/full').then(r=>r.json()).then(d => {
+  const m = d.meals.find(x => x.title === 'Обед окном в сетке');
+  const row = d.schedule.find(x => x.title === 'Обед окном в сетке');
+  return { связан: Boolean(m && m.schedule_item_id), начало: row?.start_min ?? null, конец: row?.end_min ?? null };
+})`, true);
+проба('окно встало в расписание своим временем',
+  окно.связан && окно.начало === 720 && окно.конец === 840, JSON.stringify(окно));
+
+// убираем за собой
+await js(`(async () => {
+  const d = await (await fetch('/api/v1/days/${DAY}/full')).json();
+  const m = d.meals.find(x => x.title === 'Обед окном в сетке');
+  const row = d.schedule.find(x => x.title === 'Обед окном в сетке');
+  if (row) await fetch('/api/v1/days/${DAY}/schedule/' + row.id, { method: 'DELETE' });
+  if (m) await fetch('/api/v1/days/${DAY}/meals/' + m.id, { method: 'DELETE' });
+  const r2 = d.schedule.find(x => x.title.includes('Работа: второй'));
+  if (r2) await fetch('/api/v1/days/${DAY}/schedule/' + r2.id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: '' }) });
+})()`, true);
+
+await nav('Расписание');
+await wait(600);
+await js(`[...document.querySelectorAll('.wseg button')].find(b => b.textContent === 'Неделя')?.click()`);
+await wait(600);
+
 /* Месяц: «+ ещё N» когда строк больше, чем влезает, и добавление по клику. */
 await js(`[...document.querySelectorAll('.wseg button')].find(b => b.textContent === 'Месяц').click()`);
 await waitFor('document.querySelectorAll(".wcell").length === 42', 40);
