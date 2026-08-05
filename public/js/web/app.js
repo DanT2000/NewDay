@@ -863,8 +863,9 @@ function monthGrid() {
         h('span.wcell-num', { text: String(c.n) }),
         h('span', { style: { flex: '1' } }),
         items.length ? h('span.wcell-count', { text: String(items.length) }) : null),
-      h('div.wcell-items', ...items.slice(0, 3).map(t => h('div.wcell-item', { text: t }))),
-      items.length > 3 ? h('div.wcell-more', { text: `+ ещё ${items.length - 3}` }) : null);
+      // Строк не больше трёх, а сколько всего — сказано числом в углу.
+      // Строка «+ ещё 7» повторяла бы то же самое второй раз.
+      h('div.wcell-items', ...items.slice(0, 3).map(t => h('div.wcell-item', { text: t }))));
     return cell;
   }));
 

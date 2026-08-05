@@ -123,13 +123,13 @@ const geom = await js(`(() => {
 })()`);
 
 /*
- * 18:00–18:45. В засеянном дне занято 06:00–07:30, 09:00–14:00, 14:00–18:00,
- * 19:00–20:00 и 21:00–22:00 — свободно ровно здесь. Прошлый прогон целился
- * в 16:00 и попал в «Работу, вторую половину»: нажатие на блок открывает
- * его правку, и проверка молча проверяла не то.
+ * 17:00–17:45. В засеянном дне занято 06:40–07:50, 08:10–12:30, 13:00–17:00,
+ * 18:00–19:00, 19:30–20:30 — свободно ровно здесь. Прошлые прогоны целились
+ * в 16:00 и в 18:00 и попадали в блок: нажатие по блоку открывает его
+ * правку, и проверка молча проверяла не то.
  */
-const y1 = geom.top + 12 * 44;
-const y2 = geom.top + 12.75 * 44;
+const y1 = geom.top + 11 * 44;
+const y2 = geom.top + 11.75 * 44;
 const mouse = (type, y) => rpc(ws, 'Input.dispatchMouseEvent', {
   type, x: geom.x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1,
 });
@@ -138,7 +138,7 @@ await mouse('mousePressed', y1);
 await wait(120);
 await mouse('mouseMoved', y2);
 await wait(150);
-проба('след протягивания показывает время', (await js(`document.querySelector('.wsel')?.textContent`)) === '18:00–18:45',
+проба('след протягивания показывает время', (await js(`document.querySelector('.wsel')?.textContent`)) === '17:00–17:45',
   await js(`document.querySelector('.wsel')?.textContent ?? 'нет'`));
 await mouse('mouseReleased', y2);
 await wait(500);
@@ -161,7 +161,7 @@ await wait(900);
 const saved = await js(`fetch('/api/v1/days/${DAY}/full').then(r=>r.json()).then(d =>
   d.schedule.filter(r => r.title === 'Разбор задач за неделю').map(r => r.start_min + '-' + r.end_min + '/' + r.alarm_mode))`, true);
 проба('блок записан на сервер с временем и сигналом',
-  saved?.[0] === '1080-1125/notify', JSON.stringify(saved));
+  saved?.[0] === '1020-1065/notify', JSON.stringify(saved));
 
 проба('блок виден в сетке',
   await js(`[...document.querySelectorAll('.wblock-title')].some(e => e.textContent === 'Разбор задач за неделю')`));
@@ -382,7 +382,7 @@ await wait(500);
 await js(`[...document.querySelectorAll('.wseg button')].find(b => b.textContent === 'День').click()`);
 await waitFor('document.querySelectorAll(".wblock").length > 0', 40);
 await wait(700);
-await js(`[...document.querySelectorAll('.wblock')].find(b => b.textContent.includes('Зал')).click()`);
+await js(`[...document.querySelectorAll('.wblock')].find(b => b.textContent.includes('Ужин и дом')).click()`);
 проба('редактор строки открылся',
   await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Строка расписания'`));
 проба('подпись про несколько сроков на месте',
@@ -398,7 +398,7 @@ await waitFor('!document.querySelector(".wveil")', 40);
 await wait(1000);
 
 const сроки = await js(`fetch('/api/v1/days/${DAY}/full').then(r=>r.json())
-  .then(d => { const r = d.schedule.find(x => x.title === 'Зал');
+  .then(d => { const r = d.schedule.find(x => x.title === 'Ужин и дом');
     return { list: r.remind_before_json, first: r.remind_before_min }; })`, true);
 проба('оба срока записаны, первым самый ранний',
   сроки.list === '[1440,60]' && сроки.first === 1440, JSON.stringify(сроки));
@@ -406,7 +406,7 @@ const сроки = await js(`fetch('/api/v1/days/${DAY}/full').then(r=>r.json())
 // возвращаем как было
 await js(`(async () => {
   const day = await (await fetch('/api/v1/days/${DAY}/full')).json();
-  const r = day.schedule.find(x => x.title === 'Зал');
+  const r = day.schedule.find(x => x.title === 'Ужин и дом');
   await fetch('/api/v1/days/${DAY}/schedule/' + r.id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ remindBefore: [0] }),

@@ -35,13 +35,26 @@ db.prepare('INSERT INTO days (user_id, date, title, focus, weight, notes) VALUES
 db.prepare('INSERT INTO days (user_id, date, weight) VALUES (1,?,?)')
   .run('2000-01-01', 78.7);
 
-const S = db.prepare(`INSERT INTO schedule_items (user_id,date,start_min,end_min,title,done,sort_order,alarm_mode,alarm_profile)
-  VALUES (1,?,?,?,?,?,?,?,?)`);
-[[360,390,'Подъём',1,'alarm','wakeup'],[390,420,'Процедуры и душ',1,'notify','gentle'],
- [420,450,'Завтрак',1,'none','gentle'],[540,780,'Работа',1,'notify','gentle'],
- [780,840,'Обед',0,'none','gentle'],[840,1080,'Работа, вторая половина',0,'notify','gentle'],
- [1140,1200,'Зал',0,'alarm','gentle'],[1260,1320,'Чтение',0,'none','gentle']]
- .forEach((r,i)=>S.run(today,r[0],r[1],r[2],r[3],i,r[4],r[5]));
+/*
+ * День засеян так, чтобы на нём было видно всё, что умеет экран: вложенный
+ * блок (созвон внутри второй половины дня), строки с одним и с несколькими
+ * сроками предупреждения, момент без длительности. Без этих случаев их
+ * вёрстку никто не увидит — а именно она и расходилась с эталоном.
+ */
+const S = db.prepare(`INSERT INTO schedule_items
+  (user_id,date,start_min,end_min,title,done,sort_order,alarm_mode,alarm_profile,remind_before_min,remind_before_json)
+  VALUES (1,?,?,?,?,?,?,?,?,?,?)`);
+[[400,430,'Подъём и вода',1,'alarm','wakeup',0,null],
+ [430,470,'Зарядка и душ',1,'notify','gentle',0,null],
+ [490,540,'Дорога',1,'none','gentle',null,null],
+ [540,750,'Работа: первый блок',1,'notify','gentle',15,null],
+ [780,810,'Обед',0,'none','gentle',null,null],
+ [810,1020,'Работа: второй блок',0,'none','gentle',null,null],
+ [840,885,'Созвон с подрядчиком',0,'notify','gentle',15,null],
+ [1080,1140,'Зал',0,'alarm','gentle',1440,'[1440,30]'],
+ [1170,1230,'Ужин и дом',0,'none','gentle',null,null],
+ [1350,null,'Отбой',0,'notify','gentle',0,null]]
+ .forEach((r,i)=>S.run(today,r[0],r[1],r[2],r[3],i,r[4],r[5],r[6],r[7]));
 
 const T = db.prepare('INSERT INTO tasks (user_id,date,bucket,text,done,sort_order,carried_from) VALUES (1,?,?,?,?,?,?)');
 T.run(today,'work','Созвон с подрядчиком',0,0,null);
@@ -50,10 +63,11 @@ T.run(today,'work','Ревью пул-реквеста',0,2,null);
 T.run(today,'home','Посуда',1,0,null);
 T.run(today,'home','Забрать посылку',0,1,null);
 
-const M = db.prepare('INSERT INTO meals (user_id,date,slot,time_min,title,done,sort_order) VALUES (1,?,?,?,?,?,?)');
-M.run(today,'breakfast',420,'Овсянка с ягодами',1,0);
-M.run(today,'lunch',780,'Суп, курица с рисом',0,1);
-M.run(today,'dinner',1200,'Творог',0,2);
+// С калориями: без них колонка справа в питании пустая, и её не проверить
+const M = db.prepare('INSERT INTO meals (user_id,date,slot,time_min,title,done,sort_order,calories) VALUES (1,?,?,?,?,?,?,?)');
+M.run(today,'breakfast',420,'Завтрак — овсянка и кофе',1,0,320);
+M.run(today,'lunch',780,'Обед — курица и рис',0,1,640);
+M.run(today,'dinner',1170,'Ужин — рыба и овощи',0,2,430);
 
 const P = db.prepare('INSERT INTO sport_sets (user_id,date,exercise,sets,reps,done,sort_order) VALUES (1,?,?,?,?,?,?)');
 P.run(today,'Приседания',4,12,0,0);

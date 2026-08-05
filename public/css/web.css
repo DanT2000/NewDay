@@ -630,7 +630,6 @@ select.winput { appearance: auto; cursor: pointer; }
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   box-shadow: inset 2px 0 0 var(--accent);
 }
-.wcell-more { font: 400 11px/1 var(--ui); color: var(--faint); margin-top: 6px; }
 
 /* ── Привычки, заметки, настройки ──────────────────────────── */
 
