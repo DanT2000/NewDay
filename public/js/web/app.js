@@ -148,7 +148,6 @@ function toggle(r, kind) {
   const send = kind === 'task' ? data.toggleTask
     : kind === 'meal' ? data.toggleMeal
       : kind === 'habit' ? data.toggleHabit
-        : kind === 'sport' ? data.toggleSport
           : data.toggleScheduleRow;
   r.done = next;
   if (kind === 'habit') r.status = next ? 'done' : null;

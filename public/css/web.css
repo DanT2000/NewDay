@@ -105,7 +105,6 @@
   border: 0; cursor: pointer; background: transparent;
   color: var(--dim); font: 500 15px/1 var(--ui);
 }
-.wnav-item:hover { color: var(--text); background: var(--surface); }
 .wnav-item.on { background: var(--accent-soft); color: var(--accent); }
 .wnav-item > span:first-of-type { flex: 1; text-align: left; }
 .wnav-badge { font: 500 11px/1 var(--mono); color: var(--faint); }
@@ -118,7 +117,6 @@
   height: 44px; border-radius: 12px; border: 0; cursor: pointer;
   background: var(--accent); color: #fff; font: 500 14px/1 var(--ui);
 }
-.wbtn-ai:hover { filter: brightness(1.06); }
 
 .wbtn-line {
   display: flex; align-items: center; justify-content: center; gap: 10px;
@@ -171,7 +169,6 @@
   width: 48px; padding: 8px 0 7px; border-radius: 11px;
   border: 0; cursor: pointer; background: transparent; color: var(--dim);
 }
-.wday:hover:not(.on) { background: var(--surface); color: var(--text); }
 .wday.on { background: var(--accent); color: #fff; }
 .wday-dow { font: 400 11px/1 var(--ui); opacity: .8; }
 .wday-num { font: 500 16px/1 var(--mono); margin-top: 5px; }
@@ -189,7 +186,6 @@
   background: var(--accent); color: #fff; font: 500 16px/1 var(--ui);
   box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 30%, transparent);
 }
-.wbtn:hover { filter: brightness(1.06); }
 /* Иконка у нас <svg>, а не <i>: правило только на i не срабатывало,
    и знак плюса прилипал к слову */
 .wbtn > svg, .wbtn > i { margin-right: 8px; }
@@ -208,7 +204,6 @@
  * и это читается как поломка приложения.
  */
 .wroot button:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
-.wroot button:disabled:hover { filter: none; }
 
 /* Главная кнопка шторки: 56 px и тень акцентом — так в эталоне */
 .wbtn-wide {
@@ -218,14 +213,12 @@
   background: var(--accent); color: #fff; font: 500 17px/1 var(--ui);
   box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 35%, transparent);
 }
-.wbtn-wide:hover { filter: brightness(1.06); }
 
 .wbtn-quiet {
   height: 56px; padding: 0 22px; border-radius: 13px; cursor: pointer; flex: none;
   border: 1px solid var(--line); background: transparent;
   color: var(--dim); font: 500 16px/1 var(--ui);
 }
-.wbtn-quiet:hover { color: var(--text); }
 
 .wbtn-dashed {
   display: flex; align-items: center; justify-content: center; gap: 8px;
@@ -233,7 +226,6 @@
   border: 1px dashed var(--line); background: transparent;
   color: var(--dim); font: 500 15px/1 var(--ui);
 }
-.wbtn-dashed:hover { color: var(--accent); border-color: var(--accent); }
 
 /* Чип: в списках на поверхности, в шторках — на приподнятом слое */
 .wchip {
@@ -323,16 +315,6 @@
 .winput:focus { border-color: var(--accent); }
 /* Список в тех же рамках, что и поле: своя стрелка не нужна, родная понятнее */
 select.winput { appearance: auto; cursor: pointer; }
-
-/*
- * Код подключения. Моноширинный и крупный: его переписывают глазами на
- * телефон, и «0» с «O» здесь путать нельзя.
- */
-.wcode {
-  font: 600 34px/1 var(--mono); letter-spacing: .22em; text-align: center;
-  padding: 20px 10px 20px 22px; border-radius: 14px;
-  background: var(--raise); color: var(--accent);
-}
 
 .wnum {
   width: 86px; height: 44px; padding: 0 12px; border-radius: 11px;
@@ -536,10 +518,6 @@ select.winput { appearance: auto; cursor: pointer; }
 .wrem-title { font: 400 14px/1.3 var(--ui); }
 .wrem-meta { font: 400 12px/1.3 var(--ui); color: var(--faint); margin-top: 4px; }
 
-.wnote-day { border-radius: 14px; background: var(--surface); padding: 13px 14px; }
-.wnote-day-title { font: 500 14px/1.3 var(--ui); }
-.wnote-day-text { font: 400 13px/1.45 var(--ui); color: var(--faint); margin-top: 6px; }
-
 /* ── Экран «Расписание» ────────────────────────────────────── */
 
 .wplan-head, .wplan-grid { display: grid; }
@@ -653,12 +631,6 @@ select.winput { appearance: auto; cursor: pointer; }
 .wnote-date { font: 400 11px/1 var(--ui); color: var(--faint); flex: none; }
 .wnote-date.on { color: var(--accent); }
 .wnote-text { font: 400 13px/1.5 var(--ui); color: var(--dim); margin-top: 9px; }
-.wnote-new {
-  min-height: 132px; border-radius: 16px; cursor: pointer;
-  border: 1px dashed var(--line); background: transparent; color: var(--dim);
-  font: 500 15px/1 var(--ui); display: flex; align-items: center; justify-content: center; gap: 8px;
-}
-.wnote-new:hover { color: var(--accent); border-color: var(--accent); }
 
 .wsettings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; max-width: 960px; }
 .wpanel { border-radius: 16px; background: var(--surface); padding: 18px; }
@@ -740,7 +712,6 @@ select.winput { appearance: auto; cursor: pointer; }
   background: var(--raise); color: var(--dim); font-size: 15px;
   display: grid; place-items: center;
 }
-.wmodal-x:hover { color: var(--text); }
 
 .wstack { display: flex; flex-direction: column; gap: 14px; }
 .wstack-tight { display: flex; flex-direction: column; gap: 8px; }
@@ -758,7 +729,6 @@ select.winput { appearance: auto; cursor: pointer; }
   border-radius: 12px; background: var(--raise); cursor: pointer;
   border: 0; color: inherit; width: 100%; text-align: left;
 }
-.wsheet-row:hover { filter: brightness(1.06); }
 .wsheet-row .wgrab { color: var(--faint); font-size: 16px; cursor: grab; }
 .wsheet-row .wlead { font: 500 13px/1 var(--mono); color: var(--accent); flex: none; }
 .wsheet-row .wtitle { flex: 1; min-width: 0; font: 400 15px/1.3 var(--ui); }
@@ -887,104 +857,11 @@ select.winput { appearance: auto; cursor: pointer; }
   color: var(--dim); font: 400 15px/1.5 var(--ui);
 }
 
-/* ── Спорт таблицей ────────────────────────────────────────── */
-
-/*
- * Колонки, а не строка «4×12, 60 кг»: числа сравниваются глазом только
- * когда стоят друг под другом. Ширины фиксированные, чтобы столбцы не
- * плясали от количества знаков.
- */
-.wsport { border-radius: 16px; background: var(--surface); padding: 6px 4px; }
-.wsport-head, .wsport-row {
-  display: grid; grid-template-columns: 22px minmax(0, 1fr) 46px 46px 52px;
-  align-items: center; gap: 12px; padding: 8px 12px;
-}
-.wsport-head {
-  padding-bottom: 4px;
-  font: 500 10px/1 var(--ui); letter-spacing: .1em;
-  text-transform: uppercase; color: var(--faint);
-}
-.wsport-head span:nth-child(n+3) { text-align: right; }
-.wsport-row {
-  border: 0; background: transparent; color: inherit;
-  text-align: left; cursor: pointer; border-radius: 10px; width: 100%;
-}
-.wsport-row:hover { background: var(--raise); }
-.wsport-num { font: 500 13px/1 var(--mono); color: var(--dim); text-align: right; }
-.wsport-row .wstrike { font: 400 15px/1.3 var(--ui); }
-
-/* ── Экран «Итоги» ─────────────────────────────────────────── */
-
-/*
- * График во всю ширину, остальное — в две колонки. Столбикам нужна ширина
- * больше, чем всему прочему: месяц в узкой колонке превращается в частокол.
- */
-.wsummary {
-  display: grid; gap: 14px; max-width: 960px; align-items: start;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-.wsummary > :first-child { grid-column: 1 / -1; }
-
-.wfig-cap {
-  font: 500 11px/1 var(--ui); letter-spacing: .12em;
-  text-transform: uppercase; color: var(--faint);
-}
-.wfig-val { font: 500 19px/1.2 var(--ui); margin-top: 6px; letter-spacing: -.01em; }
-
-/*
- * Столбики тянутся по ширине панели: preserveAspectRatio="none" растягивает
- * их как надо, а высота задана здесь, чтобы месяц и три месяца читались
- * одинаково.
- */
-.wchart { display: block; width: 100%; height: 90px; }
-.wchart-track { fill: var(--raise); }
-.wchart-bar { fill: var(--accent); }
-
-.wweek { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
-.wweek-cell { display: flex; flex-direction: column; align-items: center; gap: 7px; }
-.wweek-dow, .wweek-val { font: 400 11px/1 var(--ui); color: var(--faint); }
-.wweek-val { font-family: var(--mono); }
-.wweek-bar {
-  width: 100%; height: 74px; border-radius: 8px; background: var(--raise);
-  display: flex; align-items: flex-end; overflow: hidden;
-}
-.wweek-bar i { display: block; width: 100%; background: var(--accent); border-radius: 8px; }
-
-.whabit-stat { display: flex; align-items: center; gap: 12px; padding: 11px 18px; }
-.whabit-emoji { font-size: 19px; flex: none; }
-.whabit-body { flex: 1; min-width: 0; }
-.whabit-title { font: 400 15px/1.3 var(--ui); }
-.whabit-meta { font: 400 12px/1.4 var(--ui); color: var(--faint); margin-top: 4px; }
-/* Полоска процента: число рядом уже сказано словами, полоска — для сравнения */
-.whabit-bar {
-  width: 92px; height: 6px; flex: none; border-radius: 3px;
-  background: var(--raise); overflow: hidden;
-}
-.whabit-bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
-
-/*
- * Узкий экран. Правила стоят здесь, а не в общем блоке ниже по файлу:
- * при равной силе побеждает то, что записано позже, и общий блок эти
- * настройки бы перебил.
- */
-@media (max-width: 1240px) {
-  .wsummary { grid-template-columns: minmax(0, 1fr); }
-  .wsummary > :first-child { grid-column: auto; }
-}
-@media (max-width: 720px) {
-  /* Полоска — для сравнения глазом; когда название переносится в три
-     строки, сравнивать уже нечего, и проценту достаточно слов */
-  .whabit-bar { display: none; }
-  .whabit-stat { padding: 11px 16px; }
-}
-
-
 /* Заметки дня в правой колонке — карточки, как на эталоне */
 .wdaynotes { display: flex; flex-direction: column; gap: 8px; }
 .wdaynote {
   border-radius: 14px; background: var(--surface); padding: 13px 14px; cursor: pointer;
 }
-.wdaynote:hover { box-shadow: inset 0 0 0 1px var(--accent-line); }
 .wdaynote-title { font: 500 14px/1.3 var(--ui); }
 .wdaynote-text { font: 400 13px/1.45 var(--ui); color: var(--faint); margin-top: 6px; }
 

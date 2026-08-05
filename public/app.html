@@ -16,6 +16,15 @@
   <link rel="stylesheet" href="/css/shell.css">
   <link rel="stylesheet" href="/css/desktop.css">
   <link rel="stylesheet" href="/css/print.css" media="print">
+  <script>
+    /*
+     * В браузере эти страницы больше не нужны: браузерная версия — /web.html.
+     * В приложении на телефоне они остаются, поэтому проверяем платформу.
+     */
+    if (!globalThis.Capacitor?.isNativePlatform?.()) {
+      location.replace('/web.html' + location.hash);
+    }
+  </script>
   <script src="/js/boot-theme.js"></script>
 </head>
 <body>
