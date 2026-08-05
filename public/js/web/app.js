@@ -958,6 +958,8 @@ function monthGrid() {
      */
     const cell = h('div.wcell', {
       class: [c.out ? 'out' : '', sel ? 'on' : ''].filter(Boolean).join(' '),
+      // дата в разметке: по ней проверки сверяют клетку с тем, что на сервере
+      'data-date': key,
       title: 'Нажмите на пустое место, чтобы добавить',
       onclick: () => { if (!c.out) newRow({ date: key, start: 600, end: 660 }); },
     });

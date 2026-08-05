@@ -189,8 +189,25 @@ await js(`document.querySelectorAll('.wseg button')[2].click()`);
   await js(`[...document.querySelectorAll('.wcell-item')].some(e => e.textContent.includes('Подъём'))`),
   await js(`document.querySelectorAll('.wcell-item').length + ' строк в клетках'`));
 // Клетки соседних месяцев не должны повторять дела текущего
-проба('чужой месяц не показывает дела этого',
-  await js(`[...document.querySelectorAll('.wcell.out')].every(c => !c.querySelector('.wcell-item'))`));
+/*
+ * Сверяем каждую клетку с тем, что на сервере за её дату. Прежняя проверка
+ * требовала, чтобы клетки соседних месяцев были пустыми, — а они законно
+ * показывают свои дела, и любая запись в конец июля роняла проверку.
+ */
+const клеткиПоДатам = await js(`(async () => {
+  const cells = [...document.querySelectorAll('.wcell')];
+  const from = cells[0].dataset.date, to = cells[cells.length - 1].dataset.date;
+  const range = await (await fetch('/api/v1/days/range?from=' + from + '&to=' + to)).json();
+  const было = {};
+  for (const d of range.days) было[d.date] = d.schedule.length;
+  return cells
+    .map(c => ({ date: c.dataset.date, видно: c.querySelectorAll('.wcell-item').length,
+                 всего: было[c.dataset.date] ?? 0 }))
+    .filter(x => x.видно > Math.min(3, x.всего) || x.видно > x.всего)
+    .map(x => x.date + ': видно ' + x.видно + ', на сервере ' + x.всего);
+})()`, true);
+проба('в клетках месяца показаны дела именно их даты',
+  клеткиПоДатам.length === 0, клеткиПоДатам.join(' | ') || 'все сходятся');
 await shot('web-live-month');
 
 // ── Настройки сохраняются ──
