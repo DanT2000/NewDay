@@ -10,7 +10,7 @@ const { loadConfig } = require('../../server/config');
  * Поднимает изолированный экземпляр приложения на временной базе
  * и случайном порту. Всегда закрывать через `close()` в finally.
  */
-async function startTestServer({ env = {} } = {}) {
+async function startTestServer({ env = {}, fetchImpl } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'newday-test-'));
   const dbPath = path.join(dir, 'test.db');
 
@@ -26,7 +26,7 @@ async function startTestServer({ env = {} } = {}) {
 
   const db = createDb(dbPath);
   runMigrations(db);
-  const app = createApp({ db, config });
+  const app = createApp({ db, config, fetchImpl });
 
   const server = await new Promise(resolve => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));

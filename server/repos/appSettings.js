@@ -3,9 +3,14 @@
  *
  * Сюда попадает то, что задаёт владелец сервера, а не пользователь.
  * Первый случай — подключение ИИ: одна модель на всех.
+ *
+ * Моделей три, потому что задачи разные. Быстрая причёсывает фразу,
+ * умная разбирает длинный текст, голосовая слушает речь — и стоят они
+ * по-разному. Одна модель на всё либо дорога там, где не надо, либо
+ * слаба там, где надо.
  */
 
-const AI_KEYS = ['aiBaseUrl', 'aiApiKey', 'aiModel', 'aiEnabled'];
+const AI_KEYS = ['aiBaseUrl', 'aiApiKey', 'aiModel', 'aiSmartModel', 'aiVoiceModel', 'aiEnabled'];
 
 /** Значения по умолчанию: пустая конфигурация — это выключенный ИИ. */
 const AI_DEFAULTS = {
@@ -13,9 +18,30 @@ const AI_DEFAULTS = {
   aiBaseUrl: '',
   aiApiKey: '',
   aiModel: '',
+  aiSmartModel: '',
+  aiVoiceModel: '',
 };
 
-function appSettingsRepo(db) {
+/**
+ * Первичные значения из окружения. Так свежий сервер уже работает после
+ * развёртывания, а поменять всё равно можно в админке, не перезапуская
+ * контейнер: сохранённое в базе всегда сильнее переменной.
+ */
+function fromEnv(env) {
+  return {
+    aiBaseUrl: env.AI_BASE_URL || '',
+    aiApiKey: env.AI_API_KEY || '',
+    aiModel: env.AI_MODEL || '',
+    aiSmartModel: env.AI_SMART_MODEL || '',
+    aiVoiceModel: env.AI_VOICE_MODEL || '',
+    aiEnabled: env.AI_API_KEY ? '1' : '',
+  };
+}
+
+function appSettingsRepo(db, { env = process.env } = {}) {
+  const defaults = { ...AI_DEFAULTS };
+  for (const [k, v] of Object.entries(fromEnv(env))) if (v) defaults[k] = v;
+
   const get = key => db.prepare('SELECT value FROM app_settings WHERE key = ?').get(key)?.value ?? null;
 
   const set = (key, value) => {
@@ -27,7 +53,7 @@ function appSettingsRepo(db) {
 
   /** Сырая конфигурация ИИ — только для серверного кода. */
   function aiConfig() {
-    const out = { ...AI_DEFAULTS };
+    const out = { ...defaults };
     for (const k of AI_KEYS) {
       const v = get(k);
       if (v !== null) out[k] = v;
@@ -37,6 +63,10 @@ function appSettingsRepo(db) {
       baseUrl: out.aiBaseUrl,
       apiKey: out.aiApiKey,
       model: out.aiModel,
+      // Не задана умная — работает обычная. Не задана голосовая — речь
+      // не распознаём: подсунуть текстовую модель звук нельзя.
+      smartModel: out.aiSmartModel || out.aiModel,
+      voiceModel: out.aiVoiceModel,
     };
   }
 
@@ -51,15 +81,20 @@ function appSettingsRepo(db) {
       enabled: c.enabled,
       baseUrl: c.baseUrl,
       model: c.model,
+      smartModel: c.smartModel,
+      voiceModel: c.voiceModel,
       hasKey: Boolean(c.apiKey),
       keyTail: c.apiKey ? c.apiKey.slice(-4) : '',
-      ready: Boolean(c.enabled && c.baseUrl && c.model),
+      ready: Boolean(c.enabled && c.baseUrl && c.model && c.apiKey),
+      voiceReady: Boolean(c.enabled && c.baseUrl && c.voiceModel && c.apiKey),
     };
   }
 
   function saveAi(fields) {
     if (fields.baseUrl !== undefined) set('aiBaseUrl', String(fields.baseUrl).trim().replace(/\/+$/, ''));
-    if (fields.model !== undefined) set('aiModel', String(fields.model).trim());
+    for (const [field, key] of [['model', 'aiModel'], ['smartModel', 'aiSmartModel'], ['voiceModel', 'aiVoiceModel']]) {
+      if (fields[field] !== undefined) set(key, String(fields[field] ?? '').trim());
+    }
     if (fields.enabled !== undefined) set('aiEnabled', fields.enabled ? '1' : '0');
     // Пустая строка означает «оставить как было»: иначе открытая форма,
     // где ключ не показан, стирала бы его при каждом сохранении.
@@ -73,4 +108,4 @@ function appSettingsRepo(db) {
   return { get, set, aiConfig, aiPublic, saveAi };
 }
 
-module.exports = { appSettingsRepo };
+module.exports = { appSettingsRepo, AI_DEFAULTS };

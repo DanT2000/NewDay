@@ -3,6 +3,7 @@ const MIGRATIONS = [
   require('./002-normalize'),
   require('./003-meal-calories'),
   require('./004-app-settings'),
+  require('./005-ai-usage'),
 ];
 
 function currentVersion(db) {

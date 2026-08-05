@@ -155,3 +155,40 @@ textarea.rinput { height: auto; min-height: 110px; padding: 12px 13px; line-heig
   .rswatch span { font-size: 10px; }
   .rrow { padding: 12px; gap: 10px; }
 }
+
+/* ── Сводка расхода ─────────────────────────────────────────────
+ *
+ * Три числа в ряд: сегодня, за месяц, в среднем. Крупно, потому что это
+ * первое, за чем сюда заходят, и мельче их читать незачем.
+ *
+ * Ряд не переносится и не сжимается ниже читаемого: на 320 px три ячейки
+ * по 96 px не влезают, поэтому на узких экранах он прокручивается.
+ */
+.rstats {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.rstat {
+  padding: 14px 12px; border-radius: 14px;
+  background: var(--surface); border: 1px solid var(--hairline);
+  text-align: center; min-width: 0;
+}
+.rstat-value {
+  font: 600 19px/1.15 var(--font-ui); letter-spacing: -.01em;
+  color: var(--ink); white-space: nowrap;
+}
+.rstat-label {
+  margin-top: 6px; font: 500 10px/1 var(--font-ui);
+  letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3);
+}
+.rstat-hint {
+  margin-top: 5px; font: 400 11px/1.35 var(--font-ui); color: var(--ink-3);
+}
+
+/* Предупреждение читается только если отличается цветом от обычной сноски */
+.rnote.is-warn { color: var(--c-danger); }
+
+@media (max-width: 360px) {
+  .rstat { padding: 12px 8px; }
+  .rstat-value { font-size: 17px; }
+}

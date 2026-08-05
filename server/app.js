@@ -20,14 +20,21 @@ const pushRouter = require('./routes/v1/push');
 const settingsRouter = require('./routes/v1/settings');
 const notesRouter = require('./routes/v1/notes');
 const adminRouter = require('./routes/v1/admin');
+const aiRouter = require('./routes/v1/ai');
 const exportRouter = require('./routes/v1/export');
 const openapiRouter = require('./routes/v1/openapi');
 const appVersionRouter = require('./routes/v1/app');
 const legacyRouter = require('./routes/legacy');
 const { apkStore } = require('./services/apkStore');
 const { updateService } = require('./services/updateService');
+const { aiService } = require('./services/aiService');
 
-function createApp({ db, config }) {
+/**
+ * `fetchImpl` подменяется в тестах: настоящий провайдер в них ходить не
+ * должен — иначе тесты станут падать от чужих лимитов и молчать о своих
+ * ошибках.
+ */
+function createApp({ db, config, fetchImpl }) {
   const app = express();
 
   if (config.trustProxy) app.set('trust proxy', 1);
@@ -66,6 +73,11 @@ function createApp({ db, config }) {
   const update = updateService(config, { store });
   app.locals.apkStore = store;
   app.locals.update = update;
+
+  // Помощник обращается к облаку напрямую. Ключ и модели задаёт владелец
+  // в админских настройках; переменные окружения — только первые значения.
+  const ai = aiService(db, { env: process.env, fetchImpl });
+  app.locals.ai = ai;
 
   app.use('/api/health', healthRouter(db));
   // Спецификация и документация доступны без входа
@@ -114,8 +126,9 @@ function createApp({ db, config }) {
   app.use('/api/v1/series', seriesRouter({ db }));
   app.use('/api/v1/push', pushRouter({ db, push }));
 
+  app.use('/api/v1/ai', aiRouter({ ai }));
   app.use('/api/v1/notes', notesRouter({ db }));
-  app.use('/api/v1/admin', adminRouter({ db, config }));
+  app.use('/api/v1/admin', adminRouter({ db, config, ai }));
   app.use('/api/v1/settings', settingsRouter({ db, config }));
   app.use('/api/v1', exportRouter({ db }));
 

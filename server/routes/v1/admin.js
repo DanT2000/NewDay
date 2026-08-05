@@ -17,9 +17,9 @@ const v = require('../../lib/validate');
 const { appSettingsRepo } = require('../../repos/appSettings');
 const { isAdmin } = require('../../lib/admin');
 
-module.exports = function adminRouter({ db, config }) {
+module.exports = function adminRouter({ db, config, ai }) {
   const router = express.Router();
-  const settings = appSettingsRepo(db);
+  const settings = ai.settings ?? appSettingsRepo(db);
 
   // Проверка админа — на весь роутер: забыть её на одном эндпоинте
   // означает отдать ключ любому пользователю.
@@ -43,7 +43,11 @@ module.exports = function adminRouter({ db, config }) {
       }
       patch.baseUrl = url;
     }
-    if (body.model !== undefined) patch.model = v.str(body.model, { max: 120, field: 'модель' });
+    // Моделей три: быстрая для фраз, умная для длинных текстов, голосовая
+    // для речи. Одна на всё либо дорога, либо слаба — замеры в docs/стоимость.md
+    for (const [field, name] of [['model', 'модель'], ['smartModel', 'умная модель'], ['voiceModel', 'модель распознавания']]) {
+      if (body[field] !== undefined) patch[field] = v.str(body[field], { max: 120, field: name });
+    }
     if (body.enabled !== undefined) patch.enabled = Boolean(body.enabled);
     // null — «удалить ключ», пустая строка — «не менять»
     if (body.apiKey === null) patch.apiKey = null;
@@ -90,6 +94,18 @@ module.exports = function adminRouter({ db, config }) {
         detail: String(e.message).slice(0, 200),
       });
     }
+  }));
+
+  // ── Расход ─────────────────────────────────────────────────
+
+  /**
+   * Сколько потрачено. Владелец платит за модель и должен видеть это здесь,
+   * а не в личном кабинете провайдера: иначе о всплеске он узнаёт, когда
+   * кончаются деньги.
+   */
+  router.get('/ai/usage', wrap((req, res) => {
+    const days = Math.min(365, Math.max(1, Number(req.query.days) || 30));
+    res.json({ ...ai.usage.summary(days), daily: ai.usage.daily(days) });
   }));
 
   return router;

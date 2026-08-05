@@ -249,68 +249,136 @@ function versionGroup() {
 function aiGroup() {
   if (!profile.isAdmin) return null;
   const box = card();
-  add(box, linkRow('Подключение ИИ', {
-    iconName: 'sparkle-fill', accentIcon: true,
-    hint: aiCfg?.ready
-      ? `${aiCfg.model} · ${hostOf(aiCfg.baseUrl)}`
-      : 'адрес, ключ и модель — один раз на всех',
-    value: aiCfg?.ready ? 'вкл' : 'выкл',
-    onclick: openAi,
-  }));
+  add(box,
+    linkRow('Подключение ИИ', {
+      iconName: 'sparkle-fill', accentIcon: true,
+      hint: aiCfg?.ready
+        ? `${aiCfg.model} · ${hostOf(aiCfg.baseUrl)}`
+        : 'адрес, ключ и модели — один раз на всех',
+      value: aiCfg?.ready ? 'вкл' : 'выкл',
+      onclick: openAi,
+    }),
+    // Модель платная, и расход должен быть видно здесь, а не в личном
+    // кабинете провайдера: иначе о всплеске узнаёшь, когда кончились деньги
+    linkRow('Расход', {
+      iconName: 'chart-bar',
+      hint: 'обращения, токены и рубли по дням',
+      onclick: openAiUsage,
+    }));
   return group('помощник · только для админа', box,
     h('div.rnote', { text: 'Ключ виден только вам и наружу не отдаётся. Помощник станет доступен всем пользователям этого сервера.' }));
 }
 
 const hostOf = url => { try { return new URL(url).host; } catch { return url; } };
 
+/**
+ * Готовые наборы. Модели подобраны по замерам на живом ключе
+ * (docs/стоимость.md): разбор дня — 0.10 ₽, распознавание минуты речи —
+ * 0.106 ₽ на whisper-large-v3-turbo, который дал дословно тот же текст,
+ * что полная large-v3, вдвое дешевле.
+ */
 const AI_PRESETS = [
-  { label: 'AI Tunnel', url: 'https://api.aitunnel.ru/v1', model: 'gpt-4o-mini' },
-  { label: 'OpenAI', url: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
-  { label: 'LM Studio', url: 'http://localhost:1234/v1', model: '' },
+  {
+    label: 'AI Tunnel',
+    url: 'https://api.aitunnel.ru/v1',
+    model: 'gpt-4o-mini',
+    smartModel: 'gpt-4.1-mini',
+    voiceModel: 'whisper-large-v3-turbo',
+  },
+  {
+    label: 'OpenAI',
+    url: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    smartModel: 'gpt-4.1-mini',
+    voiceModel: 'whisper-1',
+  },
+  {
+    label: 'DeepSeek',
+    url: 'https://api.deepseek.com/v1',
+    model: 'deepseek-chat',
+    smartModel: 'deepseek-chat',
+    voiceModel: '',
+  },
+  {
+    label: 'LM Studio',
+    url: 'http://localhost:1234/v1',
+    model: '',
+    smartModel: '',
+    voiceModel: '',
+  },
 ];
 
 function openAi() {
   let draft = {
     baseUrl: aiCfg?.baseUrl || '',
     model: aiCfg?.model || '',
+    smartModel: aiCfg?.smartModel || '',
+    voiceModel: aiCfg?.voiceModel || '',
     apiKey: '',
     enabled: Boolean(aiCfg?.enabled),
   };
 
   openSheet('Подключение ИИ', (body, { close }) => {
-    const urlInput = h('input.rinput', {
-      value: draft.baseUrl, placeholder: 'https://api.aitunnel.ru/v1',
-      inputMode: 'url', 'aria-label': 'Адрес API',
-      oninput: e => { draft.baseUrl = e.target.value.trim(); },
-    });
-    const keyInput = h('input.rinput', {
-      type: 'password', value: '',
-      placeholder: aiCfg?.hasKey ? `сохранён, оканчивается на ${aiCfg.keyTail}` : 'sk-…',
-      'aria-label': 'Ключ',
-      oninput: e => { draft.apiKey = e.target.value; },
-    });
-    const modelInput = h('input.rinput', {
-      value: draft.model, placeholder: 'gpt-4o-mini',
-      'aria-label': 'Модель',
-      oninput: e => { draft.model = e.target.value.trim(); },
-    });
-    const result = h('div.rnote');
+    /** Поле с подписью: моделей три, и каждая должна быть подписана. */
+    const field = (label, key, { placeholder, hint, type } = {}) => {
+      const input = h('input.rinput', {
+        ...(type ? { type } : {}),
+        value: key === 'apiKey' ? '' : draft[key],
+        placeholder, 'aria-label': label,
+        ...(key === 'baseUrl' ? { inputMode: 'url' } : {}),
+        oninput: e => {
+          draft[key] = key === 'apiKey' ? e.target.value : e.target.value.trim();
+        },
+      });
+      return {
+        input,
+        node: h('div',
+          h('span.rfield-label', { text: label }),
+          input,
+          hint ? h('div.rnote', { text: hint }) : null),
+      };
+    };
 
+    const url = field('адрес api', 'baseUrl', { placeholder: 'https://api.aitunnel.ru/v1' });
+    const key = field('ключ', 'apiKey', {
+      type: 'password',
+      placeholder: aiCfg?.hasKey ? `сохранён, оканчивается на ${aiCfg.keyTail}` : 'sk-…',
+      hint: 'Пустое поле — оставить прежний ключ.',
+    });
+    const model = field('быстрая модель', 'model', {
+      placeholder: 'gpt-4o-mini',
+      hint: 'Короткие просьбы и причёсывание фраз.',
+    });
+    const smart = field('умная модель', 'smartModel', {
+      placeholder: 'gpt-4.1-mini',
+      hint: 'Длинные тексты. Пусто — берётся быстрая.',
+    });
+    const voice = field('распознавание речи', 'voiceModel', {
+      placeholder: 'whisper-large-v3-turbo',
+      hint: 'Пусто — голосовой ввод недоступен.',
+    });
+
+    const result = h('div.rnote');
     const presets = h('div.rchips');
     add(presets, ...AI_PRESETS.map(p => h('button.rchip', {
       type: 'button', text: p.label,
       onclick: () => {
-        urlInput.value = p.url; draft.baseUrl = p.url;
-        if (p.model) { modelInput.value = p.model; draft.model = p.model; }
+        // Набор заполняет всё сразу: подбирать три модели вручную — работа
+        // на полчаса и с ошибками
+        for (const [k, f] of [['baseUrl', url], ['model', model], ['smartModel', smart], ['voiceModel', voice]]) {
+          draft[k] = p[k] ?? '';
+          f.input.value = draft[k];
+        }
       },
     })));
 
     add(body, h('div.stack',
-      h('div', h('span.rfield-label', { text: 'готовые адреса' }), presets),
-      h('div', h('span.rfield-label', { text: 'адрес api' }), urlInput),
-      h('div', h('span.rfield-label', { text: 'ключ' }), keyInput,
-        h('div.rnote', { text: 'Пустое поле — оставить прежний ключ.' })),
-      h('div', h('span.rfield-label', { text: 'модель' }), modelInput),
+      h('div', h('span.rfield-label', { text: 'готовые наборы' }), presets),
+      url.node,
+      key.node,
+      model.node,
+      smart.node,
+      voice.node,
       switchRow('Помощник включён', 'выключенный ИИ не показывается пользователям',
         draft.enabled, v => { draft.enabled = v; }),
       result,
@@ -320,27 +388,33 @@ function openAi() {
           onclick: async () => {
             result.textContent = 'Проверяю…';
             try {
-              await api.PATCH('/admin/ai', { baseUrl: draft.baseUrl, apiKey: draft.apiKey, model: draft.model });
-              draft.apiKey = ''; keyInput.value = '';
+              // Сохраняем перед проверкой: проверять имеет смысл только то,
+              // что сервер действительно будет использовать
+              await api.PATCH('/admin/ai', {
+                baseUrl: draft.baseUrl, apiKey: draft.apiKey,
+                model: draft.model, smartModel: draft.smartModel, voiceModel: draft.voiceModel,
+              });
+              draft.apiKey = ''; key.input.value = '';
               const r = await api.POST('/admin/ai/test', {});
               result.textContent = r.ok
                 ? `Связь есть, ${r.ms} мс${r.models?.length ? `. Моделей доступно: ${r.models.length}` : ''}`
                 : `Не вышло: ${r.message}`;
               if (r.ok && r.models?.length && !draft.model) {
-                modelInput.value = r.models[0]; draft.model = r.models[0];
+                draft.model = r.models[0];
+                model.input.value = r.models[0];
               }
             } catch (e) { result.textContent = e.message; }
           },
         }),
         aiCfg?.hasKey
           ? h('button.btn.btn-danger', {
-              type: 'button', text: 'Удалить ключ',
-              onclick: async () => {
-                await api.PATCH('/admin/ai', { apiKey: null });
-                aiCfg = await api.GET('/admin/ai');
-                result.textContent = 'Ключ удалён';
-              },
-            })
+            type: 'button', text: 'Удалить ключ',
+            onclick: async () => {
+              await api.PATCH('/admin/ai', { apiKey: null });
+              aiCfg = await api.GET('/admin/ai');
+              result.textContent = 'Ключ удалён';
+            },
+          })
           : null),
       h('button.btn-sheet', {
         text: 'Сохранить',
@@ -354,6 +428,75 @@ function openAi() {
         },
       })));
   });
+}
+
+/**
+ * Расход. Крупно сверху — сегодня и за месяц; ниже за что платим и кто
+ * расходует. «Сто рублей» ничего не говорит, пока не видно, ушли они на
+ * распознавание или на разбор и один человек увлёкся или пользуются все.
+ */
+function openAiUsage() {
+  openSheet('Расход на ИИ', async (body) => {
+    add(body, h('div.rnote', { text: 'Загружаю…' }));
+    let u;
+    try {
+      u = await api.GET('/admin/ai/usage?days=30');
+    } catch (e) {
+      replace(body, h('div.rnote', { text: e.message }));
+      return;
+    }
+
+    const money = v => `${(Number(v) || 0).toFixed(2)} ₽`;
+    const big = (label, value, hint) => h('div.rstat',
+      h('div.rstat-value', { text: value }),
+      h('div.rstat-label', { text: label }),
+      hint ? h('div.rstat-hint', { text: hint }) : null);
+
+    const table = (title, data, unit = 'обращений') => {
+      const entries = Object.entries(data).sort((a, b) => b[1].rub - a[1].rub);
+      if (!entries.length) return null;
+      const box = card();
+      add(box, ...entries.map(([name, v]) => statRow(KIND_TITLE[name] ?? name, `${v.requests} ${unit}`, money(v.rub))));
+      return group(title, box);
+    };
+
+    replace(body, h('div.stack',
+      h('div.rstats',
+        big('сегодня', money(u.today.rub), `${u.today.requests} обращений`),
+        big('за 30 дней', money(u.rub), `${u.total} обращений`),
+        big('в среднем', money(u.perRequest), 'за обращение')),
+
+      u.failed
+        ? h('div.rnote.is-warn', {
+          text: `Неудачных обращений: ${u.failed} из ${u.total}. У части провайдеров они тоже стоят денег.`,
+        })
+        : null,
+
+      table('за что', u.byKind),
+      table('кто', u.byUser),
+      table('какой моделью', u.byModel),
+
+      h('div.rnote', {
+        text: u.total
+          ? `Средний ответ ${((u.avgMs || 0) / 1000).toFixed(1)} с. Токенов израсходовано ${u.tokens.toLocaleString('ru-RU')}.`
+          : 'Обращений ещё не было.',
+      })));
+  });
+}
+
+const KIND_TITLE = {
+  parse: 'разбор в план дня',
+  improve: 'причёсывание текста',
+  transcribe: 'распознавание речи',
+};
+
+/** Строка сводки: без шеврона и без нажатия — это данные, а не переход. */
+function statRow(label, hint, value) {
+  return h('div.rrow',
+    h('div.rrow-body',
+      h('div.rrow-title', { text: label }),
+      hint ? h('div.rrow-hint', { text: hint }) : null),
+    h('span.rrow-value', { text: value }));
 }
 
 // ── Шторки прочих разделов ───────────────────────────────────

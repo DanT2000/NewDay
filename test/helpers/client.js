@@ -71,8 +71,8 @@ const getJson = (url, cookie, path, headers) =>
  * Поднимает сервер (или переиспользует переданный), регистрирует пользователя
  * и логинится. Без SMTP регистрация сразу подтверждена.
  */
-async function loggedIn({ email = 'user@example.com', password = 'secret12', server, env } = {}) {
-  const srv = server ?? await startTestServer({ env });
+async function loggedIn({ email = 'user@example.com', password = 'secret12', server, env, fetchImpl } = {}) {
+  const srv = server ?? await startTestServer({ env, fetchImpl });
   await post(srv.url, '/api/v1/auth/register', { email, password });
   const login = await post(srv.url, '/api/v1/auth/login', { emailOrUsername: email, password });
   if (login.status !== 200) {
