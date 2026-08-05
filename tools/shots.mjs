@@ -172,9 +172,10 @@ if (process.env.SHOT_AI) {
  * шторки — они и есть половина макета, а увидеть их иначе нечем.
  */
 if (process.env.SHOT_WEB) {
-  const SECTIONS = ['today', 'plan', 'habits', 'notes', 'settings'];
+  const SECTIONS = ['today', 'plan', 'habits', 'notes', 'stats', 'settings'];
   for (let i = 0; i < SECTIONS.length; i++) {
-    await rpc(ws, 'Runtime.evaluate', { expression: `document.querySelectorAll('.wnav-item')[${i}].click()` });
+    // По названию, а не по номеру: добавили раздел — номера съехали
+    await rpc(ws, 'Runtime.evaluate', { expression: `[...document.querySelectorAll('.wnav-item')][${i}].click()` });
     await new Promise(r => setTimeout(r, 450));
     const shot = await rpc(ws, 'Page.captureScreenshot', { format: 'png' });
     await fs.writeFile(path.join(OUT, `web-${SECTIONS[i]}-${WIDTH}.png`), Buffer.from(shot.data, 'base64'));
@@ -193,7 +194,7 @@ if (process.env.SHOT_WEB) {
   }
 
   const MODALS = ['row', 'schedule', 'ai', 'habit', 'note', 'task', 'meal', 'sport',
-    'notify', 'file', 'template', 'tplRow', 'print'];
+    'notify', 'file', 'template', 'tplRow', 'print', 'password', 'token', 'pair', 'assistant'];
   for (const m of MODALS) {
     await rpc(ws, 'Runtime.evaluate', {
       expression: `(() => {

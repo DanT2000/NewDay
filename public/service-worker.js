@@ -6,8 +6,11 @@
  * сказать, что связи нет.
  */
 
-const VERSION = 'newday-v5';
+const VERSION = 'newday-v6';
 const SHELL = [
+  // Веб-версия: с неё начинается браузер, и офлайн она должна открываться
+  '/web.html', '/css/web.css',
+  '/js/web/app.js', '/js/web/store.js', '/js/web/adapt.js', '/js/web/data.js', '/js/web/sheet.js',
   '/now.html', '/app.html', '/habits.html', '/stats.html', '/settings.html',
   '/login.html', '/register.html', '/index.html', '/install.html',
   '/css/fonts.css', '/css/tokens.css', '/css/base.css', '/css/components.css',
@@ -110,23 +113,30 @@ self.addEventListener('push', event => {
     // будильник должен остаться на экране, пока его не тронут
     requireInteraction: isAlarm,
     vibrate: isAlarm ? [400, 200, 400, 200, 400] : [200],
-    data: { url: data.url || '/app.html' },
+    data: { url: data.url || '/web.html' },
     actions: [{ action: 'open', title: 'Открыть день' }],
   }));
 });
 
 self.addEventListener('notificationclick', event => {
   event.notification.close();
-  const url = event.notification.data?.url || '/app.html';
+  const url = event.notification.data?.url || '/web.html';
 
   event.waitUntil((async () => {
     const clientsList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     // если приложение уже открыто — не плодим вкладки, а переводим фокус
+    const target = new URL(url, self.location.origin);
     for (const client of clientsList) {
-      if (client.url.includes(new URL(url, self.location.origin).pathname)) {
-        await client.focus();
-        return;
+      if (!client.url.includes(target.pathname)) continue;
+      await client.focus();
+      /*
+       * И показываем тот день, о котором звали: без этого открытая вкладка
+       * просто всплывала на сегодняшнем, а напоминание было про завтра.
+       */
+      if (client.url !== target.href && typeof client.navigate === 'function') {
+        await client.navigate(target.href).catch(() => {});
       }
+      return;
     }
     await self.clients.openWindow(url);
   })());

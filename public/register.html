@@ -76,7 +76,7 @@
           '<p class="auth-footer">Письмо отправлено на <b>' + email +
           '</b>. Перейдите по ссылке из письма, чтобы подтвердить адрес и войти.</p>';
       } else {
-        window.location.replace('/now.html');
+        window.location.replace(globalThis.Capacitor?.isNativePlatform?.() ? '/now.html' : '/web.html');
       }
     });
   </script>

@@ -35,7 +35,9 @@
     import { me } from '/js/api.js';
     try {
       await me();
-      location.replace('/now.html');
+      // В приложении остаются прежние экраны: веб-версия рисована под
+      // компьютер, и переводить на неё телефон надо отдельно и осознанно
+      location.replace(globalThis.Capacitor?.isNativePlatform?.() ? '/now.html' : '/web.html');
     } catch {
       location.replace('/login.html');
     }

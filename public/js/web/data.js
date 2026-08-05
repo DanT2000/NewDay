@@ -47,7 +47,8 @@ export const NAV = [
   { key: 'today', label: 'Сейчас', icon: 'sun-horizon', badge: '' },
   { key: 'plan', label: 'Расписание', icon: 'calendar-blank', badge: '' },
   { key: 'habits', label: 'Привычки', icon: 'check-circle', badge: '2/3' },
-  { key: 'notes', label: 'Заметки', icon: 'note', badge: '5' },
+  { key: 'notes', label: 'Заметки', icon: 'note', badge: '' },
+  { key: 'stats', label: 'Итоги', icon: 'chart-bar', badge: '' },
   { key: 'settings', label: 'Настройки', icon: 'gear', badge: '' },
 ];
 /** Родительный падеж: «5 августа», а не «5 август». */

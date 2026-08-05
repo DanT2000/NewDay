@@ -104,7 +104,7 @@
       if (res.ok) {
         // в приложении сессии нет — живём на токене устройства
         if (data.deviceToken) localStorage.setItem('newday.deviceToken', data.deviceToken);
-        window.location.replace('/now.html');
+        window.location.replace(globalThis.Capacitor?.isNativePlatform?.() ? '/now.html' : '/web.html');
       } else {
         // сервер отвечает { error: { code, message } }
         errEl.textContent = data.error?.message || data.error || 'Ошибка входа';

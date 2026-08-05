@@ -310,6 +310,18 @@
   color: var(--text); font: 400 16px/1 var(--ui); outline: none;
 }
 .winput:focus { border-color: var(--accent); }
+/* Список в тех же рамках, что и поле: своя стрелка не нужна, родная понятнее */
+select.winput { appearance: auto; cursor: pointer; }
+
+/*
+ * Код подключения. Моноширинный и крупный: его переписывают глазами на
+ * телефон, и «0» с «O» здесь путать нельзя.
+ */
+.wcode {
+  font: 600 34px/1 var(--mono); letter-spacing: .22em; text-align: center;
+  padding: 20px 10px 20px 22px; border-radius: 14px;
+  background: var(--raise); color: var(--accent);
+}
 
 .wnum {
   width: 86px; height: 44px; padding: 0 12px; border-radius: 11px;
@@ -835,8 +847,15 @@
   .wcols { grid-template-columns: minmax(0, 1fr); }
   .wcols > .wcol:nth-child(3) { grid-column: auto; }
   .wtop { flex-wrap: wrap; }
-  .wdays { justify-content: flex-start; }
+  /*
+   * Полоса недели уезжала за край и обрезалась на середине вторника.
+   * На узком экране её заменяют стрелки и выбор даты — они рядом и целы.
+   */
+  .wdays { display: none; }
   .wbody { padding: 16px; }
+  /* Заголовок раздела и кнопка рядом с ним перестают тесниться в колонку */
+  .whead { flex-wrap: wrap; align-items: flex-start; }
+  .whead-text { flex: 1 1 100%; }
   .wnotes { grid-template-columns: minmax(0, 1fr); }
   .wveil { padding: 0; place-items: end stretch; }
   .wmodal, .wmodal.wide { width: 100%; max-width: 100%; max-height: 92vh; border-radius: 20px 20px 0 0; }
@@ -883,6 +902,71 @@
 .wsport-row:hover { background: var(--raise); }
 .wsport-num { font: 500 13px/1 var(--mono); color: var(--dim); text-align: right; }
 .wsport-row .wstrike { font: 400 15px/1.3 var(--ui); }
+
+/* ── Экран «Итоги» ─────────────────────────────────────────── */
+
+/*
+ * График во всю ширину, остальное — в две колонки. Столбикам нужна ширина
+ * больше, чем всему прочему: месяц в узкой колонке превращается в частокол.
+ */
+.wsummary {
+  display: grid; gap: 14px; max-width: 960px; align-items: start;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.wsummary > :first-child { grid-column: 1 / -1; }
+
+.wfig-cap {
+  font: 500 11px/1 var(--ui); letter-spacing: .12em;
+  text-transform: uppercase; color: var(--faint);
+}
+.wfig-val { font: 500 19px/1.2 var(--ui); margin-top: 6px; letter-spacing: -.01em; }
+
+/*
+ * Столбики тянутся по ширине панели: preserveAspectRatio="none" растягивает
+ * их как надо, а высота задана здесь, чтобы месяц и три месяца читались
+ * одинаково.
+ */
+.wchart { display: block; width: 100%; height: 90px; }
+.wchart-track { fill: var(--raise); }
+.wchart-bar { fill: var(--accent); }
+
+.wweek { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
+.wweek-cell { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+.wweek-dow, .wweek-val { font: 400 11px/1 var(--ui); color: var(--faint); }
+.wweek-val { font-family: var(--mono); }
+.wweek-bar {
+  width: 100%; height: 74px; border-radius: 8px; background: var(--raise);
+  display: flex; align-items: flex-end; overflow: hidden;
+}
+.wweek-bar i { display: block; width: 100%; background: var(--accent); border-radius: 8px; }
+
+.whabit-stat { display: flex; align-items: center; gap: 12px; padding: 11px 18px; }
+.whabit-emoji { font-size: 19px; flex: none; }
+.whabit-body { flex: 1; min-width: 0; }
+.whabit-title { font: 400 15px/1.3 var(--ui); }
+.whabit-meta { font: 400 12px/1.4 var(--ui); color: var(--faint); margin-top: 4px; }
+/* Полоска процента: число рядом уже сказано словами, полоска — для сравнения */
+.whabit-bar {
+  width: 92px; height: 6px; flex: none; border-radius: 3px;
+  background: var(--raise); overflow: hidden;
+}
+.whabit-bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+
+/*
+ * Узкий экран. Правила стоят здесь, а не в общем блоке ниже по файлу:
+ * при равной силе побеждает то, что записано позже, и общий блок эти
+ * настройки бы перебил.
+ */
+@media (max-width: 1240px) {
+  .wsummary { grid-template-columns: minmax(0, 1fr); }
+  .wsummary > :first-child { grid-column: auto; }
+}
+@media (max-width: 720px) {
+  /* Полоска — для сравнения глазом; когда название переносится в три
+     строки, сравнивать уже нечего, и проценту достаточно слов */
+  .whabit-bar { display: none; }
+  .whabit-stat { padding: 11px 16px; }
+}
 
 /* ── Лист на печать ────────────────────────────────────────── */
 

@@ -183,6 +183,21 @@ test('таймзона пользователя влияет на момент �
  * из `settings`, а после правки зовёт `replan`. Без пересчёта новое «за
  * сколько предупреждать» начало бы действовать только со следующего дня.
  */
+test('уведомление ведёт в тот день, о котором оно', async () => {
+  const s = await loggedIn(withPush());
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/push/subscribe', { subscription: SUB });
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/schedule`,
+      { time: '09:00', title: 'Совещание', alarmMode: 'notify' });
+
+    const status = await getJson(s.url, s.cookie, '/api/v1/push/status');
+    // Без даты в адресе нажатие открывало бы сегодняшний день, а напоминание
+    // было про завтрашний
+    assert.strictEqual(status.pending[0].payload.url, `/web.html#${tomorrow}`);
+  } finally { await s.close(); }
+});
+
 test('статус несёт настройки уведомлений со значениями по умолчанию', async () => {
   const s = await loggedIn(withPush());
   try {

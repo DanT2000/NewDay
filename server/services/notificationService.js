@@ -91,7 +91,8 @@ function notificationService(db, { push, now = () => Date.now() } = {}) {
         itemId: row.id,
         startMin: row.start_min,
         profile: row.alarm_profile,
-        url: `/app.html#${date}`,
+        // Нажатие на уведомление открывает именно тот день, о котором оно
+        url: `/web.html#${date}`,
       });
     }
 

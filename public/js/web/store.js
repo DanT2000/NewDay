@@ -45,9 +45,14 @@ export const store = {
   range: null,        // { from, to, days: [...] } — для сетки недели и месяца
   habits: [],
   notes: [],
+  stats: null,        // итоги за период: прогресс по дням и привычки
+  devices: [],
+  tokens: [],
   template: null,     // именованное правило-шаблон, применяется вручную
   push: null,         // подписка браузера на уведомления и её настройки
   ai: { ready: false, voice: false },
+  aiConfig: null,     // настройки помощника — их видит только владелец
+  aiUsage: null,
   error: null,
 };
 
@@ -83,6 +88,18 @@ export async function loadRange(date, view) {
   }
   store.range = await api.GET(`/days/range?from=${from}&to=${to}`);
   return store.range;
+}
+
+/**
+ * Итоги за период. Границы считаем здесь, а не полагаемся на умолчание
+ * сервера: экран показывает «с такого по такое», и числа должны совпасть
+ * с подписью.
+ */
+export async function loadStats(days = 30) {
+  const to = store.settings?.today ?? todayFor(store.settings?.timezone);
+  const from = addDays(to, -(days - 1));
+  store.stats = await api.stats(from, to);
+  return store.stats;
 }
 
 export async function loadHabits() {
@@ -136,6 +153,55 @@ export async function applyTemplate(date) {
   if (!store.template) throw new Error('Шаблон ещё не создан');
   return api.series.applyTo(store.template.id, date);
 }
+
+// ── Учётная запись, устройства, доступы ──────────────────────
+
+export async function loadAccount() {
+  const [devices, tokens] = await Promise.all([
+    api.devices.list().catch(() => []),
+    api.tokens.list().catch(() => []),
+  ]);
+  store.devices = Array.isArray(devices) ? devices : [];
+  store.tokens = Array.isArray(tokens) ? tokens : [];
+  return { devices: store.devices, tokens: store.tokens };
+}
+
+export const revokeDevice = id => api.devices.revoke(id).then(loadAccount);
+export const createToken = (name, scope) => api.tokens.create(name, scope);
+export const revokeToken = id => api.tokens.revoke(id).then(loadAccount);
+export const pairCode = () => api.devices.pair();
+
+/** Профиль: имя, часовой пояс, начало недели. */
+export async function saveProfile(patch) {
+  const fresh = await api.saveSettings(patch);
+  store.settings = { ...store.settings, ...fresh };
+  store.user = { ...store.user, email: fresh.email ?? store.user?.email };
+  return store.settings;
+}
+
+export const changePassword = (current, next) => api.changePassword(current, next);
+export const logout = () => api.logout();
+
+// ── Помощник: только для владельца ───────────────────────────
+
+export async function loadAiConfig() {
+  store.aiConfig = await api.GET('/admin/ai');
+  return store.aiConfig;
+}
+
+export async function loadAiUsage(days = 30) {
+  store.aiUsage = await api.GET(`/admin/ai/usage?days=${days}`);
+  return store.aiUsage;
+}
+
+export async function saveAiConfig(patch) {
+  store.aiConfig = await api.PATCH('/admin/ai', patch);
+  // Признак «работает» виден всем, и после правки он мог измениться
+  store.ai = await api.GET('/ai/status').catch(() => store.ai);
+  return store.aiConfig;
+}
+
+export const testAi = () => api.POST('/admin/ai/test', {});
 
 // ── Уведомления в браузере ───────────────────────────────────
 

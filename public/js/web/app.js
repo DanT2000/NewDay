@@ -13,7 +13,7 @@
  * быстрее, чем следить за тем, что именно изменилось.
  */
 
-import { h, add, replace, $ } from '../dom.js';
+import { h, add, replace, svg, $ } from '../dom.js';
 import { icon } from '../vendor/icons.js';
 import {
   DARK, LIGHT, PALETTE, ALARM, LEADS, CATS, NAV, MONTHS, DOW_LONG, DOW_SHORT,
@@ -54,6 +54,11 @@ const state = {
   habitDays: { 0: true, 1: true, 2: true, 3: true, 4: true, 5: false, 6: false },
   aiStep: 'input', aiText: '', aiOff: {},
   printScope: 0, printOff: {},
+  statsDays: 30,
+  passOld: '', passNew: '', passNew2: '',
+  pairCode: null,
+  tokenName: '', tokenScope: 'read', tokenSecret: null,
+  aiDraft: null,
 };
 
 /*
@@ -89,10 +94,19 @@ window.__wopen = name => {
   if (name === 'notify' || name === 'template') return openLink(name);
   if (name === 'file') return openLink('export');
   if (name === 'tplRow') return openTplRow('new');
+  if (name === 'pair') return openPair();
+  if (name === 'assistant') return openAssistant();
   return set({ modal: name });
 };
 
-const dark = () => state.theme !== 'light';
+/**
+ * «Система» — это правда система, а не «тёмная по умолчанию»: спрашиваем
+ * браузер. Иначе человек, выбравший «Система» на светлом компьютере,
+ * получал бы тёмный экран и считал настройку сломанной.
+ */
+const dark = () => (state.theme === 'system'
+  ? !matchMedia('(prefers-color-scheme: light)').matches
+  : state.theme !== 'light');
 const accent = () => PALETTE[state.color][dark() ? 'dark' : 'light'];
 const soft = () => `color-mix(in srgb, ${accent()} 18%, transparent)`;
 
@@ -181,10 +195,17 @@ async function reload() {
     if (needsRange) jobs.push(data.loadRange(state.date, state.view));
     if (state.screen === 'habits') jobs.push(data.loadDay(state.date));
     if (state.screen === 'notes') jobs.push(data.loadNotes());
+    if (state.screen === 'stats') jobs.push(data.loadStats(state.statsDays));
     if (state.screen === 'settings') {
-      // Обе строки показывают состояние, а не заглушку: сколько строк в
-      // шаблоне и включены ли уведомления в этом браузере
-      jobs.push(data.loadTemplate().catch(() => null), data.loadPush().catch(() => null));
+      // Строки показывают состояние, а не заглушку: сколько строк в шаблоне,
+      // включены ли уведомления, какие устройства и доступы заведены
+      jobs.push(
+        data.loadTemplate().catch(() => null),
+        data.loadPush().catch(() => null),
+        data.loadAccount().catch(() => null),
+      );
+      // Расход помощника — только владельцу: остальным этот запрос вернёт 403
+      if (store.settings?.isAdmin) jobs.push(data.loadAiUsage().catch(() => null));
     }
     await Promise.all(jobs);
     fill();
@@ -270,9 +291,15 @@ function sideBar() {
     return b;
   }));
 
+  // Переключатель темы тоже сохраняется: тема, забытая при перезагрузке,
+  // выглядит так, будто выбор не сработал
   const themeBtn = h('button.wbtn-line', {
     type: 'button',
-    onclick: () => set(s => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
+    onclick: () => {
+      const next = dark() ? 'light' : 'dark';
+      set({ theme: next });
+      api.saveSettings({ theme: next }).catch(fail);
+    },
   });
   add(themeBtn, ico(dark() ? 'moon' : 'sun', '16px'), h('span', { text: dark() ? 'Тёмная тема' : 'Светлая тема' }));
 
@@ -957,6 +984,137 @@ function notesScreen() {
     filters, grid);
 }
 
+// ── Экран «Итоги» ────────────────────────────────────────────
+
+const PERIODS = [[7, 'Неделя'], [30, 'Месяц'], [90, 'Три месяца']];
+
+/**
+ * Столбики прогресса по дням. День без плана рисуется одной подложкой:
+ * ноль процентов и «нечего было делать» — разные вещи, и столбик в пол
+ * высоты сказал бы про такой день неправду.
+ */
+function barsChart(days) {
+  const W = 100;
+  const H = 30;
+  const gap = days.length > 40 ? 0.2 : 0.6;
+  const bw = (W - gap * (days.length - 1)) / Math.max(days.length, 1);
+
+  return svg('svg', {
+    viewBox: `0 0 ${W} ${H}`, class: 'wchart', preserveAspectRatio: 'none',
+    role: 'img', 'aria-label': 'Прогресс по дням',
+  }, ...days.map((d, i) => {
+    const pct = d.progress?.possible > 0 ? d.progress.percent : null;
+    const height = pct === null ? 0 : Math.max((pct / 100) * H, pct > 0 ? 0.8 : 0);
+    return svg('g', null,
+      svg('rect', { x: i * (bw + gap), y: 0, width: bw, height: H, rx: 0.6, class: 'wchart-track' }),
+      height > 0
+        ? svg('rect', { x: i * (bw + gap), y: H - height, width: bw, height, rx: 0.6, class: 'wchart-bar' })
+        : null,
+      svg('title', null, `${d.date}: ${pct === null ? 'плана не было' : `${pct}%`}`));
+  }));
+}
+
+/** По дням недели: видно, где проседает систематически, а не однажды. */
+function weekdayGrid(days) {
+  const buckets = Array.from({ length: 7 }, () => ({ sum: 0, n: 0 }));
+  for (const d of days) {
+    if (!(d.progress?.possible > 0)) continue;
+    const i = (new Date(`${d.date}T12:00:00Z`).getUTCDay() + 6) % 7;
+    buckets[i].sum += d.progress.percent;
+    buckets[i].n += 1;
+  }
+  const grid = h('div.wweek');
+  add(grid, ...buckets.map((b, i) => {
+    const avg = b.n ? Math.round(b.sum / b.n) : null;
+    return h('div.wweek-cell',
+      h('span.wweek-dow', { text: DOW_SHORT[i] }),
+      h('div.wweek-bar', h('i', { style: { height: `${avg ?? 0}%`, opacity: avg === null ? '0' : '1' } })),
+      h('span.wweek-val', { text: avg === null ? '—' : String(avg) }));
+  }));
+  return grid;
+}
+
+const statNum = (label, value) => h('div.wfig',
+  h('div.wfig-cap', { text: label }),
+  h('div.wfig-val', { text: value }));
+
+function statsScreen() {
+  const st = store.stats;
+  const head = h('div.whead',
+    h('div.whead-text',
+      h('div.whead-title', { text: 'Итоги' }),
+      h('div.whead-hint', { text: 'Процент дня — это отмеченные дела из запланированных. Дни без плана в счёт не идут.' })));
+
+  const periods = h('div.wwrap', { style: { marginBottom: '16px' } });
+  add(periods, ...PERIODS.map(([n, label]) =>
+    chip(label, state.statsDays === n, () => {
+      state.statsDays = n;
+      render();
+      data.loadStats(n).then(render).catch(fail);
+    })));
+
+  if (!st) return h('div', head, periods, h('div.whint', { text: 'Считаю…' }));
+
+  const filled = st.days.filter(d => d.progress?.possible > 0);
+  const avg = filled.length
+    ? Math.round(filled.reduce((s, d) => s + d.progress.percent, 0) / filled.length)
+    : null;
+  const best = filled.reduce((a, b) => (b.progress.percent > (a?.progress.percent ?? -1) ? b : a), null);
+
+  const chart = h('div.wpanel',
+    cap('прогресс по дням'),
+    h('div.wrow', { style: { gap: '28px', flexWrap: 'wrap', margin: '14px 0 16px' } },
+      statNum('средний день', avg === null ? '—' : `${avg}%`),
+      statNum('дней с планом', `${filled.length} из ${st.days.length}`),
+      statNum('лучший день', best ? `${adapt.shortDate(best.date)} · ${best.progress.percent}%` : '—')),
+    barsChart(st.days),
+    h('div.wrow', { style: { justifyContent: 'space-between', marginTop: '6px' } },
+      h('span.whint', { text: adapt.shortDate(st.from) }),
+      h('span.whint', { text: adapt.shortDate(st.to) })));
+
+  const week = h('div.wpanel', cap('по дням недели'),
+    h('div', { style: { marginTop: '14px' } }, weekdayGrid(st.days)));
+
+  const habitRows = h('div.wpanel-list', cap(`привычки · ${st.habits.length}`));
+  add(habitRows, ...(st.habits.length
+    ? st.habits.map(x => {
+      const pct = x.percent;
+      const row = h('div.whabit-stat');
+      add(row,
+        h('span.whabit-emoji', { text: x.emoji || '•' }),
+        h('div.whabit-body',
+          h('div.whabit-title', { text: x.title }),
+          h('div.whabit-meta', {
+            text: [
+              pct === null ? 'нет активных дней' : `${pct}% дней`,
+              x.streak ? `подряд ${x.streak}` : null,
+              x.bestStreak ? `лучшая серия ${x.bestStreak}` : null,
+            ].filter(Boolean).join(' · '),
+          })),
+        h('div.whabit-bar', h('i', { style: { width: `${pct ?? 0}%` } })));
+      return row;
+    })
+    : [h('div.whint', { text: 'Привычек нет. Заведите первую на экране «Привычки».', style: { padding: '4px 18px 14px' } })]));
+
+  const s = st.summary ?? {};
+  const summary = h('div.wpanel', cap('коротко'),
+    h('div.wstack-tight', { style: { marginTop: '14px' } },
+      h('div.wsmall', {
+        text: s.bestHabit
+          ? `Лучше всего держится «${s.bestHabit.title}» — ${s.bestHabit.percent}% дней.`
+          : 'Пока не по чему судить: привычки не отмечались.',
+      }),
+      s.weakestHabit
+        ? h('div.wsmall', { text: `Труднее всего даётся «${s.weakestHabit.title}» — ${s.weakestHabit.percent}%.` })
+        : null,
+      h('div.whint', {
+        text: `Выше 70% — ${s.habitsAbove70 ?? 0}, ниже 40% — ${s.habitsBelow40 ?? 0}.`,
+      })));
+
+  return h('div', head, periods,
+    h('div.wsummary', chart, week, habitRows, summary));
+}
+
 function settingsScreen() {
   const themeSeg = h('div.wsegline');
   add(themeSeg, ...[['system', 'Система'], ['light', 'Светлая'], ['dark', 'Тёмная']].map(([k, label]) =>
@@ -1038,27 +1196,181 @@ function settingsScreen() {
     return row;
   }));
 
-  const devices = h('div.wpanel',
-    cap('устройства'),
-    h('div.wpanel-note', { text: 'Браузер — это ещё одно устройство: расписание и дела синхронизируются с телефоном.' }),
-    h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '14px' } },
-      h('div.wdev',
-        ico('browser', '17px'),
-        h('div.wdev-body',
-          h('div.wdev-name', { text: 'Этот браузер' }),
-          h('div.wdev-seen', { text: store.user?.email ?? '' })),
-        h('span.wdev-tag', { text: 'браузер' })),
-      h('a.wdev', { href: '/settings.html', style: { textDecoration: 'none', color: 'inherit' } },
-        ico('device-mobile', '17px'),
-        h('div.wdev-body',
-          h('div.wdev-name', { text: 'Телефон' }),
-          h('div.wdev-seen', { text: 'подключение по коду — в настройках' })),
-        ico('caret-right', '14px'))));
-
   return h('div',
     h('div.whead-title', { text: 'Настройки', style: { marginBottom: '18px' } }),
-    h('div.wsettings', look, day, dataPanel, devices));
+    h('div.wsettings',
+      look, day, profilePanel(), dataPanel, devicesPanel(), tokensPanel(), assistantPanel()));
 }
+
+// ── Настройки: учётная запись ────────────────────────────────
+
+/** Часовые пояса России плюс тот, что стоит сейчас: список, а не поле ввода. */
+const ZONES = [
+  ['Europe/Kaliningrad', 'Калининград'], ['Europe/Moscow', 'Москва'],
+  ['Europe/Samara', 'Самара'], ['Asia/Yekaterinburg', 'Екатеринбург'],
+  ['Asia/Omsk', 'Омск'], ['Asia/Krasnoyarsk', 'Красноярск'],
+  ['Asia/Irkutsk', 'Иркутск'], ['Asia/Yakutsk', 'Якутск'],
+  ['Asia/Vladivostok', 'Владивосток'], ['Asia/Magadan', 'Магадан'],
+  ['Asia/Kamchatka', 'Камчатка'], ['UTC', 'UTC'],
+];
+
+function profilePanel() {
+  const s = store.settings ?? {};
+
+  const name = h('input.winput', {
+    value: s.displayName ?? '', placeholder: 'Как к вам обращаться',
+    onchange: e => act(data.saveProfile({ displayName: e.target.value }).then(render), 'Имя сохранено'),
+  });
+
+  const zones = new Map(ZONES);
+  if (s.timezone && !zones.has(s.timezone)) zones.set(s.timezone, s.timezone);
+  const tz = h('select.winput', {
+    onchange: e => act(data.saveProfile({ timezone: e.target.value }).then(reload), 'Часовой пояс сохранён'),
+  });
+  add(tz, ...[...zones].map(([value, label]) =>
+    h('option', { value, text: label, selected: value === s.timezone })));
+
+  const weekSeg = h('div.wsegline');
+  add(weekSeg, ...[[1, 'С понедельника'], [7, 'С воскресенья']].map(([v, label]) =>
+    h('button', {
+      type: 'button', text: label, class: (s.weekStart ?? 1) === v ? 'on' : '',
+      onclick: () => act(data.saveProfile({ weekStart: v }).then(reload)),
+    })));
+
+  const out = h('button.wbtn-quiet', {
+    type: 'button', text: 'Выйти', style: { flex: '1' },
+    onclick: () => data.logout().finally(() => { location.href = '/login.html'; }),
+  });
+  const pass = h('button.wbtn-quiet', {
+    type: 'button', text: 'Сменить пароль', style: { flex: '1' },
+    onclick: () => set({ modal: 'password', passOld: '', passNew: '', passNew2: '' }),
+  });
+
+  return h('div.wpanel',
+    cap('учётная запись'),
+    h('div.wpanel-note', { text: store.user?.email ?? '' }),
+    h('div.wpanel-label', { text: 'Имя' }), h('div', { style: { marginTop: '11px' } }, name),
+    h('div.wpanel-label', { text: 'Часовой пояс' }),
+    h('div', { style: { marginTop: '11px' } }, tz),
+    h('div.whint', { text: `Сегодня по этому поясу — ${s.today ?? '—'}. От него же считаются напоминания.`, style: { marginTop: '8px' } }),
+    h('div.wpanel-label', { text: 'Неделя начинается' }), weekSeg,
+    h('div.wrow', { style: { marginTop: '18px' } }, pass, out));
+}
+
+function devicesPanel() {
+  const list = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '14px' } });
+  add(list, h('div.wdev',
+    ico('browser', '17px'),
+    h('div.wdev-body',
+      h('div.wdev-name', { text: 'Этот браузер' }),
+      h('div.wdev-seen', { text: store.user?.email ?? '' })),
+    h('span.wdev-tag', { text: 'сейчас' })));
+
+  add(list, ...store.devices.map(d => {
+    const row = h('div.wdev');
+    add(row,
+      ico(d.platform === 'android' ? 'device-mobile' : 'laptop', '17px'),
+      h('div.wdev-body',
+        h('div.wdev-name', { text: d.name || 'Устройство' }),
+        h('div.wdev-seen', { text: d.last_seen_at ? `заходило ${adapt.shortDate(String(d.last_seen_at).slice(0, 10))}` : 'ещё не заходило' })),
+      iconBtn('trash', {
+        title: 'Отключить устройство',
+        onclick: () => act(data.revokeDevice(d.id).then(render), 'Устройство отключено'),
+      }));
+    return row;
+  }));
+
+  const pair = h('button.wbtn-dashed', { type: 'button', style: { marginTop: '10px' }, onclick: openPair });
+  add(pair, ico('qr-code', '15px'), h('span', { text: 'Подключить телефон' }));
+
+  return h('div.wpanel',
+    cap('устройства'),
+    h('div.wpanel-note', { text: 'Телефон подключается кодом: он входит в тот же аккаунт, и дела синхронизируются.' }),
+    list, pair);
+}
+
+function tokensPanel() {
+  const list = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '14px' } });
+  add(list, ...(store.tokens.length
+    ? store.tokens.map(t => {
+      const row = h('div.wdev');
+      add(row,
+        ico('key', '17px'),
+        h('div.wdev-body',
+          h('div.wdev-name', { text: t.name || 'Без названия' }),
+          h('div.wdev-seen', { text: `${t.scope === 'write' ? 'чтение и запись' : 'только чтение'} · ${t.prefix ?? ''}…` })),
+        iconBtn('trash', {
+          title: 'Отозвать',
+          onclick: () => act(data.revokeToken(t.id).then(render), 'Доступ отозван'),
+        }));
+      return row;
+    })
+    : [h('div.whint', { text: 'Ни одного доступа не выдано.' })]));
+
+  const create = h('button.wbtn-dashed', {
+    type: 'button', style: { marginTop: '10px' },
+    onclick: () => set({ modal: 'token', tokenName: '', tokenScope: 'read', tokenSecret: null }),
+  });
+  add(create, ico('plus', '15px'), h('span', { text: 'Выдать доступ' }));
+
+  return h('div.wpanel',
+    cap('доступ для ботов'),
+    h('div.wpanel-note', { text: 'Токен нужен, чтобы читать и менять день из своей программы. Он показывается один раз.' }),
+    list, create);
+}
+
+/**
+ * Помощник виден только владельцу: ключ и адрес провайдера — его дело,
+ * остальным достаточно знать, работает помощник или нет.
+ */
+function assistantPanel() {
+  if (!store.settings?.isAdmin) return null;
+  const u = store.aiUsage;
+
+  const rows = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '14px' } });
+  add(rows,
+    h('div.wdev',
+      ico('sparkle-fill', '17px'),
+      h('div.wdev-body',
+        h('div.wdev-name', { text: store.ai?.ready ? 'Помощник подключён' : 'Помощник не подключён' }),
+        h('div.wdev-seen', { text: store.ai?.voice ? 'разбор текста и расшифровка речи' : 'расшифровка речи не настроена' }))),
+    u ? h('div.wdev',
+      ico('math-operations', '17px'),
+      h('div.wdev-body',
+        h('div.wdev-name', { text: `${u.rub ?? 0} ₽ за ${u.days} ${adapt.plural(u.days, 'день', 'дня', 'дней')}` }),
+        h('div.wdev-seen', { text: `обращений ${u.total ?? 0}${u.failed ? `, из них с отказом ${u.failed}` : ''}` }))) : null);
+
+  const open = h('button.wbtn-dashed', { type: 'button', style: { marginTop: '10px' }, onclick: openAssistant });
+  add(open, ico('gear', '15px'), h('span', { text: 'Настроить помощника' }));
+
+  return h('div.wpanel', cap('помощник'),
+    h('div.wpanel-note', { text: 'Один на весь экземпляр: ключ провайдера задаёт владелец, людям он не виден.' }),
+    rows, open);
+}
+
+/** Код одноразовый: просим новый при каждом открытии, а не держим старый. */
+function openPair() {
+  set({ modal: 'pair', pairCode: null });
+  return act(data.pairCode().then(r => { state.pairCode = r; }));
+}
+
+function openAssistant() {
+  set({ modal: 'assistant', aiDraft: null });
+  return act(Promise.all([data.loadAiConfig(), data.loadAiUsage()]));
+}
+
+/**
+ * Что уходит в настройки помощника. Пустой ключ не отправляем вовсе:
+ * поле пустое потому, что ключ не показывается, а не потому, что его
+ * решили стереть. Стирает отдельная кнопка.
+ */
+const patchOf = d => ({
+  baseUrl: d.baseUrl.trim(),
+  model: d.model.trim(),
+  smartModel: d.smartModel.trim(),
+  voiceModel: d.voiceModel.trim(),
+  ...(d.apiKey.trim() ? { apiKey: d.apiKey.trim() } : {}),
+});
 
 /** Короткая правда справа в строке настроек — без неё строка ни о чём. */
 function pushValue() {
@@ -1208,6 +1520,10 @@ const TITLES = {
   notify: () => 'Уведомления',
   template: () => 'Общее расписание',
   tplRow: () => 'Строка шаблона',
+  password: () => 'Смена пароля',
+  pair: () => 'Подключение телефона',
+  token: () => (state.tokenSecret ? 'Доступ выдан' : 'Новый доступ'),
+  assistant: () => 'Помощник',
   file: () => (state.fileKind === 'import' ? 'Импорт данных' : 'Экспорт данных'),
   print: () => 'Печать дня',
 };
@@ -1756,6 +2072,166 @@ const BODIES = {
       h('button.wbtn-wide', { type: 'button', text: 'Готово', onclick: closeModal }));
   },
 
+  // ── Смена пароля ──
+  password() {
+    const field = (key, label, autocomplete) => h('label',
+      h('span.wfield-label', { text: label }),
+      h('input.winput', {
+        type: 'password', value: state[key], autocomplete,
+        oninput: e => { state[key] = e.target.value; },
+      }));
+
+    return h('div.wstack',
+      field('passOld', 'нынешний пароль', 'current-password'),
+      field('passNew', 'новый пароль', 'new-password'),
+      field('passNew2', 'ещё раз новый', 'new-password'),
+      h('div.whint', { text: 'Не короче восьми знаков. После смены другие устройства продолжат работать — они входят по своим ключам.' }),
+      h('div.wrow-end',
+        h('button.wbtn-quiet', { type: 'button', text: 'Отмена', onclick: closeModal }),
+        h('button.wbtn-wide', {
+          type: 'button', text: state.busy ? 'Меняю…' : 'Сменить', disabled: state.busy,
+          onclick: () => {
+            if (state.passNew.length < 8) { note('Новый пароль короче восьми знаков'); return; }
+            if (state.passNew !== state.passNew2) { note('Новый пароль введён по-разному'); return; }
+            act(
+              data.changePassword(state.passOld, state.passNew).then(() => { state.modal = null; }),
+              'Пароль изменён',
+            );
+          },
+        })));
+  },
+
+  // ── Подключение телефона ──
+  pair() {
+    const p = state.pairCode;
+    if (!p) return h('div.wstack', h('div.whint', { text: 'Готовлю код…' }));
+
+    const left = Math.max(0, Math.round((new Date(p.expiresAt) - Date.now()) / 60000));
+
+    return h('div.wstack',
+      h('div.whint', { text: 'Откройте NewDay на телефоне и введите код. Он одноразовый и живёт недолго — если не успели, откройте это окно ещё раз.' }),
+      h('div.wcode', { text: p.shortCode }),
+      h('div.whint', { text: `Действует ещё ${left} ${adapt.plural(left, 'минуту', 'минуты', 'минут')}.`, style: { textAlign: 'center' } }),
+      h('div.wpanel-note', { text: 'Или откройте на телефоне ссылку:' }),
+      h('div.wsheet-row', h('span.wtitle', { text: p.url, style: { wordBreak: 'break-all' } })),
+      h('button.wbtn-wide', { type: 'button', text: 'Готово', onclick: () => { closeModal(); reload(); } }));
+  },
+
+  // ── Доступ для ботов ──
+  token() {
+    if (state.tokenSecret) {
+      return h('div.wstack',
+        h('div.whint', { text: 'Скопируйте его сейчас: второй раз показать нельзя — на сервере хранится только отпечаток.' }),
+        h('div.wsheet-row', h('span.wtitle', { text: state.tokenSecret, style: { wordBreak: 'break-all', fontFamily: 'var(--mono)' } })),
+        h('div.wrow-end',
+          h('button.wbtn-quiet', {
+            type: 'button', text: 'Скопировать',
+            onclick: () => navigator.clipboard?.writeText(state.tokenSecret)
+              .then(() => note('Скопировано')).catch(() => note('Браузер не дал скопировать — выделите вручную')),
+          }),
+          h('button.wbtn-wide', {
+            type: 'button', text: 'Готово',
+            onclick: () => { state.tokenSecret = null; closeModal(); reload(); },
+          })));
+    }
+
+    const scopes = h('div.wwrap');
+    add(scopes, ...[['read', 'Только чтение'], ['write', 'Чтение и запись']].map(([k, label]) =>
+      sheetChip(label, state.tokenScope === k, () => set({ tokenScope: k }))));
+
+    return h('div.wstack',
+      h('label', h('span.wfield-label', { text: 'для чего' }),
+        h('input.winput', {
+          value: state.tokenName, placeholder: 'Например, бот в телеграме',
+          oninput: e => { state.tokenName = e.target.value; },
+        })),
+      h('div', h('div.wfield-label', { text: 'что разрешить' }), scopes),
+      h('div.whint', { text: 'Токен ходит в тот же API, что и приложение. Отозвать его можно в любой момент.' }),
+      h('div.wrow-end',
+        h('button.wbtn-quiet', { type: 'button', text: 'Отмена', onclick: closeModal }),
+        h('button.wbtn-wide', {
+          type: 'button', text: state.busy ? 'Выдаю…' : 'Выдать', disabled: state.busy,
+          onclick: () => {
+            if (!state.tokenName.trim()) { note('Назовите доступ — иначе через месяц не вспомнить, чей он'); return; }
+            act(data.createToken(state.tokenName.trim(), state.tokenScope)
+              .then(t => { state.tokenSecret = t.token; }));
+          },
+        })));
+  },
+
+  // ── Помощник: настройки владельца ──
+  assistant() {
+    const cfg = store.aiConfig;
+    if (!cfg) return h('div.wstack', h('div.whint', { text: 'Читаю настройки…' }));
+
+    const draft = state.aiDraft ?? (state.aiDraft = {
+      baseUrl: cfg.baseUrl ?? '', model: cfg.model ?? '',
+      smartModel: cfg.smartModel ?? '', voiceModel: cfg.voiceModel ?? '', apiKey: '',
+    });
+
+    const field = (key, label, hint, placeholder = '') => h('label',
+      h('span.wfield-label', { text: label }),
+      h('input.winput', {
+        value: draft[key], placeholder,
+        oninput: e => { draft[key] = e.target.value; },
+      }),
+      hint ? h('div.whint', { text: hint, style: { marginTop: '6px' } }) : null);
+
+    const u = store.aiUsage;
+    const spend = u
+      ? h('div.wpanel', { style: { padding: '14px' } },
+        cap(`расход за ${u.days} ${adapt.plural(u.days, 'день', 'дня', 'дней')}`),
+        h('div.wrow', { style: { gap: '24px', flexWrap: 'wrap', marginTop: '12px' } },
+          statNum('всего', `${u.rub} ₽`),
+          statNum('обращений', String(u.total)),
+          statNum('за обращение', `${u.perRequest} ₽`),
+          statNum('сегодня', `${u.today?.rub ?? 0} ₽`)),
+        u.failed
+          ? h('div.whint', { text: `С отказом — ${u.failed}. Отказ обычно значит, что кончились деньги на счёте провайдера или сменился ключ.`, style: { marginTop: '12px' } })
+          : null)
+      : null;
+
+    return h('div.wstack',
+      h('div.whint', {
+        text: 'Помощник разбирает написанное и расшифровывает надиктованное. Ключ и адрес видны только вам; людям видно лишь, работает он или нет.',
+      }),
+      field('baseUrl', 'адрес провайдера', 'совместимый с OpenAI: /v1/chat/completions и /v1/audio/transcriptions', 'https://api.aitunnel.ru/v1'),
+      field('apiKey', 'ключ',
+        cfg.hasKey ? `сейчас задан, оканчивается на ${cfg.keyTail}. Пустое поле оставит его как есть` : 'пока не задан',
+        cfg.hasKey ? '••••••••' : 'sk-…'),
+      field('model', 'быстрая модель', 'для коротких фраз — дешевле и быстрее', 'gpt-4o-mini'),
+      field('smartModel', 'умная модель', 'для длинных текстов, где быстрая начинает пересказывать', 'gpt-4.1-mini'),
+      field('voiceModel', 'модель распознавания', 'без неё кнопка микрофона не работает', 'whisper-large-v3-turbo'),
+      spend,
+      h('div.wrow',
+        h('button.wbtn-quiet', {
+          type: 'button', text: 'Проверить связь', disabled: state.busy, style: { flex: '1' },
+          onclick: () => act(
+            data.saveAiConfig(patchOf(draft)).then(data.testAi).then(r => {
+              if (!r.ok) throw new Error(r.error || 'Провайдер не ответил');
+              note(`Связь есть: ${r.ms} мс${r.models ? `, моделей ${r.models}` : ''}`);
+            }),
+          ),
+        }),
+        cfg.hasKey
+          ? h('button.wbtn-quiet', {
+            type: 'button', text: 'Убрать ключ', disabled: state.busy,
+            onclick: () => act(data.saveAiConfig({ apiKey: null }).then(() => { state.aiDraft = null; }), 'Ключ удалён'),
+          })
+          : null),
+      h('div.wrow-end',
+        h('button.wbtn-quiet', { type: 'button', text: 'Закрыть', onclick: () => { state.aiDraft = null; closeModal(); } }),
+        h('button.wbtn-wide', {
+          type: 'button', text: state.busy ? 'Сохраняю…' : 'Сохранить', disabled: state.busy,
+          onclick: () => act(
+            data.saveAiConfig({ ...patchOf(draft), enabled: true })
+              .then(data.loadAiUsage)
+              .then(() => { state.aiDraft = null; state.modal = null; }),
+            'Настройки помощника сохранены',
+          ),
+        })));
+  },
+
   // ── Экспорт и импорт ──
   file() {
     const imp = state.fileKind === 'import';
@@ -2178,7 +2654,10 @@ async function dictate() {
 
 // ── Сборка ───────────────────────────────────────────────────
 
-const SCREENS = { today: todayScreen, plan: planScreen, habits: habitsScreen, notes: notesScreen, settings: settingsScreen };
+const SCREENS = {
+  today: todayScreen, plan: planScreen, habits: habitsScreen,
+  notes: notesScreen, stats: statsScreen, settings: settingsScreen,
+};
 
 function render() {
   const root = $('#wapp');
@@ -2201,6 +2680,18 @@ function render() {
       SCREENS[state.screen]())),
     modal());
 }
+
+/*
+ * Дата в хвосте адреса. Нажатие на уведомление в уже открытой вкладке
+ * меняет только хвост — страница при этом не перезагружается, и без этого
+ * обработчика человек попадал бы на сегодняшний день вместо того, о котором
+ * его позвали.
+ */
+const askedDate = () => /^#(\d{4}-\d{2}-\d{2})$/.exec(location.hash)?.[1];
+addEventListener('hashchange', () => {
+  const asked = askedDate();
+  if (asked && asked !== state.date) go(asked);
+});
 
 // Escape закрывает шторку — привычнее, чем искать крестик
 addEventListener('keydown', e => { if (e.key === 'Escape' && state.modal) closeModal(); });
@@ -2230,7 +2721,9 @@ async function bootstrap() {
 
   try {
     const settings = await data.boot();
-    state.date = settings.today;
+    // Из уведомления приходят с датой в хвосте адреса: «/web.html#2026-08-12».
+    // Открыть при этом сегодняшний день значит показать не то, о чём звали
+    state.date = askedDate() ?? settings.today;
     state.theme = settings.theme ?? 'dark';
     state.color = settings.settings?.accent ?? 'violet';
     state.scale = settings.settings?.scale ?? 1;

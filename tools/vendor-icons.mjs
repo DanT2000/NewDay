@@ -35,9 +35,12 @@ const WANTED = {
     'qr-code', 'scan', 'shuffle', 'sign-in', 'sneaker-move', 'stack-simple',
     'sun', 'sun-horizon', 'trash', 'user', 'wifi-high', 'x',
   ],
+  // fill — активный раздел в боковой колонке. Нужен для каждой иконки NAV:
+  // без него активный пункт оставался без значка вовсе
   fill: [
     'alarm', 'check-circle', 'microphone', 'play', 'sparkle', 'warning-circle',
     'waveform', 'sun-horizon', 'note', 'list-checks', 'gear', 'circle',
+    'calendar-blank', 'chart-bar',
   ],
   bold: ['check'],
 };

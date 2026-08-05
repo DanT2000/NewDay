@@ -68,6 +68,11 @@ const shot = async name => {
   const s = await rpc(ws, 'Page.captureScreenshot', { format: 'png' });
   await fs.writeFile(path.join(OUT, `${name}.png`), Buffer.from(s.data, 'base64'));
 };
+/** Раздел по названию: номера съезжают, стоит добавить один пункт. */
+const nav = label => js(
+  `[...document.querySelectorAll('.wnav-item')].find(b => b.textContent.includes(${JSON.stringify(label)})).click()`,
+);
+
 const waitFor = async (expr, n = 60) => {
   for (let i = 0; i < n; i++) { if (await js(expr)) return true; await wait(200); }
   return false;
@@ -107,7 +112,7 @@ const after = await doneCount();
 проба('галочка задачи сохранилась на сервере', Math.abs(after - before) === 1, `было ${before}, стало ${after}`);
 
 // ── Создание блока протягиванием ──
-await js(`document.querySelectorAll('.wnav-item')[1].click()`);
+await nav("Расписание");
 проба('сетка недели загрузилась', await waitFor('document.querySelectorAll(".wplan-col").length === 7'));
 await wait(600);
 
@@ -189,7 +194,7 @@ await js(`document.querySelectorAll('.wseg button')[2].click()`);
 await shot('web-live-month');
 
 // ── Настройки сохраняются ──
-await js(`document.querySelectorAll('.wnav-item')[4].click()`);
+await nav("Настройки");
 await wait(500);
 await js(`document.querySelectorAll('.wswatch')[2].click()`);
 await wait(900);
@@ -206,7 +211,7 @@ const flag = await js(`fetch('/api/v1/settings').then(r=>r.json()).then(s => Boo
 await shot('web-live-settings');
 
 // ── Спорт ──
-await js(`document.querySelectorAll('.wnav-item')[0].click()`);
+await nav("Сейчас");
 await waitFor('Boolean(document.querySelector(".wsport"))');
 await wait(400);
 проба('спорт показан таблицей',
@@ -291,7 +296,7 @@ const очиститьДень = () => js(`(async () => {
 })()`, true);
 await очиститьДень();
 
-await js(`document.querySelectorAll('.wnav-item')[4].click()`);
+await nav("Настройки");
 await waitFor('Boolean(document.querySelector(".wsettings"))');
 await wait(700);
 
@@ -405,6 +410,123 @@ await wait(1200);
 // возвращаем стенд к значению по умолчанию, чтобы прогон был повторяемым
 await js(`fetch('/api/v1/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ settings: { notifyDefaultBeforeMin: 10 } }) }).then(r => r.ok)`, true);
+
+// ── Точка входа ──
+/*
+ * Веб-версия должна быть той, на которую человек попадает, а не страницей,
+ * адрес которой надо знать. Проверяем именно переход, а не наличие файла.
+ */
+await rpc(ws, 'Page.navigate', { url: `${BASE}/` });
+проба('корень ведёт в веб-версию',
+  await waitFor('location.pathname === "/web.html" && Boolean(document.querySelector(".wside"))'),
+  await js('location.pathname'));
+await wait(700);
+
+// Из уведомления приходят с датой в хвосте адреса
+await rpc(ws, 'Page.navigate', { url: `${BASE}/web.html#2026-08-20` });
+await waitFor('Boolean(document.querySelector(".wtop-num"))');
+await wait(600);
+проба('адрес с датой открывает именно тот день',
+  (await js(`document.querySelector('.wtop-num').textContent`)) === '20 августа',
+  await js(`document.querySelector('.wtop-num').textContent`));
+
+await rpc(ws, 'Page.navigate', { url: `${BASE}/web.html` });
+await waitFor('Boolean(document.querySelector(".wside"))');
+await wait(700);
+
+// ── Итоги ──
+await nav("Итоги");
+проба('итоги посчитаны', await waitFor('Boolean(document.querySelector(".wchart-bar"))'));
+await wait(500);
+
+const итоги = await js(`(() => {
+  const n = document.querySelectorAll('.wchart-bar').length;
+  const cells = document.querySelectorAll('.wweek-cell').length;
+  const habits = document.querySelectorAll('.whabit-stat').length;
+  const first = document.querySelector('.wfig-val')?.textContent;
+  return { n, cells, habits, first };
+})()`);
+проба('столбиков столько, сколько дней с планом', итоги.n > 20 && итоги.n <= 30, `${итоги.n} столбиков`);
+проба('семь дней недели на месте', итоги.cells === 7);
+проба('привычки в итогах есть', итоги.habits === 4, `${итоги.habits} привычек`);
+проба('средний день посчитан процентом', /%$/.test(итоги.first ?? ''), итоги.first);
+
+await js(`[...document.querySelectorAll('.wchip')].find(c => c.textContent === 'Неделя').click()`);
+await wait(1200);
+const заНеделю = await js(`document.querySelectorAll('.wchart-bar').length`);
+проба('переключение периода перечитывает итоги', заНеделю <= 7 && заНеделю > 0, `${заНеделю} столбиков`);
+
+// ── Настройки: учётная запись, устройства, доступы ──
+await nav("Настройки");
+await waitFor('Boolean(document.querySelector(".wsettings"))');
+await wait(900);
+
+проба('панели учётной записи, устройств и доступов на месте',
+  await js(`['учётная запись','устройства','доступ для ботов','помощник']
+    .every(t => [...document.querySelectorAll('.wcap')].some(c => c.textContent === t))`),
+  await js(`[...document.querySelectorAll('.wcap')].map(c => c.textContent).join(', ')`));
+
+const пояс = () => js(`fetch('/api/v1/settings').then(r=>r.json()).then(s => s.timezone)`, true);
+const былПояс = await пояс();
+await js(`(() => {
+  const sel = document.querySelector('.wsettings select.winput');
+  sel.value = 'Asia/Yekaterinburg';
+  sel.dispatchEvent(new Event('change', { bubbles: true }));
+})()`);
+await wait(1200);
+проба('часовой пояс сохраняется', (await пояс()) === 'Asia/Yekaterinburg', await пояс());
+// возвращаем как было: прогон должен повторяться
+await js(`fetch('/api/v1/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ timezone: ${JSON.stringify(былПояс)} }) }).then(r => r.ok)`, true);
+
+// Доступ для ботов: выдать, увидеть секрет один раз, отозвать
+const токены = () => js(`fetch('/api/v1/tokens').then(r=>r.json()).then(l => l.length)`, true);
+const токеновБыло = await токены();
+await js(`[...document.querySelectorAll('.wbtn-dashed')].find(b => b.textContent.includes('Выдать доступ')).click()`);
+await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Новый доступ'`);
+await js(`(() => {
+  const i = document.querySelector('.wmodal .winput');
+  i.value = 'Проверочный бот';
+  i.dispatchEvent(new Event('input', { bubbles: true }));
+})()`);
+await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
+проба('секрет показан один раз',
+  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Доступ выдан'`));
+проба('токен выдан на сервере', (await токены()) === токеновБыло + 1);
+
+const секрет = await js(`document.querySelector('.wmodal .wtitle')?.textContent`);
+проба('секрет похож на токен', /^nd_/.test(секрет ?? ''), секрет?.slice(0, 12));
+await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
+await waitFor('!document.querySelector(".wveil")');
+await wait(900);
+
+await js(`[...document.querySelectorAll('.wdev')].filter(d => d.textContent.includes('Проверочный бот'))
+  .forEach(d => d.querySelector('button')?.click())`);
+await wait(1200);
+проба('доступ отзывается', (await токены()) === токеновБыло, `осталось ${await токены()}`);
+
+// ── Помощник: настройки владельца ──
+await js(`[...document.querySelectorAll('.wbtn-dashed')].find(b => b.textContent.includes('Настроить помощника')).click()`);
+проба('шторка помощника открылась',
+  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Помощник'`));
+await wait(800);
+проба('поля трёх моделей на месте',
+  (await js(`document.querySelectorAll('.wmodal .winput').length`)) === 5,
+  `${await js(`document.querySelectorAll('.wmodal .winput').length`)} полей`);
+
+await js(`(() => {
+  const f = document.querySelectorAll('.wmodal .winput');
+  f[0].value = 'https://api.example.test/v1';
+  f[0].dispatchEvent(new Event('input', { bubbles: true }));
+  f[3].value = 'умная-проверочная';
+  f[3].dispatchEvent(new Event('input', { bubbles: true }));
+})()`);
+await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
+await waitFor('!document.querySelector(".wveil")', 40);
+await wait(900);
+const конфиг = await js(`fetch('/api/v1/admin/ai').then(r=>r.json())`, true);
+проба('настройки помощника сохранились', конфиг.smartModel === 'умная-проверочная', конфиг.smartModel);
+проба('ключ наружу не отдаётся', конфиг.apiKey === undefined && 'hasKey' in конфиг);
 
 console.log('\n── Итог ──');
 const плохо = пробы.filter(([, ok]) => !ok).length;
