@@ -364,12 +364,43 @@ function openAccount() {
       h('div.rnote', { text: profile.isAdmin ? 'Вы администратор этого сервера.' : 'Обычный аккаунт.' }),
       h('button.btn.btn-block', {
         text: 'Сменить пароль',
-        onclick: () => { close(); location.href = '/reset.html'; },
+        onclick: () => { close(); openPasswordChange(); },
       }),
       h('button.btn.btn-block.btn-danger', {
         text: 'Выйти из аккаунта',
         onclick: async () => { await api.logout(); location.href = '/login.html'; },
       })));
+  });
+}
+
+/**
+ * Смена пароля. Текущий спрашиваем, хотя человек уже вошёл: сессия могла
+ * остаться открытой на чужом устройстве, и тогда смена пароля без
+ * подтверждения — способ отобрать аккаунт, а не защитить его.
+ */
+function openPasswordChange() {
+  openSheet('Смена пароля', (body, { close }) => {
+    const cur = h('input.rinput', { type: 'password', autocomplete: 'current-password', 'aria-label': 'Текущий пароль' });
+    const next = h('input.rinput', { type: 'password', autocomplete: 'new-password', 'aria-label': 'Новый пароль' });
+    const err = h('div.rnote');
+
+    add(body, h('div.stack',
+      h('div', h('span.rfield-label', { text: 'текущий пароль' }), cur),
+      h('div', h('span.rfield-label', { text: 'новый пароль' }), next,
+        h('div.rnote', { text: 'Не короче восьми символов.' })),
+      err,
+      h('button.btn-sheet', {
+        text: 'Сохранить',
+        onclick: async () => {
+          err.textContent = '';
+          try {
+            await api.changePassword(cur.value, next.value);
+            close();
+            toast('Пароль изменён');
+          } catch (e) { err.textContent = e.message; }
+        },
+      })));
+    cur.focus();
   });
 }
 

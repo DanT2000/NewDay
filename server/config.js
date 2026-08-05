@@ -19,6 +19,17 @@ function loadConfig(env = process.env) {
     sessionSecret: env.SESSION_SECRET || 'newday-dev-secret-change-in-production',
     appUrl: (env.APP_URL || 'http://localhost:3000').replace(/\/+$/, ''),
     trustProxy: env.TRUST_PROXY !== '0',
+    /*
+     * Администраторы по адресу почты.
+     *
+     * Первый зарегистрировавшийся получает флаг в базе, но на живом сервере
+     * этого может оказаться недостаточно: аккаунт мог приехать из старой
+     * версии или админ появиться позже. Доступа к базе у владельца при этом
+     * обычно нет — есть только переменные окружения, поэтому список адресов
+     * задаётся здесь и работает поверх флага в базе.
+     */
+    adminEmails: String(env.ADMIN_EMAILS || '')
+      .split(',').map(e => e.trim().toLowerCase()).filter(Boolean),
     vapid: (env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY) ? {
       publicKey: env.VAPID_PUBLIC_KEY,
       privateKey: env.VAPID_PRIVATE_KEY,

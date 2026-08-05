@@ -115,8 +115,8 @@ function createApp({ db, config }) {
   app.use('/api/v1/push', pushRouter({ db, push }));
 
   app.use('/api/v1/notes', notesRouter({ db }));
-  app.use('/api/v1/admin', adminRouter({ db }));
-  app.use('/api/v1/settings', settingsRouter({ db }));
+  app.use('/api/v1/admin', adminRouter({ db, config }));
+  app.use('/api/v1/settings', settingsRouter({ db, config }));
   app.use('/api/v1', exportRouter({ db }));
 
   app.use('/api', (req, _res, next) => {

@@ -155,6 +155,8 @@ export const getSettings = () => GET('/settings');
 export const saveSettings = fields => PATCH('/settings', fields);
 export const me         = () => GET('/auth/me');
 export const logout     = () => POST('/auth/logout');
+export const changePassword = (currentPassword, newPassword) =>
+  POST('/auth/password', { currentPassword, newPassword });
 
 export const tokens = {
   list:   () => GET('/tokens'),

@@ -15,15 +15,16 @@ const express = require('express');
 const { wrap, ApiError } = require('../../lib/errors');
 const v = require('../../lib/validate');
 const { appSettingsRepo } = require('../../repos/appSettings');
+const { isAdmin } = require('../../lib/admin');
 
-module.exports = function adminRouter({ db }) {
+module.exports = function adminRouter({ db, config }) {
   const router = express.Router();
   const settings = appSettingsRepo(db);
 
   // Проверка админа — на весь роутер: забыть её на одном эндпоинте
   // означает отдать ключ любому пользователю.
   router.use((req, _res, next) => {
-    if (!req.user?.is_admin) {
+    if (!isAdmin(req.user, config)) {
       return next(new ApiError(403, 'NOT_ADMIN', 'Раздел доступен только администратору'));
     }
     next();

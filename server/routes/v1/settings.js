@@ -4,12 +4,13 @@ const v = require('../../lib/validate');
 const { isValidTimezone, todayFor } = require('../../lib/dates');
 const { usersRepo, publicUser } = require('../../repos/users');
 const { appSettingsRepo } = require('../../repos/appSettings');
+const { isAdmin } = require('../../lib/admin');
 
 const THEMES = ['system', 'light', 'dark'];
 const VIEWS = ['list', 'timeline'];
 const FOOD_MODES = ['checklist', 'timed'];
 
-module.exports = function settingsRouter({ db }) {
+module.exports = function settingsRouter({ db, config }) {
   const router = express.Router();
   const users = usersRepo(db);
   const appSettings = appSettingsRepo(db);
@@ -17,6 +18,8 @@ module.exports = function settingsRouter({ db }) {
   router.get('/', wrap((req, res) => {
     res.json({
       ...publicUser(req.user, users.getSettings(req.user.id)),
+      // Админ может быть задан адресом в окружении, а не флагом в базе
+      isAdmin: isAdmin(req.user, config),
       today: todayFor(req.user.timezone),
       // ИИ общий на весь экземпляр: интерфейсу нужно знать лишь,
       // работает ли он. Ключ и адрес видит только администратор.

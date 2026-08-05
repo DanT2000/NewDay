@@ -160,6 +160,31 @@ module.exports = function authRouter({ db, config, mailer, auth }) {
     res.json({ success: true });
   }));
 
+  /**
+   * Смена пароля из настроек.
+   *
+   * Требуем текущий пароль, хотя человек уже вошёл: сессия могла остаться
+   * открытой на чужом устройстве, и тогда смена пароля без подтверждения —
+   * это способ отобрать аккаунт, а не защитить его.
+   *
+   * Отдельно от /reset: тот работает по письму и нужен, когда пароль забыт.
+   */
+  router.post('/password', auth.requireAuth, auth.requireSession, wrap(async (req, res) => {
+    const current = String(req.body?.currentPassword ?? '');
+    const next = v.password(req.body?.newPassword);
+
+    const user = users.findById(req.user.id);
+    if (!user?.password_hash || !bcrypt.compareSync(current, user.password_hash)) {
+      throw new ApiError(400, 'BAD_PASSWORD', 'Текущий пароль не совпадает');
+    }
+    if (bcrypt.compareSync(next, user.password_hash)) {
+      throw badRequest('Новый пароль совпадает с текущим');
+    }
+
+    users.setPassword(user.id, bcrypt.hashSync(next, 10));
+    res.json({ success: true });
+  }));
+
   // ── POST /bind-email — для мигрированных аккаунтов без почты ──────
   router.post('/bind-email', auth.requireAuth, wrap(async (req, res) => {
     const email = v.email(req.body.email);
