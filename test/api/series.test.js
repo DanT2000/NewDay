@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { loggedIn, api, getJson } = require('../helpers/client');
+const { loggedIn, api, getJson, dayFromToday } = require('../helpers/client');
 
 const daily = (extra = {}) => ({
   freq: 'daily', startDate: '2026-08-03',
@@ -156,7 +156,7 @@ test('удаление серии целиком не стирает уже пр
   } finally { await s.close(); }
 });
 
-test('шаблон применяется вручную и не появляется сам', async () => {
+test('шаблон применяется и вручную', async () => {
   const s = await loggedIn();
   try {
     const tpl = await api(s.url, s.cookie, 'POST', '/api/v1/series', {
@@ -166,12 +166,92 @@ test('шаблон применяется вручную и не появляе�
         { time: '13:00-14:00', title: 'Обед' },
       ],
     });
-    const before = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-11/full');
-    assert.strictEqual(before.schedule.length, 0, 'шаблон сам не применяется');
+    // прошлый день сам не заполняется — переписывать прожитое нельзя
+    const past = await getJson(s.url, s.cookie, '/api/v1/days/2020-08-11/full');
+    assert.strictEqual(past.schedule.length, 0);
 
-    await api(s.url, s.cookie, 'POST', `/api/v1/series/${tpl.id}/apply`, { date: '2026-08-11' });
-    const after = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-11/full');
+    await api(s.url, s.cookie, 'POST', `/api/v1/series/${tpl.id}/apply`, { date: '2020-08-11' });
+    const after = await getJson(s.url, s.cookie, '/api/v1/days/2020-08-11/full');
     assert.deepStrictEqual(after.schedule.map(r => r.title), ['Работа', 'Обед']);
+  } finally { await s.close(); }
+});
+
+/*
+ * Шаблон заполняет пустой день сам — это то, что обещает подпись под ним.
+ * Три ограничения делают обещание безопасным, и каждое проверяется здесь.
+ */
+test('шаблон сам заполняет пустой будущий день', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/series', {
+      name: 'Общее расписание', forceRows: true,
+      rows: [{ time: '07:00-07:30', title: 'Подъём' }],
+    });
+    const future = dayFromToday(3);
+    const day = await getJson(s.url, s.cookie, `/api/v1/days/${future}/full`);
+    assert.deepStrictEqual(day.schedule.map(r => r.title), ['Подъём']);
+  } finally { await s.close(); }
+});
+
+test('шаблон не переписывает прошлое', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/series', {
+      name: 'Общее расписание', forceRows: true,
+      rows: [{ time: '07:00-07:30', title: 'Подъём' }],
+    });
+    const past = dayFromToday(-3);
+    const day = await getJson(s.url, s.cookie, `/api/v1/days/${past}/full`);
+    assert.strictEqual(day.schedule.length, 0, 'прожитый день не трогаем');
+  } finally { await s.close(); }
+});
+
+test('шаблон не лезет в день, где уже что-то есть', async () => {
+  const s = await loggedIn();
+  try {
+    const future = dayFromToday(4);
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${future}/schedule`, { title: 'Своё дело', startMin: 600 });
+    await api(s.url, s.cookie, 'POST', '/api/v1/series', {
+      name: 'Общее расписание', forceRows: true,
+      rows: [{ time: '07:00-07:30', title: 'Подъём' }],
+    });
+    const day = await getJson(s.url, s.cookie, `/api/v1/days/${future}/full`);
+    assert.deepStrictEqual(day.schedule.map(r => r.title), ['Своё дело']);
+  } finally { await s.close(); }
+});
+
+test('очищенный день не заполняется шаблоном второй раз', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/series', {
+      name: 'Общее расписание', forceRows: true,
+      rows: [{ time: '07:00-07:30', title: 'Подъём' }],
+    });
+    const future = dayFromToday(5);
+    const first = await getJson(s.url, s.cookie, `/api/v1/days/${future}/full`);
+    assert.strictEqual(first.schedule.length, 1);
+
+    for (const r of first.schedule) {
+      await api(s.url, s.cookie, 'DELETE', `/api/v1/days/${future}/schedule/${r.id}`);
+    }
+    const again = await getJson(s.url, s.cookie, `/api/v1/days/${future}/full`);
+    assert.strictEqual(again.schedule.length, 0, 'удалённое не возвращается');
+  } finally { await s.close(); }
+});
+
+test('ежегодный повтор попадает в то же число следующего года', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/series', {
+      freq: 'yearly', startDate: '2026-08-05',
+      rows: [{ time: '10:00', title: 'День рождения Ани', alarmMode: 'notify' }],
+    });
+    for (const d of ['2026-08-05', '2027-08-05', '2030-08-05']) {
+      const day = await getJson(s.url, s.cookie, `/api/v1/days/${d}/full`);
+      assert.deepStrictEqual(day.schedule.map(r => r.title), ['День рождения Ани'], d);
+    }
+    const other = await getJson(s.url, s.cookie, '/api/v1/days/2027-08-06/full');
+    assert.strictEqual(other.schedule.length, 0, 'соседнее число пустое');
   } finally { await s.close(); }
 });
 
@@ -224,11 +304,9 @@ test('шаблон из одной строки остаётся шаблоно�
     // всегда шлёт набор, и разбирать его должно одинаково
     assert.deepStrictEqual(JSON.parse(tpl.payload_json).rows.length, 1);
 
-    const day = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-12/full');
-    assert.strictEqual(day.schedule.length, 0, 'шаблон сам не появляется');
-
-    await api(s.url, s.cookie, 'POST', `/api/v1/series/${tpl.id}/apply`, { date: '2026-08-12' });
-    const after = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-12/full');
+    // прошлое шаблон не трогает, поэтому проверяем разбор набора вручную
+    await api(s.url, s.cookie, 'POST', `/api/v1/series/${tpl.id}/apply`, { date: '2020-08-12' });
+    const after = await getJson(s.url, s.cookie, '/api/v1/days/2020-08-12/full');
     assert.deepStrictEqual(after.schedule.map(r => r.title), ['Подъём']);
     assert.strictEqual(after.schedule[0].alarm_mode, 'alarm');
   } finally { await s.close(); }

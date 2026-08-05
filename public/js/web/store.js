@@ -148,6 +148,13 @@ export async function removeTemplate() {
   return null;
 }
 
+/**
+ * Повтор — правило без имени: сервер сам достраивает им дни. Так живут
+ * «ежедневно», «еженедельно», «ежемесячно» и «ежегодно» у напоминаний.
+ */
+export const createRepeat = ({ freq, startDate, row }) =>
+  api.series.create({ target: 'schedule', freq, startDate, rows: [row] });
+
 /** Кладёт строки шаблона в день. Сервер добавляет, а не замещает. */
 export async function applyTemplate(date) {
   if (!store.template) throw new Error('Шаблон ещё не создан');

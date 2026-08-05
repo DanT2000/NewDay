@@ -32,6 +32,11 @@ function matchesDate(rule, date) {
   if (rule.freq === 'monthly') {
     return date.slice(8, 10) === rule.start_date.slice(8, 10);
   }
+  // Ежегодно — то же число того же месяца. Без него не выразить ни день
+  // рождения, ни годовщину, а в напоминаниях это половина случаев
+  if (rule.freq === 'yearly') {
+    return date.slice(5) === rule.start_date.slice(5);
+  }
   return false;
 }
 
@@ -48,9 +53,9 @@ function seriesService(db) {
    * Достраивает день строками из активных повторов.
    * Идемпотентна: строка, уже созданная для этой серии и даты, не дублируется.
    */
-  function materializeDay(userId, date) {
+  function materializeDay(userId, date, { today = null } = {}) {
     const rules = series.activeOn(userId, 'schedule', date);
-    if (!rules.length) return 0;
+    if (!rules.length) return fillFromTemplate(userId, date, today);
 
     const overrides = new Map(series.overridesFor(userId, date).map(o => [o.series_id, o.action]));
     const existing = new Set(
@@ -80,6 +85,31 @@ function seriesService(db) {
       });
       created += 1;
     }
+    return created + fillFromTemplate(userId, date, today);
+  }
+
+  /**
+   * Пустой день заполняется шаблоном — это то, что обещает подпись под
+   * шаблоном. Три ограничения, без которых обещание превращается в беду:
+   *
+   * — только сегодня и вперёд: дописывать прошлое значит переписывать то,
+   *   что человек уже прожил;
+   * — только в пустой день: если в дне хоть что-то есть, план уже свой;
+   * — только один раз на дату. Отметка кладётся в `series_overrides`,
+   *   поэтому день, из которого всё удалили, не заполняется снова.
+   */
+  function fillFromTemplate(userId, date, today) {
+    if (!today || date < today) return 0;
+
+    const tpl = series.list(userId, { target: 'schedule', templates: true })[0];
+    if (!tpl) return 0;
+
+    const marks = series.overridesFor(userId, date);
+    if (marks.some(o => o.series_id === tpl.id)) return 0;
+    if (schedule.list(userId, date).length) return 0;
+
+    const created = applyTemplate(userId, date, tpl.id);
+    series.setOverride(userId, tpl.id, date, 'applied');
     return created;
   }
 

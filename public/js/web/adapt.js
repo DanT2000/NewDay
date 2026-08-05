@@ -174,14 +174,18 @@ const LEAD_LABEL = {
   30: 'за 30 минут', 60: 'за час', day: 'за день',
 };
 
-/** Заметки: сервер отдаёт по одной на день, заголовок — первая строка. */
-export const notes = (rows, todayKey) => rows.map(n => {
+/**
+ * Заметки: сервер отдаёт по одной на день, заголовок — первая строка.
+ * `on` — «относится к открытому дню»: по нему разделяются фильтры и
+ * набирается список заметок дня на экране «Сейчас».
+ */
+export const notes = (rows, todayKey, openDate = todayKey) => rows.map(n => {
   const text = String(n.text || '');
   const firstLine = text.split('\n')[0].trim();
   return {
     id: n.date,
     date: n.date === todayKey ? 'сегодня' : shortDate(n.date),
-    on: true,
+    on: n.date === openDate,
     title: firstLine.length > 48 ? `${firstLine.slice(0, 48)}…` : (firstLine || 'Без заголовка'),
     text,
     raw: n,

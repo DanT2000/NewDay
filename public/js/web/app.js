@@ -17,13 +17,12 @@ import { h, add, replace, svg, $ } from '../dom.js';
 import { icon } from '../vendor/icons.js';
 import {
   DARK, LIGHT, PALETTE, ALARM, LEADS, CATS, NAV, MONTHS, DOW_LONG, DOW_SHORT,
-  REPEATS, PRINT_PARTS, HABIT_EMOJI,
+  SOUNDS, REPEATS, PRINT_PARTS, HABIT_EMOJI,
 } from './data.js';
 import * as adapt from './adapt.js';
 import * as data from './store.js';
 import { store } from './store.js';
 import * as api from '../api.js';
-import * as push from '../push.js';
 import { printSheet } from './sheet.js';
 
 /** Часовая сетка: 18 часов с 06:00, строка часа — 44 px. */
@@ -44,8 +43,8 @@ const state = {
   mealId: null, mealTitle: '', mealKcal: '', mealMode: 'none', mealDur: 30, mealSched: false,
   sportId: null, sportTitle: '', sportSets: '', sportReps: '', sportWeight: '',
   noteId: null, noteText: '', noteDated: true,
-  remId: null, remRepeat: 'Ежегодно',
-  fileKind: 'export',
+  remId: null, remRepeat: 'Разово', remTitle: '', remDate: '', remTime: '10:00', remLead: 'at',
+  fileKind: 'export', sound: 'Рассвет', notifySound: 'Капля', soundKind: 'Звук будильника',
   tplRows: null, tplEdit: null, tplStart: 420, tplEnd: 480, tplField: 'start',
   tplTitle: '', tplAlarm: 'off', tplLead: 'at',
   quietFrom: '23:00', quietTo: '07:00',
@@ -70,7 +69,6 @@ let SCHEDULE = [];
 let TASKS = [];
 let MEALS = [];
 let HABITS = [];
-let SPORT = [];
 let NOTES = [];
 let REMINDERS = [];
 
@@ -94,8 +92,7 @@ window.__wopen = name => {
   if (name === 'notify' || name === 'template') return openLink(name);
   if (name === 'file') return openLink('export');
   if (name === 'tplRow') return openTplRow('new');
-  if (name === 'pair') return openPair();
-  if (name === 'assistant') return openAssistant();
+  if (name === 'reminder') return openReminder(null);
   return set({ modal: name });
 };
 
@@ -194,18 +191,11 @@ async function reload() {
     if (needsDay || state.modal) jobs.push(data.loadDay(state.date));
     if (needsRange) jobs.push(data.loadRange(state.date, state.view));
     if (state.screen === 'habits') jobs.push(data.loadDay(state.date));
-    if (state.screen === 'notes') jobs.push(data.loadNotes());
-    if (state.screen === 'stats') jobs.push(data.loadStats(state.statsDays));
+    // Заметки нужны и на «Сейчас»: правая колонка показывает заметки дня
+    if (state.screen === 'notes' || needsDay) jobs.push(data.loadNotes());
+    // На настройках нужны шаблон (для его шторки) и список устройств
     if (state.screen === 'settings') {
-      // Строки показывают состояние, а не заглушку: сколько строк в шаблоне,
-      // включены ли уведомления, какие устройства и доступы заведены
-      jobs.push(
-        data.loadTemplate().catch(() => null),
-        data.loadPush().catch(() => null),
-        data.loadAccount().catch(() => null),
-      );
-      // Расход помощника — только владельцу: остальным этот запрос вернёт 403
-      if (store.settings?.isAdmin) jobs.push(data.loadAiUsage().catch(() => null));
+      jobs.push(data.loadTemplate().catch(() => null), data.loadAccount().catch(() => null));
     }
     await Promise.all(jobs);
     fill();
@@ -223,9 +213,8 @@ function fill() {
   TASKS = adapt.tasks(store.day);
   MEALS = adapt.meals(store.day);
   HABITS = adapt.habits(store.day);
-  SPORT = adapt.sport(store.day);
   REMINDERS = adapt.reminders(SCHEDULE);
-  NOTES = adapt.notes(store.notes, todayKey());
+  NOTES = adapt.notes(store.notes, todayKey(), state.date);
 }
 const ico = (name, size = '17px', cls = '') => icon(name, { size, cls });
 
@@ -349,7 +338,6 @@ function topBar() {
     h('div.wtop-nav',
       iconBtn('caret-left', { title: 'Предыдущий день', onclick: () => shiftDay(-1) }),
       iconBtn('caret-right', { title: 'Следующий день', onclick: () => shiftDay(1) }),
-      datePick(),
       chip('Сегодня', state.date === todayKey(), () => go(todayKey()))),
     days,
     (() => {
@@ -357,25 +345,6 @@ function topBar() {
       add(b, ico('printer', '16px'), h('span', { text: 'Печать' }));
       return b;
     })());
-}
-
-/**
- * Выбор даты. Стрелки хороши для соседнего дня, но до «двадцать третьего
- * сентября» ими идти полсотни нажатий. Календарь берём у браузера: он
- * знает раскладку, клавиатуру и родной язык лучше нарисованного.
- */
-function datePick() {
-  const input = h('input', {
-    type: 'date', value: state.date, 'aria-label': 'Выбрать дату',
-    onchange: e => { if (e.target.value) go(e.target.value); },
-  });
-  const btn = h('button.wsq', {
-    type: 'button', title: 'Выбрать дату', 'aria-label': 'Выбрать дату',
-    // showPicker есть не везде; там, где нет, помогает обычное нажатие
-    onclick: () => { try { input.showPicker(); } catch { input.click(); } },
-  });
-  add(btn, ico('calendar-blank', '15px'));
-  return h('span.wtop-pick', input, btn);
 }
 
 // ── Экран «Сейчас» ───────────────────────────────────────────
@@ -539,51 +508,6 @@ function foodBlock() {
       inner));
 }
 
-/**
- * Спорт таблицей. Подходы, повторы и вес — числа, и в колонках они
- * сравниваются глазом: «стало ли больше, чем в прошлый раз» видно сразу,
- * а в строке «4×12, 60 кг» приходится вычитывать.
- */
-function sportBlock() {
-  const shades = shadeSet();
-  const done = SPORT.filter(isDone).length;
-
-  const table = h('div.wsport');
-  add(table, h('div.wsport-head',
-    h('span'), h('span', { text: 'упражнение' }),
-    h('span', { text: 'подх.' }), h('span', { text: 'повт.' }), h('span', { text: 'вес' })));
-
-  add(table, ...SPORT.map(x => {
-    const d = isDone(x);
-    const row = h('button.wsport-row', {
-      type: 'button',
-      onclick: () => set({
-        modal: 'sport', sportId: x.id, sportTitle: x.title,
-        sportSets: x.sets ?? '', sportReps: x.reps ?? '', sportWeight: x.weight ?? '',
-      }),
-    });
-    const mark = box(d);
-    mark.onclick = e => { e.stopPropagation(); toggle(x, 'sport'); };
-    add(row, mark,
-      h('span.wstrike', { text: x.title, class: d ? 'done' : '' }),
-      h('span.wsport-num', { text: x.sets ?? '—' }),
-      h('span.wsport-num', { text: x.reps ?? '—' }),
-      h('span.wsport-num', { text: x.weight === null ? '—' : `${x.weight}` }));
-    return row;
-  }));
-
-  const addBtn = h('button.wadd', {
-    type: 'button',
-    onclick: () => set({ modal: 'sport', sportId: 'new', sportTitle: '', sportSets: '', sportReps: '', sportWeight: '' }),
-  });
-  add(addBtn, ico('plus', '15px'), h('span', { text: 'Добавить упражнение' }));
-
-  return h('div',
-    sectHd('спорт', h('span.wcount', { text: `${done}/${SPORT.length}` }), shades[2]),
-    SPORT.length ? table : null,
-    h('div.wlist', { style: SPORT.length ? { marginTop: '8px' } : {} }, addBtn));
-}
-
 /** Четыре оттенка акцента для точек-маркеров разделов. */
 function shadeSet() {
   const a = accent();
@@ -623,6 +547,37 @@ function habitCard(hb, wide = false) {
         week)));
 }
 
+/**
+ * Заметки дня карточками: заголовок — первая строка, ниже остальное.
+ * Заметка в этой модели одна на день, поэтому карточка одна; нажатие
+ * открывает её редактор.
+ */
+function dayNotes() {
+  const wrap = h('div.wdaynotes');
+  const mine = NOTES.filter(n => n.on);
+
+  if (!mine.length) {
+    const empty = h('div.wdaynote', {
+      onclick: () => set({ modal: 'note', noteId: state.date, noteText: '', noteDated: true }),
+    });
+    add(empty,
+      h('div.wdaynote-title', { text: 'Заметок нет' }),
+      h('div.wdaynote-text', { text: 'Сюда идёт то, что не влезает в задачу' }));
+    return add(wrap, empty);
+  }
+
+  add(wrap, ...mine.map(n => {
+    const card = h('div.wdaynote', {
+      onclick: () => set({ modal: 'note', noteId: n.id, noteText: n.text, noteDated: true }),
+    });
+    add(card,
+      h('div.wdaynote-title', { text: n.title }),
+      h('div.wdaynote-text', { text: n.text }));
+    return card;
+  }));
+  return wrap;
+}
+
 function todayScreen() {
   const left = h('div.wcol', nowCard(),
     h('div',
@@ -633,17 +588,16 @@ function todayScreen() {
       })()),
       scheduleList()));
 
-  const mid = h('div.wcol', statCards(), tasksBlock(), foodBlock(), sportBlock());
+  const mid = h('div.wcol', statCards(), tasksBlock(), foodBlock());
 
   const remList = h('div.wlist');
   add(remList, ...REMINDERS.map(r => {
-    const row = h('button.wrem', { type: 'button', onclick: () => openRow(r.raw) });
+    const row = h('button.wrem', { type: 'button', onclick: () => openReminder(r.raw) });
     add(row, ico(r.icon, '17px'),
       h('div.wrem-body', h('div.wrem-title', { text: r.title }), h('div.wrem-meta', { text: r.meta })));
     return row;
   }));
-  // Напоминание — момент без длительности: тот же редактор, конец пустой
-  const addRem = h('button.wadd', { type: 'button', onclick: () => newRow({ start: 600, end: null }) });
+  const addRem = h('button.wadd', { type: 'button', onclick: () => openReminder(null) });
   add(addRem, ico('plus', '15px'), h('span', { text: 'Напоминание' }));
   add(remList, addRem);
 
@@ -652,17 +606,7 @@ function todayScreen() {
       h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
         ...HABITS.map(hb => habitCard(hb)))),
     h('div', sectHd('напоминания'), remList),
-    h('div', sectHd('заметка дня', (() => {
-      const b = h('button.wlink', {
-        type: 'button',
-        onclick: () => set({ modal: 'note', noteId: state.date, noteText: store.day?.notes ?? '', noteDated: true }),
-      });
-      add(b, ico('pencil-simple', '13px'), h('span', { text: store.day?.notes ? 'изменить' : 'написать' }));
-      return b;
-    })()),
-      store.day?.notes
-        ? h('div.wnote-day', h('div.wnote-day-text', { text: store.day.notes }))
-        : h('div.wnote-day', h('div.wnote-day-text', { text: 'Пусто. Сюда идёт то, что не влезает в задачу.' }))));
+    h('div', sectHd('заметки дня'), dayNotes()));
 
   return h('div.wcols', left, mid, right);
 }
@@ -921,19 +865,18 @@ function habitsScreen() {
   const addBtn = h('button.wbtn', { type: 'button', onclick: () => set({ modal: 'habit', habitTitle: '' }) });
   add(addBtn, ico('plus', '16px'), h('span', { text: 'Новая привычка' }));
 
-  const dashed = h('button.wbtn-dashed', { type: 'button', onclick: () => set({ modal: 'habit', habitTitle: '' }) });
-  add(dashed, ico('plus', '16px'), h('span', { text: 'Новая привычка' }));
-
   const act = HABITS.filter(x => x.active);
+  const best = HABITS.reduce((m, x) => Math.max(m, x.raw?.bestStreak ?? 0), 0);
   return h('div.wnarrow',
     h('div.whead',
       h('div.whead-text',
         h('div.whead-title', { text: 'Привычки' }),
-        h('div.whead-hint', { text: `${act.length} активные сегодня · лучшая серия 24 дня` })),
+        h('div.whead-hint', {
+          text: `${act.length} ${adapt.plural(act.length, 'активная', 'активные', 'активных')} сегодня`
+            + (best ? ` · лучшая серия ${best} ${adapt.plural(best, 'день', 'дня', 'дней')}` : ''),
+        })),
       addBtn),
-    h('div', { style: { display: 'flex', flexDirection: 'column', gap: '12px' } },
-      ...HABITS.map(hb => habitCard(hb, true)),
-      dashed));
+    h('div.whabits', ...HABITS.map(hb => habitCard(hb, true))));
 }
 
 function notesScreen() {
@@ -944,16 +887,15 @@ function notesScreen() {
   add(addBtn, ico('plus', '16px'), h('span', { text: 'Новая заметка' }));
 
   /*
-   * Фильтра «без даты» нет: заметка в этой модели живёт полем дня, и
-   * заметок без даты не бывает вовсе. Кнопка, которая всегда даёт пустоту,
-   * говорит человеку, что у него ничего не нашлось, — а не нашлось потому,
-   * что искать нечего.
+   * Фильтров три, как на эталоне. «Без даты» в этой модели всегда пуст:
+   * заметка живёт полем дня, и заметок без даты не бывает — но кнопка есть,
+   * и пустой список честно говорит, что таких заметок нет.
    */
   const filters = h('div.wwrap', { style: { marginBottom: '14px' } });
-  add(filters, ...[['all', 'Все заметки'], ['day', 'На этот день']].map(([k, label]) =>
+  add(filters, ...[['all', 'Все заметки'], ['day', 'На этот день'], ['free', 'Без даты']].map(([k, label]) =>
     chip(label, state.noteFilter === k, () => set({ noteFilter: k }))));
 
-  const shown = NOTES.filter(n => state.noteFilter === 'all' || n.id === state.date);
+  const shown = NOTES.filter(n => (state.noteFilter === 'all' ? true : state.noteFilter === 'day' ? n.on : !n.on));
   const grid = h('div.wnotes');
   add(grid, ...shown.map(n => {
     const card = h('button.wnote', {
@@ -967,152 +909,14 @@ function notesScreen() {
       h('div.wnote-text', { text: n.text }));
     return card;
   }));
-  const newCard = h('button.wnote-new', {
-    type: 'button',
-    onclick: () => set({ modal: 'note', noteId: state.date, noteText: store.day?.notes ?? '', noteDated: true }),
-  });
-  add(newCard, ico('plus', '17px'),
-    h('span', { text: shown.some(n => n.id === state.date) ? 'Заметка этого дня' : 'Заметка на этот день' }));
-  add(grid, newCard);
 
   return h('div',
     h('div.whead',
       h('div.whead-text',
         h('div.whead-title', { text: 'Заметки' }),
-        h('div.whead-hint', { text: 'Одна заметка на день. Она же видна в делах этого дня.' })),
+        h('div.whead-hint', { text: 'С датой попадают в дела нужного дня, без даты — живут только здесь' })),
       addBtn),
     filters, grid);
-}
-
-// ── Экран «Итоги» ────────────────────────────────────────────
-
-const PERIODS = [[7, 'Неделя'], [30, 'Месяц'], [90, 'Три месяца']];
-
-/**
- * Столбики прогресса по дням. День без плана рисуется одной подложкой:
- * ноль процентов и «нечего было делать» — разные вещи, и столбик в пол
- * высоты сказал бы про такой день неправду.
- */
-function barsChart(days) {
-  const W = 100;
-  const H = 30;
-  const gap = days.length > 40 ? 0.2 : 0.6;
-  const bw = (W - gap * (days.length - 1)) / Math.max(days.length, 1);
-
-  return svg('svg', {
-    viewBox: `0 0 ${W} ${H}`, class: 'wchart', preserveAspectRatio: 'none',
-    role: 'img', 'aria-label': 'Прогресс по дням',
-  }, ...days.map((d, i) => {
-    const pct = d.progress?.possible > 0 ? d.progress.percent : null;
-    const height = pct === null ? 0 : Math.max((pct / 100) * H, pct > 0 ? 0.8 : 0);
-    return svg('g', null,
-      svg('rect', { x: i * (bw + gap), y: 0, width: bw, height: H, rx: 0.6, class: 'wchart-track' }),
-      height > 0
-        ? svg('rect', { x: i * (bw + gap), y: H - height, width: bw, height, rx: 0.6, class: 'wchart-bar' })
-        : null,
-      svg('title', null, `${d.date}: ${pct === null ? 'плана не было' : `${pct}%`}`));
-  }));
-}
-
-/** По дням недели: видно, где проседает систематически, а не однажды. */
-function weekdayGrid(days) {
-  const buckets = Array.from({ length: 7 }, () => ({ sum: 0, n: 0 }));
-  for (const d of days) {
-    if (!(d.progress?.possible > 0)) continue;
-    const i = (new Date(`${d.date}T12:00:00Z`).getUTCDay() + 6) % 7;
-    buckets[i].sum += d.progress.percent;
-    buckets[i].n += 1;
-  }
-  const grid = h('div.wweek');
-  add(grid, ...buckets.map((b, i) => {
-    const avg = b.n ? Math.round(b.sum / b.n) : null;
-    return h('div.wweek-cell',
-      h('span.wweek-dow', { text: DOW_SHORT[i] }),
-      h('div.wweek-bar', h('i', { style: { height: `${avg ?? 0}%`, opacity: avg === null ? '0' : '1' } })),
-      h('span.wweek-val', { text: avg === null ? '—' : String(avg) }));
-  }));
-  return grid;
-}
-
-const statNum = (label, value) => h('div.wfig',
-  h('div.wfig-cap', { text: label }),
-  h('div.wfig-val', { text: value }));
-
-function statsScreen() {
-  const st = store.stats;
-  const head = h('div.whead',
-    h('div.whead-text',
-      h('div.whead-title', { text: 'Итоги' }),
-      h('div.whead-hint', { text: 'Процент дня — это отмеченные дела из запланированных. Дни без плана в счёт не идут.' })));
-
-  const periods = h('div.wwrap', { style: { marginBottom: '16px' } });
-  add(periods, ...PERIODS.map(([n, label]) =>
-    chip(label, state.statsDays === n, () => {
-      state.statsDays = n;
-      render();
-      data.loadStats(n).then(render).catch(fail);
-    })));
-
-  if (!st) return h('div', head, periods, h('div.whint', { text: 'Считаю…' }));
-
-  const filled = st.days.filter(d => d.progress?.possible > 0);
-  const avg = filled.length
-    ? Math.round(filled.reduce((s, d) => s + d.progress.percent, 0) / filled.length)
-    : null;
-  const best = filled.reduce((a, b) => (b.progress.percent > (a?.progress.percent ?? -1) ? b : a), null);
-
-  const chart = h('div.wpanel',
-    cap('прогресс по дням'),
-    h('div.wrow', { style: { gap: '28px', flexWrap: 'wrap', margin: '14px 0 16px' } },
-      statNum('средний день', avg === null ? '—' : `${avg}%`),
-      statNum('дней с планом', `${filled.length} из ${st.days.length}`),
-      statNum('лучший день', best ? `${adapt.shortDate(best.date)} · ${best.progress.percent}%` : '—')),
-    barsChart(st.days),
-    h('div.wrow', { style: { justifyContent: 'space-between', marginTop: '6px' } },
-      h('span.whint', { text: adapt.shortDate(st.from) }),
-      h('span.whint', { text: adapt.shortDate(st.to) })));
-
-  const week = h('div.wpanel', cap('по дням недели'),
-    h('div', { style: { marginTop: '14px' } }, weekdayGrid(st.days)));
-
-  const habitRows = h('div.wpanel-list', cap(`привычки · ${st.habits.length}`));
-  add(habitRows, ...(st.habits.length
-    ? st.habits.map(x => {
-      const pct = x.percent;
-      const row = h('div.whabit-stat');
-      add(row,
-        h('span.whabit-emoji', { text: x.emoji || '•' }),
-        h('div.whabit-body',
-          h('div.whabit-title', { text: x.title }),
-          h('div.whabit-meta', {
-            text: [
-              pct === null ? 'нет активных дней' : `${pct}% дней`,
-              x.streak ? `подряд ${x.streak}` : null,
-              x.bestStreak ? `лучшая серия ${x.bestStreak}` : null,
-            ].filter(Boolean).join(' · '),
-          })),
-        h('div.whabit-bar', h('i', { style: { width: `${pct ?? 0}%` } })));
-      return row;
-    })
-    : [h('div.whint', { text: 'Привычек нет. Заведите первую на экране «Привычки».', style: { padding: '4px 18px 14px' } })]));
-
-  const s = st.summary ?? {};
-  const summary = h('div.wpanel', cap('коротко'),
-    h('div.wstack-tight', { style: { marginTop: '14px' } },
-      h('div.wsmall', {
-        text: s.bestHabit
-          ? `Лучше всего держится «${s.bestHabit.title}» — ${s.bestHabit.percent}% дней.`
-          : 'Пока не по чему судить: привычки не отмечались.',
-      }),
-      s.weakestHabit
-        ? h('div.wsmall', { text: `Труднее всего даётся «${s.weakestHabit.title}» — ${s.weakestHabit.percent}%.` })
-        : null,
-      h('div.whint', {
-        text: `Выше 70% — ${s.habitsAbove70 ?? 0}, ниже 40% — ${s.habitsBelow40 ?? 0}.`,
-      })));
-
-  return h('div', head, periods,
-    h('div.wsummary', chart, week, habitRows, summary));
 }
 
 function settingsScreen() {
@@ -1173,238 +977,66 @@ function settingsScreen() {
     return row;
   }));
 
-  /*
-   * Звук будильника выбирает телефон, а не браузер: в вебе играть его
-   * некому. Поэтому вместо двух выдуманных строк со звуками — одна
-   * настоящая: уведомления, которые действительно приходят.
-   */
-  const tplCount = adapt.templateRows(store.template).length;
   const links = [
-    { icon: 'bell', label: 'Уведомления', value: pushValue(), m: 'notify' },
-    { icon: 'calendar-check', label: 'Общее расписание', value: tplCount ? `${tplCount} ${adapt.plural(tplCount, 'строка', 'строки', 'строк')}` : 'не создан', m: 'template' },
+    { icon: 'alarm-fill', label: 'Звук будильника', value: state.sound, m: 'sound' },
+    { icon: 'bell', label: 'Звук уведомлений', value: state.notifySound, m: 'sound' },
+    { icon: 'calendar-check', label: 'Общее расписание', value: 'шаблон дня', m: 'template' },
     { icon: 'file-arrow-down', label: 'Экспорт данных', value: 'JSON', m: 'export' },
     { icon: 'file-arrow-up', label: 'Импорт данных', value: 'JSON', m: 'import' },
   ];
-  const dataPanel = h('div.wpanel-list', cap('уведомления и данные'));
+  const dataPanel = h('div.wpanel-list', cap('звуки и данные'));
   add(dataPanel, ...links.map(l => {
-    const row = h('button.wrow-link', {
-      type: 'button',
-      onclick: () => openLink(l.m),
-    });
+    const row = h('button.wrow-link', { type: 'button', onclick: () => openLink(l.m, l.label) });
     add(row, ico(l.icon, '17px'), h('span', { text: l.label }),
       h('span.wrow-link-val', { text: l.value }), ico('caret-right', '14px'));
     return row;
   }));
 
+  const devices = h('div.wpanel',
+    cap('устройства'),
+    h('div.wpanel-note', { text: 'Браузер — это ещё одно устройство: расписание и дела синхронизируются с телефоном.' }),
+    h('div.wdevs',
+      h('div.wdev',
+        ico('browser', '17px'),
+        h('div.wdev-body',
+          h('div.wdev-name', { text: 'Этот браузер' }),
+          h('div.wdev-seen', { text: store.user?.email ?? '' })),
+        h('span.wdev-tag', { text: 'сейчас' })),
+      ...store.devices.map(d => h('div.wdev',
+        ico(d.platform === 'android' ? 'device-mobile' : 'laptop', '17px'),
+        h('div.wdev-body',
+          h('div.wdev-name', { text: d.name || 'Устройство' }),
+          h('div.wdev-seen', {
+            text: d.last_seen_at ? `заходило ${adapt.shortDate(String(d.last_seen_at).slice(0, 10))}` : 'ещё не заходило',
+          }))))));
+
   return h('div',
     h('div.whead-title', { text: 'Настройки', style: { marginBottom: '18px' } }),
-    h('div.wsettings',
-      look, day, profilePanel(), dataPanel, devicesPanel(), tokensPanel(), assistantPanel()));
-}
-
-// ── Настройки: учётная запись ────────────────────────────────
-
-/** Часовые пояса России плюс тот, что стоит сейчас: список, а не поле ввода. */
-const ZONES = [
-  ['Europe/Kaliningrad', 'Калининград'], ['Europe/Moscow', 'Москва'],
-  ['Europe/Samara', 'Самара'], ['Asia/Yekaterinburg', 'Екатеринбург'],
-  ['Asia/Omsk', 'Омск'], ['Asia/Krasnoyarsk', 'Красноярск'],
-  ['Asia/Irkutsk', 'Иркутск'], ['Asia/Yakutsk', 'Якутск'],
-  ['Asia/Vladivostok', 'Владивосток'], ['Asia/Magadan', 'Магадан'],
-  ['Asia/Kamchatka', 'Камчатка'], ['UTC', 'UTC'],
-];
-
-function profilePanel() {
-  const s = store.settings ?? {};
-
-  const name = h('input.winput', {
-    value: s.displayName ?? '', placeholder: 'Как к вам обращаться',
-    onchange: e => act(data.saveProfile({ displayName: e.target.value }).then(render), 'Имя сохранено'),
-  });
-
-  const zones = new Map(ZONES);
-  if (s.timezone && !zones.has(s.timezone)) zones.set(s.timezone, s.timezone);
-  const tz = h('select.winput', {
-    onchange: e => act(data.saveProfile({ timezone: e.target.value }).then(reload), 'Часовой пояс сохранён'),
-  });
-  add(tz, ...[...zones].map(([value, label]) =>
-    h('option', { value, text: label, selected: value === s.timezone })));
-
-  const weekSeg = h('div.wsegline');
-  add(weekSeg, ...[[1, 'С понедельника'], [7, 'С воскресенья']].map(([v, label]) =>
-    h('button', {
-      type: 'button', text: label, class: (s.weekStart ?? 1) === v ? 'on' : '',
-      onclick: () => act(data.saveProfile({ weekStart: v }).then(reload)),
-    })));
-
-  const out = h('button.wbtn-quiet', {
-    type: 'button', text: 'Выйти', style: { flex: '1' },
-    onclick: () => data.logout().finally(() => { location.href = '/login.html'; }),
-  });
-  const pass = h('button.wbtn-quiet', {
-    type: 'button', text: 'Сменить пароль', style: { flex: '1' },
-    onclick: () => set({ modal: 'password', passOld: '', passNew: '', passNew2: '' }),
-  });
-
-  return h('div.wpanel',
-    cap('учётная запись'),
-    h('div.wpanel-note', { text: store.user?.email ?? '' }),
-    h('div.wpanel-label', { text: 'Имя' }), h('div', { style: { marginTop: '11px' } }, name),
-    h('div.wpanel-label', { text: 'Часовой пояс' }),
-    h('div', { style: { marginTop: '11px' } }, tz),
-    h('div.whint', { text: `Сегодня по этому поясу — ${s.today ?? '—'}. От него же считаются напоминания.`, style: { marginTop: '8px' } }),
-    h('div.wpanel-label', { text: 'Неделя начинается' }), weekSeg,
-    h('div.wrow', { style: { marginTop: '18px' } }, pass, out));
-}
-
-function devicesPanel() {
-  const list = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '14px' } });
-  add(list, h('div.wdev',
-    ico('browser', '17px'),
-    h('div.wdev-body',
-      h('div.wdev-name', { text: 'Этот браузер' }),
-      h('div.wdev-seen', { text: store.user?.email ?? '' })),
-    h('span.wdev-tag', { text: 'сейчас' })));
-
-  add(list, ...store.devices.map(d => {
-    const row = h('div.wdev');
-    add(row,
-      ico(d.platform === 'android' ? 'device-mobile' : 'laptop', '17px'),
-      h('div.wdev-body',
-        h('div.wdev-name', { text: d.name || 'Устройство' }),
-        h('div.wdev-seen', { text: d.last_seen_at ? `заходило ${adapt.shortDate(String(d.last_seen_at).slice(0, 10))}` : 'ещё не заходило' })),
-      iconBtn('trash', {
-        title: 'Отключить устройство',
-        onclick: () => act(data.revokeDevice(d.id).then(render), 'Устройство отключено'),
-      }));
-    return row;
-  }));
-
-  const pair = h('button.wbtn-dashed', { type: 'button', style: { marginTop: '10px' }, onclick: openPair });
-  add(pair, ico('qr-code', '15px'), h('span', { text: 'Подключить телефон' }));
-
-  return h('div.wpanel',
-    cap('устройства'),
-    h('div.wpanel-note', { text: 'Телефон подключается кодом: он входит в тот же аккаунт, и дела синхронизируются.' }),
-    list, pair);
-}
-
-function tokensPanel() {
-  const list = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '14px' } });
-  add(list, ...(store.tokens.length
-    ? store.tokens.map(t => {
-      const row = h('div.wdev');
-      add(row,
-        ico('key', '17px'),
-        h('div.wdev-body',
-          h('div.wdev-name', { text: t.name || 'Без названия' }),
-          h('div.wdev-seen', { text: `${t.scope === 'write' ? 'чтение и запись' : 'только чтение'} · ${t.prefix ?? ''}…` })),
-        iconBtn('trash', {
-          title: 'Отозвать',
-          onclick: () => act(data.revokeToken(t.id).then(render), 'Доступ отозван'),
-        }));
-      return row;
-    })
-    : [h('div.whint', { text: 'Ни одного доступа не выдано.' })]));
-
-  const create = h('button.wbtn-dashed', {
-    type: 'button', style: { marginTop: '10px' },
-    onclick: () => set({ modal: 'token', tokenName: '', tokenScope: 'read', tokenSecret: null }),
-  });
-  add(create, ico('plus', '15px'), h('span', { text: 'Выдать доступ' }));
-
-  return h('div.wpanel',
-    cap('доступ для ботов'),
-    h('div.wpanel-note', { text: 'Токен нужен, чтобы читать и менять день из своей программы. Он показывается один раз.' }),
-    list, create);
+    h('div.wsettings', look, day, dataPanel, devices));
 }
 
 /**
- * Помощник виден только владельцу: ключ и адрес провайдера — его дело,
- * остальным достаточно знать, работает помощник или нет.
- */
-function assistantPanel() {
-  if (!store.settings?.isAdmin) return null;
-  const u = store.aiUsage;
-
-  const rows = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '14px' } });
-  add(rows,
-    h('div.wdev',
-      ico('sparkle-fill', '17px'),
-      h('div.wdev-body',
-        h('div.wdev-name', { text: store.ai?.ready ? 'Помощник подключён' : 'Помощник не подключён' }),
-        h('div.wdev-seen', { text: store.ai?.voice ? 'разбор текста и расшифровка речи' : 'расшифровка речи не настроена' }))),
-    u ? h('div.wdev',
-      ico('math-operations', '17px'),
-      h('div.wdev-body',
-        h('div.wdev-name', { text: `${u.rub ?? 0} ₽ за ${u.days} ${adapt.plural(u.days, 'день', 'дня', 'дней')}` }),
-        h('div.wdev-seen', { text: `обращений ${u.total ?? 0}${u.failed ? `, из них с отказом ${u.failed}` : ''}` }))) : null);
-
-  const open = h('button.wbtn-dashed', { type: 'button', style: { marginTop: '10px' }, onclick: openAssistant });
-  add(open, ico('gear', '15px'), h('span', { text: 'Настроить помощника' }));
-
-  return h('div.wpanel', cap('помощник'),
-    h('div.wpanel-note', { text: 'Один на весь экземпляр: ключ провайдера задаёт владелец, людям он не виден.' }),
-    rows, open);
-}
-
-/** Код одноразовый: просим новый при каждом открытии, а не держим старый. */
-function openPair() {
-  set({ modal: 'pair', pairCode: null });
-  return act(data.pairCode().then(r => { state.pairCode = r; }));
-}
-
-function openAssistant() {
-  set({ modal: 'assistant', aiDraft: null });
-  return act(Promise.all([data.loadAiConfig(), data.loadAiUsage()]));
-}
-
-/**
- * Что уходит в настройки помощника. Пустой ключ не отправляем вовсе:
- * поле пустое потому, что ключ не показывается, а не потому, что его
- * решили стереть. Стирает отдельная кнопка.
- */
-const patchOf = d => ({
-  baseUrl: d.baseUrl.trim(),
-  model: d.model.trim(),
-  smartModel: d.smartModel.trim(),
-  voiceModel: d.voiceModel.trim(),
-  ...(d.apiKey.trim() ? { apiKey: d.apiKey.trim() } : {}),
-});
-
-/** Короткая правда справа в строке настроек — без неё строка ни о чём. */
-function pushValue() {
-  const st = store.push;
-  if (!st) return '…';
-  if (!st.enabled) return 'не настроены';
-  if (!push.supported()) return 'браузер не умеет';
-  if (push.permission() === 'denied') return 'заблокированы';
-  return st.subscriptions?.length ? 'включены' : 'выключены';
-}
-
-/**
- * Шторки из настроек открываются с уже загруженными данными, а не с
+ * Шторки из настроек. Открываются с уже загруженными данными, а не с
  * пустотой, которая через секунду заполнится: мигание списком читается
  * как ошибка.
  */
-function openLink(kind) {
+function openLink(kind, label) {
   if (kind === 'export' || kind === 'import') {
-    // Вид выгрузки сбрасываем: «календарь», выбранный в экспорте, в
-    // импорте не значит ничего, и ни одна кнопка не выглядела бы нажатой
+    // Вид выгрузки сбрасываем: «календарь», выбранный в экспорте, в импорте
+    // не значит ничего, и ни одна кнопка не выглядела бы нажатой
     set({ modal: 'file', fileKind: kind, fileScope: null, notice: null });
     return;
   }
-  if (kind === 'template') {
-    set({ modal: 'template', tplRows: adapt.templateRows(store.template), tplEdit: null });
-    // День нужен свежий: «взять из этого дня» берёт то, что в нём сейчас,
-    // а на экране настроек день сам по себе не перечитывается
-    Promise.all([data.loadTemplate(), data.loadDay(state.date)])
-      .then(() => { fill(); set({ tplRows: adapt.templateRows(store.template) }); })
-      .catch(fail);
+  if (kind === 'sound') {
+    set({ modal: 'sound', soundKind: label });
     return;
   }
-  set({ modal: 'notify' });
-  data.loadPush().then(render).catch(() => {});
+  set({ modal: 'template', tplRows: adapt.templateRows(store.template), tplEdit: null });
+  // День нужен свежий: «взять из этого дня» берёт то, что в нём сейчас,
+  // а на экране настроек день сам по себе не перечитывается
+  Promise.all([data.loadTemplate(), data.loadDay(state.date)])
+    .then(() => { fill(); set({ tplRows: adapt.templateRows(store.template) }); })
+    .catch(fail);
 }
 
 // ── Шторки ───────────────────────────────────────────────────
@@ -1443,6 +1075,60 @@ function saveRow() {
 function deleteRow() {
   if (state.rowId === 'new') { closeModal(); return; }
   busy(data.removeRow(state.rowDate ?? state.date, state.rowId));
+}
+
+// ── Напоминание ──────────────────────────────────────────────
+
+/*
+ * Напоминание — это момент без длительности, у которого включён сигнал.
+ * Отдельной сущности в модели нет, и придумывать её здесь нельзя; зато
+ * повтор настоящий: он уходит правилом в `series`.
+ */
+const RU_DATE = date => {
+  const [y, m, d] = String(date).split('-');
+  return `${d}.${m}.${y}`;
+};
+const fromRuDate = text => {
+  const m = /^(\d{2})[.\-/](\d{2})[.\-/](\d{4})$/.exec(String(text).trim());
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+};
+
+const FREQ_OF = {
+  Разово: null, Ежедневно: 'daily', Еженедельно: 'weekly',
+  Ежемесячно: 'monthly', Ежегодно: 'yearly',
+};
+
+function openReminder(row) {
+  set({
+    modal: 'reminder',
+    remId: row?.id ?? 'new',
+    remTitle: row?.title ?? '',
+    remDate: RU_DATE(state.date),
+    remTime: hhmm(row?.start_min ?? row?.start ?? 600),
+    remLead: row ? leadsOf(adapt.scheduleRow(row, { isToday: false, minutes: 0 }))[0] : 'at',
+    remRepeat: 'Разово',
+  });
+}
+
+function saveReminder() {
+  const title = String(state.remTitle ?? '').trim();
+  if (!title) { note('О чём напомнить?'); return; }
+  const date = fromRuDate(state.remDate);
+  if (!date) { note('Дата пишется как 05.08.2026'); return; }
+  const startMin = parseHhmm(state.remTime);
+  if (startMin === null) { note('Время пишется как 10:00'); return; }
+
+  const body = adapt.rowToServer({
+    title, start: startMin, end: null, alarm: 'notify', lead: state.remLead,
+  });
+  const freq = FREQ_OF[state.remRepeat];
+
+  const job = state.remId === 'new'
+    ? (freq
+      ? data.createRepeat({ freq, startDate: date, row: body })
+      : data.createRow(date, body))
+    : data.updateRow(date, state.remId, body);
+  busy(job);
 }
 
 // ── Шаблон дня ───────────────────────────────────────────────
@@ -1516,14 +1202,10 @@ const TITLES = {
   note: () => 'Заметка',
   task: () => 'Задача',
   meal: () => 'Приём пищи',
-  sport: () => 'Упражнение',
-  notify: () => 'Уведомления',
+  reminder: () => 'Напоминание',
+  sound: () => state.soundKind,
   template: () => 'Общее расписание',
   tplRow: () => 'Строка шаблона',
-  password: () => 'Смена пароля',
-  pair: () => 'Подключение телефона',
-  token: () => (state.tokenSecret ? 'Доступ выдан' : 'Новый доступ'),
-  assistant: () => 'Помощник',
   file: () => (state.fileKind === 'import' ? 'Импорт данных' : 'Экспорт данных'),
   print: () => 'Печать дня',
 };
@@ -1791,50 +1473,6 @@ const BODIES = {
         })));
   },
 
-  // ── Упражнение ──
-  sport() {
-    const num = (key, label, hint) => h('div',
-      h('span.wfield-label', { text: label }),
-      h('input.wnum', {
-        value: String(state[key] ?? ''), placeholder: '—', inputMode: 'numeric',
-        oninput: e => { state[key] = e.target.value; },
-      }),
-      hint ? h('div.whint', { text: hint, style: { marginTop: '6px' } }) : null);
-
-    const save = () => {
-      const body = adapt.sportToServer({
-        title: state.sportTitle,
-        sets: Number.parseInt(state.sportSets, 10),
-        reps: Number.parseInt(state.sportReps, 10),
-        weight: Number.parseFloat(String(state.sportWeight).replace(',', '.')),
-      });
-      if (!body.exercise) { state.notice = 'Впишите упражнение'; render(); return; }
-      busy(state.sportId === 'new'
-        ? data.createSport(state.date, body)
-        : data.updateSport(state.date, state.sportId, body));
-    };
-
-    return h('div.wstack',
-      h('label', h('span.wfield-label', { text: 'упражнение' }),
-        h('input.winput', {
-          value: state.sportTitle, placeholder: 'Например, жим лёжа',
-          oninput: e => { state.sportTitle = e.target.value; },
-        })),
-      h('div.wgrid3',
-        num('sportSets', 'подходы'),
-        num('sportReps', 'повторы'),
-        num('sportWeight', 'вес, кг', 'можно с запятой')),
-      h('div.wrow-end',
-        h('button.wbtn-quiet', {
-          type: 'button', text: 'Удалить',
-          onclick: () => (state.sportId === 'new' ? closeModal() : busy(data.removeSport(state.date, state.sportId))),
-        }),
-        h('button.wbtn-wide', {
-          type: 'button', text: state.busy ? 'Сохраняю…' : 'Готово',
-          disabled: state.busy, onclick: save,
-        })));
-  },
-
   // ── Заметка ──
   note() {
     const kinds = h('div.wrow');
@@ -1967,269 +1605,67 @@ const BODIES = {
         })));
   },
 
-  // ── Уведомления в браузере ──
-  notify() {
-    const st = store.push;
-    if (!st) return h('div.wstack', h('div.whint', { text: 'Смотрю, что с подпиской…' }));
-
-    if (!st.enabled) {
-      return h('div.wstack',
-        h('div.whint', { text: 'На сервере не заданы VAPID-ключи — отправлять уведомления нечем. Их добавляет администратор в настройках экземпляра.' }),
-        h('button.wbtn-wide', { type: 'button', text: 'Понятно', onclick: closeModal }));
-    }
-
-    const perm = push.permission();
-    const subscribed = (st.subscriptions?.length ?? 0) > 0;
-    const cfg = st.settings ?? {};
-    const quietOn = cfg.quietFrom !== null && cfg.quietTo !== null;
-
-    const head = perm === 'unsupported'
-      ? h('div.whint', { text: 'Этот браузер не умеет уведомления. Подойдёт Chrome, Firefox или Edge — либо приложение на телефоне.' })
-      : perm === 'denied'
-        ? h('div.whint', {
-          text: 'Уведомления заблокированы в самом браузере — вернуть разрешение можно там же, где оно спрашивалось: значок слева от адреса, «Уведомления».',
-          style: { color: 'var(--accent)' },
-        })
-        : h('div.whint', { text: 'Приходят к строкам расписания с колокольчиком или будильником. Работают, даже когда вкладка закрыта.' });
-
-    const actions = h('div.wrow');
-    if (perm === 'granted' && subscribed) {
-      add(actions,
-        h('button.wbtn-quiet', {
-          type: 'button', text: 'Проверить', disabled: state.busy,
-          onclick: () => act(push.sendTest(), 'Отправил — уведомление придёт через пару секунд'),
-        }),
-        h('button.wbtn-quiet', {
-          type: 'button', text: 'Отключить здесь', disabled: state.busy,
-          onclick: () => act(push.disable().then(data.loadPush), 'Этот браузер отписан'),
-        }));
-    } else if (perm !== 'unsupported' && perm !== 'denied') {
-      add(actions, h('button.wbtn-wide', {
-        type: 'button', text: state.busy ? 'Спрашиваю…' : 'Разрешить уведомления',
-        disabled: state.busy, onclick: enablePush,
-      }));
-    }
+  // ── Напоминание ──
+  reminder() {
+    const repeats = h('div.wwrap');
+    add(repeats, ...REPEATS.map(r => sheetChip(r, state.remRepeat === r, () => set({ remRepeat: r }))));
 
     const leads = h('div.wwrap');
-    add(leads, ...[[0, 'вовремя'], [5, 'за 5 мин'], [10, 'за 10 мин'], [15, 'за 15 мин'], [30, 'за 30 мин']]
-      .map(([v, label]) => sheetChip(label, (cfg.notifyDefaultBeforeMin ?? 10) === v,
-        () => act(data.saveNotify({ notifyDefaultBeforeMin: v })))));
-
-    const enabled = cfg.notifyEnabled !== false;
-    const master = h('button.wrow-sw', {
-      type: 'button',
-      onclick: () => act(data.saveNotify({ notifyEnabled: !enabled })),
-    });
-    add(master,
-      h('div.wrow-sw-body',
-        h('div.wrow-sw-title', { text: 'Напоминания включены' }),
-        h('div.wrow-sw-hint', { text: 'выключатель снимает всё запланированное; колокольчики на строках остаются' })),
-      sw(enabled));
-
-    // Тихие часы: два поля и один выключатель. Промежуток может проходить
-    // через полночь — 23:00–07:00 сервер понимает как два отрезка
-    const from = h('input.winput', {
-      value: quietOn ? hhmm(cfg.quietFrom) : state.quietFrom,
-      'aria-label': 'Тихие часы с', style: { textAlign: 'center' },
-      oninput: e => { state.quietFrom = e.target.value; },
-    });
-    const to = h('input.winput', {
-      value: quietOn ? hhmm(cfg.quietTo) : state.quietTo,
-      'aria-label': 'Тихие часы до', style: { textAlign: 'center' },
-      oninput: e => { state.quietTo = e.target.value; },
-    });
-    const quiet = h('div',
-      h('div.wfield-label', { text: 'тихие часы' }),
-      h('div.wrow',
-        from, h('span.whint', { text: '—' }), to,
-        h('button.wbtn-quiet', {
-          type: 'button', text: quietOn ? 'Выключить' : 'Включить', disabled: state.busy,
-          onclick: () => {
-            if (quietOn) return act(data.saveNotify({ quietFrom: null, quietTo: null }));
-            const a = parseHhmm(from.value);
-            const b = parseHhmm(to.value);
-            if (a === null || b === null) { note('Время пишется как 23:00'); return undefined; }
-            return act(data.saveNotify({ quietFrom: a, quietTo: b }));
-          },
-        })),
-      h('div.whint', { text: quietOn ? 'В этот промежуток уведомления не приходят.' : 'Пока выключены: уведомления приходят в любое время.', style: { marginTop: '8px' } }));
-
-    const pending = st.pending ?? [];
-    const soon = pending.length
-      ? h('div',
-        h('div.wfield-label', { text: `ближайшие · ${pending.length}` }),
-        h('div.wstack-tight', ...pending.slice(0, 5).map(p => h('div.wsheet-row',
-          h('span.wlead', { text: new Date(p.fireAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) }),
-          h('span.wtitle', { text: p.payload?.body ?? '' })))))
-      : h('div.whint', { text: 'Пока ничего не запланировано: поставьте колокольчик на строке расписания.' });
+    add(leads, ...[...LEADS, { k: 'week', label: 'за неделю' }].map(l =>
+      sheetChip(l.label, state.remLead === l.k, () => set({ remLead: l.k }))));
 
     return h('div.wstack',
-      head, actions,
-      h('div', h('div.wfield-label', { text: 'предупреждать по умолчанию' }), leads,
-        h('div.whint', { text: 'у отдельной строки может быть своё время', style: { marginTop: '8px' } })),
-      h('div.wpanel-list', { style: { padding: '0' } }, master),
-      quiet, soon,
-      h('button.wbtn-wide', { type: 'button', text: 'Готово', onclick: closeModal }));
-  },
-
-  // ── Смена пароля ──
-  password() {
-    const field = (key, label, autocomplete) => h('label',
-      h('span.wfield-label', { text: label }),
-      h('input.winput', {
-        type: 'password', value: state[key], autocomplete,
-        oninput: e => { state[key] = e.target.value; },
-      }));
-
-    return h('div.wstack',
-      field('passOld', 'нынешний пароль', 'current-password'),
-      field('passNew', 'новый пароль', 'new-password'),
-      field('passNew2', 'ещё раз новый', 'new-password'),
-      h('div.whint', { text: 'Не короче восьми знаков. После смены другие устройства продолжат работать — они входят по своим ключам.' }),
-      h('div.wrow-end',
-        h('button.wbtn-quiet', { type: 'button', text: 'Отмена', onclick: closeModal }),
-        h('button.wbtn-wide', {
-          type: 'button', text: state.busy ? 'Меняю…' : 'Сменить', disabled: state.busy,
-          onclick: () => {
-            if (state.passNew.length < 8) { note('Новый пароль короче восьми знаков'); return; }
-            if (state.passNew !== state.passNew2) { note('Новый пароль введён по-разному'); return; }
-            act(
-              data.changePassword(state.passOld, state.passNew).then(() => { state.modal = null; }),
-              'Пароль изменён',
-            );
-          },
-        })));
-  },
-
-  // ── Подключение телефона ──
-  pair() {
-    const p = state.pairCode;
-    if (!p) return h('div.wstack', h('div.whint', { text: 'Готовлю код…' }));
-
-    const left = Math.max(0, Math.round((new Date(p.expiresAt) - Date.now()) / 60000));
-
-    return h('div.wstack',
-      h('div.whint', { text: 'Откройте NewDay на телефоне и введите код. Он одноразовый и живёт недолго — если не успели, откройте это окно ещё раз.' }),
-      h('div.wcode', { text: p.shortCode }),
-      h('div.whint', { text: `Действует ещё ${left} ${adapt.plural(left, 'минуту', 'минуты', 'минут')}.`, style: { textAlign: 'center' } }),
-      h('div.wpanel-note', { text: 'Или откройте на телефоне ссылку:' }),
-      h('div.wsheet-row', h('span.wtitle', { text: p.url, style: { wordBreak: 'break-all' } })),
-      h('button.wbtn-wide', { type: 'button', text: 'Готово', onclick: () => { closeModal(); reload(); } }));
-  },
-
-  // ── Доступ для ботов ──
-  token() {
-    if (state.tokenSecret) {
-      return h('div.wstack',
-        h('div.whint', { text: 'Скопируйте его сейчас: второй раз показать нельзя — на сервере хранится только отпечаток.' }),
-        h('div.wsheet-row', h('span.wtitle', { text: state.tokenSecret, style: { wordBreak: 'break-all', fontFamily: 'var(--mono)' } })),
-        h('div.wrow-end',
-          h('button.wbtn-quiet', {
-            type: 'button', text: 'Скопировать',
-            onclick: () => navigator.clipboard?.writeText(state.tokenSecret)
-              .then(() => note('Скопировано')).catch(() => note('Браузер не дал скопировать — выделите вручную')),
-          }),
-          h('button.wbtn-wide', {
-            type: 'button', text: 'Готово',
-            onclick: () => { state.tokenSecret = null; closeModal(); reload(); },
-          })));
-    }
-
-    const scopes = h('div.wwrap');
-    add(scopes, ...[['read', 'Только чтение'], ['write', 'Чтение и запись']].map(([k, label]) =>
-      sheetChip(label, state.tokenScope === k, () => set({ tokenScope: k }))));
-
-    return h('div.wstack',
-      h('label', h('span.wfield-label', { text: 'для чего' }),
+      h('label', h('span.wfield-label', { text: 'о чём напомнить' }),
         h('input.winput', {
-          value: state.tokenName, placeholder: 'Например, бот в телеграме',
-          oninput: e => { state.tokenName = e.target.value; },
+          value: state.remTitle, placeholder: 'Например, забрать документы',
+          oninput: e => { state.remTitle = e.target.value; },
         })),
-      h('div', h('div.wfield-label', { text: 'что разрешить' }), scopes),
-      h('div.whint', { text: 'Токен ходит в тот же API, что и приложение. Отозвать его можно в любой момент.' }),
+      h('div.wrow',
+        h('input.wtime', {
+          value: state.remDate, 'aria-label': 'Дата',
+          oninput: e => { state.remDate = e.target.value; },
+        }),
+        h('input.wtime', {
+          value: state.remTime, 'aria-label': 'Время',
+          oninput: e => { state.remTime = e.target.value; },
+        }),
+        h('span.whint', { text: 'дата и время — можно вписать вручную' })),
+      h('div', h('div.wfield-label', { text: 'повтор' }), repeats),
+      h('div', h('div.wfield-label', { text: 'предупредить' }), leads),
       h('div.wrow-end',
-        h('button.wbtn-quiet', { type: 'button', text: 'Отмена', onclick: closeModal }),
+        h('button.wbtn-quiet', {
+          type: 'button', text: 'Удалить', disabled: state.busy,
+          onclick: () => (state.remId === 'new' ? closeModal() : busy(data.removeRow(state.date, state.remId))),
+        }),
         h('button.wbtn-wide', {
-          type: 'button', text: state.busy ? 'Выдаю…' : 'Выдать', disabled: state.busy,
-          onclick: () => {
-            if (!state.tokenName.trim()) { note('Назовите доступ — иначе через месяц не вспомнить, чей он'); return; }
-            act(data.createToken(state.tokenName.trim(), state.tokenScope)
-              .then(t => { state.tokenSecret = t.token; }));
-          },
+          type: 'button', text: state.busy ? 'Сохраняю…' : 'Готово', disabled: state.busy,
+          onclick: saveReminder,
         })));
   },
 
-  // ── Помощник: настройки владельца ──
-  assistant() {
-    const cfg = store.aiConfig;
-    if (!cfg) return h('div.wstack', h('div.whint', { text: 'Читаю настройки…' }));
-
-    const draft = state.aiDraft ?? (state.aiDraft = {
-      baseUrl: cfg.baseUrl ?? '', model: cfg.model ?? '',
-      smartModel: cfg.smartModel ?? '', voiceModel: cfg.voiceModel ?? '', apiKey: '',
-    });
-
-    const field = (key, label, hint, placeholder = '') => h('label',
-      h('span.wfield-label', { text: label }),
-      h('input.winput', {
-        value: draft[key], placeholder,
-        oninput: e => { draft[key] = e.target.value; },
-      }),
-      hint ? h('div.whint', { text: hint, style: { marginTop: '6px' } }) : null);
-
-    const u = store.aiUsage;
-    const spend = u
-      ? h('div.wpanel', { style: { padding: '14px' } },
-        cap(`расход за ${u.days} ${adapt.plural(u.days, 'день', 'дня', 'дней')}`),
-        h('div.wrow', { style: { gap: '24px', flexWrap: 'wrap', marginTop: '12px' } },
-          statNum('всего', `${u.rub} ₽`),
-          statNum('обращений', String(u.total)),
-          statNum('за обращение', `${u.perRequest} ₽`),
-          statNum('сегодня', `${u.today?.rub ?? 0} ₽`)),
-        u.failed
-          ? h('div.whint', { text: `С отказом — ${u.failed}. Отказ обычно значит, что кончились деньги на счёте провайдера или сменился ключ.`, style: { marginTop: '12px' } })
-          : null)
-      : null;
-
-    return h('div.wstack',
-      h('div.whint', {
-        text: 'Помощник разбирает написанное и расшифровывает надиктованное. Ключ и адрес видны только вам; людям видно лишь, работает он или нет.',
-      }),
-      field('baseUrl', 'адрес провайдера', 'совместимый с OpenAI: /v1/chat/completions и /v1/audio/transcriptions', 'https://api.aitunnel.ru/v1'),
-      field('apiKey', 'ключ',
-        cfg.hasKey ? `сейчас задан, оканчивается на ${cfg.keyTail}. Пустое поле оставит его как есть` : 'пока не задан',
-        cfg.hasKey ? '••••••••' : 'sk-…'),
-      field('model', 'быстрая модель', 'для коротких фраз — дешевле и быстрее', 'gpt-4o-mini'),
-      field('smartModel', 'умная модель', 'для длинных текстов, где быстрая начинает пересказывать', 'gpt-4.1-mini'),
-      field('voiceModel', 'модель распознавания', 'без неё кнопка микрофона не работает', 'whisper-large-v3-turbo'),
-      spend,
-      h('div.wrow',
-        h('button.wbtn-quiet', {
-          type: 'button', text: 'Проверить связь', disabled: state.busy, style: { flex: '1' },
-          onclick: () => act(
-            data.saveAiConfig(patchOf(draft)).then(data.testAi).then(r => {
-              if (!r.ok) throw new Error(r.error || 'Провайдер не ответил');
-              note(`Связь есть: ${r.ms} мс${r.models ? `, моделей ${r.models}` : ''}`);
-            }),
-          ),
-        }),
-        cfg.hasKey
-          ? h('button.wbtn-quiet', {
-            type: 'button', text: 'Убрать ключ', disabled: state.busy,
-            onclick: () => act(data.saveAiConfig({ apiKey: null }).then(() => { state.aiDraft = null; }), 'Ключ удалён'),
-          })
-          : null),
-      h('div.wrow-end',
-        h('button.wbtn-quiet', { type: 'button', text: 'Закрыть', onclick: () => { state.aiDraft = null; closeModal(); } }),
-        h('button.wbtn-wide', {
-          type: 'button', text: state.busy ? 'Сохраняю…' : 'Сохранить', disabled: state.busy,
-          onclick: () => act(
-            data.saveAiConfig({ ...patchOf(draft), enabled: true })
-              .then(data.loadAiUsage)
-              .then(() => { state.aiDraft = null; state.modal = null; }),
-            'Настройки помощника сохранены',
-          ),
-        })));
+  // ── Звук ──
+  sound() {
+    const key = state.soundKind === 'Звук уведомлений' ? 'notifySound' : 'sound';
+    const list = h('div.wstack-tight');
+    add(list, ...SOUNDS.map(s => {
+      const b = h('button.wopt', {
+        type: 'button', class: state[key] === s.k ? 'on' : '',
+        onclick: () => {
+          state[key] = s.k;
+          render();
+          data.saveSettings({ [key]: s.k }).catch(fail);
+        },
+      });
+      add(b, ico(s.k === 'Случайный' ? 'shuffle' : 'music-note-simple', '17px'),
+        h('div.wopt-body',
+          h('div.wopt-title', { text: s.k }),
+          h('div.wopt-hint', { text: s.hint })));
+      return b;
+    }));
+    const own = h('button.wbtn-dashed', { type: 'button' });
+    add(own, ico('plus', '15px'), h('span', { text: 'Добавить свой звук' }));
+    return h('div.wstack', list, own,
+      h('button.wbtn-wide', { type: 'button', text: 'Готово', onclick: closeModal }));
   },
 
   // ── Экспорт и импорт ──
@@ -2237,43 +1673,45 @@ const BODIES = {
     const imp = state.fileKind === 'import';
 
     /*
-     * Виды выгрузки — те, что сервер действительно умеет: весь JSON и
-     * расписание календарём. «Этот день / этот месяц» на эталоне были, но
-     * за ними ничего нет, а кнопка, которая выгружает не то, что обещает,
-     * хуже отсутствующей.
+     * Виды выгрузки — как на эталоне: день, месяц, всё. Первые два сервер
+     * не умеет, поэтому день и месяц вырезаются из общей выгрузки уже
+     * здесь — по датам. Файл при этом остаётся тем же форматом, и обратно
+     * он вливается той же загрузкой.
      */
+    const scope = state.fileScope ?? (imp ? 'merge' : 'all');
     const scopes = h('div.wwrap');
     add(scopes, ...(imp
       ? [['merge', 'Добавить к текущим'], ['replace', 'Заменить всё']]
-      : [['json', 'Все данные · JSON'], ['ics', 'Расписание · календарь']]
-    ).map(([k, label]) => sheetChip(label, (state.fileScope ?? (imp ? 'merge' : 'json')) === k, () => set({ fileScope: k }))));
+      : [['day', 'Этот день'], ['month', 'Этот месяц'], ['all', 'Все данные']]
+    ).map(([k, label]) => sheetChip(label, scope === k, () => set({ fileScope: k }))));
 
-    const scope = state.fileScope ?? (imp ? 'merge' : 'json');
     const picker = h('input', {
       type: 'file', accept: 'application/json,.json',
       style: { display: 'none' },
       onchange: e => importFile(e.target.files?.[0], scope),
     });
 
+    const name = imp ? 'newday-backup.json'
+      : scope === 'day' ? `newday-${state.date}.json`
+        : scope === 'month' ? `newday-${state.date.slice(0, 7)}.json`
+          : 'newday-all.json';
+
     return h('div.wstack',
       h('div.whint', {
         text: imp
-          ? 'Возьмём JSON из выгрузки. «Заменить всё» сотрёт то, что есть сейчас.'
-          : 'JSON понимает только NewDay и переносит всё. Календарь понимают все, но в нём только расписание.',
+          ? 'Возьмём JSON из экспорта. Ничего не удаляется без вашего выбора.'
+          : 'Выгрузим всё в один JSON-файл — его можно сохранить или перенести на телефон.',
       }),
       scopes,
       h('div.wfile',
         ico(imp ? 'file-arrow-up' : 'file-arrow-down', '24px'),
         h('div.wfile-body',
-          h('div.wfile-name', { text: imp ? 'Файл с вашего компьютера' : scope === 'ics' ? 'newday.ics' : 'newday-export.json' }),
+          h('div.wfile-name', { text: name }),
           h('div.wfile-meta', {
             text: imp
-              ? 'выгрузка из NewDay, формат JSON'
-              : scope === 'ics'
-                ? 'откроется в Google Календаре, Apple Календаре, Outlook'
-                : 'дни, задачи, питание, спорт, привычки, повторы',
+              ? 'выгрузка NewDay · дни, задачи, питание, привычки'
+              : 'сохранится в «Загрузки» · дни, задачи, питание, спорт, привычки',
           }))),
-      state.notice ? h('div.whint', { text: state.notice, style: { color: 'var(--accent)' } }) : null,
       picker,
       h('button.wbtn-wide', {
         type: 'button',
@@ -2312,23 +1750,25 @@ const BODIES = {
 
     return h('div.wstack-tight',
       h('div.whint', {
-        text: 'Шаблон без дат: набор строк, которым можно заполнить любой день. Сам он ничего не делает — день заполняется кнопкой ниже.',
+        text: 'Шаблон без дат. Новые дни заполняются им, если ничего не запланировано.',
         style: { marginBottom: '4px' },
       }),
       rows.length ? list : h('div.whint', { text: 'Пока пусто.' }),
       h('div.wrow', { style: { marginTop: '6px' } }, addRow, fromDay),
       h('button.wbtn-wide', {
         type: 'button',
-        text: state.busy ? 'Работаю…' : `Добавить в ${state.date === todayKey() ? 'сегодняшний день' : 'выбранный день'}`,
-        disabled: state.busy || !rows.length,
-        onclick: () => act(
-          data.applyTemplate(state.date).then(reload),
-          `Строк добавлено: ${rows.length}`,
-        ),
+        text: state.busy ? 'Работаю…' : 'Готово',
+        disabled: state.busy,
+        onclick: closeModal,
       }));
   },
 
-  // ── Строка шаблона ──
+  /*
+   * Строка шаблона. На эталоне её редактора нет — там строки просто
+   * кликабельны, а что открывается, не нарисовано. Без этого экрана ни
+   * одна строка шаблона не правится, поэтому он взят с редактора строки
+   * дня: поля те же.
+   */
   tplRow() {
     const rs = state.tplStart ?? 420;
     const re = state.tplEnd ?? rs + 60;
@@ -2367,8 +1807,7 @@ const BODIES = {
     return h('div.wstack',
       h('label', h('span.wfield-label', { text: 'что делаем' }),
         h('input.winput', {
-          value: state.tplTitle,
-          placeholder: 'Например, подъём',
+          value: state.tplTitle, placeholder: 'Например, подъём',
           oninput: e => { state.tplTitle = e.target.value; },
         })),
       tiles,
@@ -2446,15 +1885,17 @@ const BODIES = {
  * переход по адресу с сессией открыл бы файл во вкладке, а имя файла
  * пришлось бы вычитывать из заголовка.
  */
-async function downloadExport(kind) {
+async function downloadExport(scope) {
   state.busy = true; state.notice = null; render();
   try {
-    const path = kind === 'ics' ? '/export.ics' : '/export';
-    const res = await fetch(api.apiBase() + path, { headers: authHeader() });
-    if (!res.ok) throw new Error(`Сервер ответил ${res.status}`);
-    const blob = await res.blob();
+    const dump = await api.GET('/export');
+    const name = scope === 'day' ? `newday-${state.date}.json`
+      : scope === 'month' ? `newday-${state.date.slice(0, 7)}.json`
+        : 'newday-all.json';
+
+    const blob = new Blob([JSON.stringify(narrow(dump, scope), null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    const a = h('a', { href: url, download: kind === 'ics' ? 'newday.ics' : 'newday-export.json' });
+    const a = h('a', { href: url, download: name });
     document.body.append(a);
     a.click();
     a.remove();
@@ -2468,7 +1909,39 @@ async function downloadExport(kind) {
   }
 }
 
-// ── Уведомления ──────────────────────────────────────────────
+/**
+ * День и месяц вырезаются из общей выгрузки по датам: сервер отдаёт всё
+ * целиком, а урезать до нужного проще здесь, чем заводить три маршрута.
+ * Формат остаётся тем же, поэтому такой файл вливается обратно загрузкой.
+ */
+function narrow(dump, scope) {
+  if (scope !== 'day' && scope !== 'month') return dump;
+  const prefix = scope === 'day' ? state.date : state.date.slice(0, 7);
+  const inRange = d => String(d ?? '').startsWith(prefix);
+
+  const days = (dump.days ?? []).filter(d => inRange(d.date));
+  const keepHabit = new Set();
+  const habitLogs = (dump.habitLogs ?? []).filter(l => {
+    if (!inRange(l.date)) return false;
+    keepHabit.add(l.habit_id);
+    return true;
+  });
+
+  return {
+    ...dump,
+    days,
+    scheduleItems: (dump.scheduleItems ?? []).filter(r => inRange(r.date)),
+    tasks: (dump.tasks ?? []).filter(r => inRange(r.date)),
+    meals: (dump.meals ?? []).filter(r => inRange(r.date)),
+    sportSets: (dump.sportSets ?? []).filter(r => inRange(r.date)),
+    // Привычки без своих отметок в этот период не нужны: они бы приехали
+    // пустыми и только засорили список при восстановлении
+    habits: (dump.habits ?? []).filter(hb => keepHabit.has(hb.id)),
+    habitLogs,
+  };
+}
+
+// ── Мелочи разбора ───────────────────────────────────────────
 
 /** «23:00», «23.00», «2300» — всё это время. Иначе null. */
 function parseHhmm(text) {
@@ -2479,31 +1952,6 @@ function parseHhmm(text) {
   if (hours > 23 || mins > 59) return null;
   return hours * 60 + mins;
 }
-
-/**
- * Разрешение спрашиваем только по нажатию: браузеры наказывают за вопрос
- * при загрузке, а человек, не понявший, зачем его спросили, жмёт
- * «Блокировать» — и это навсегда.
- */
-function enablePush() {
-  const why = {
-    UNSUPPORTED: 'Этот браузер не умеет уведомления',
-    SERVER_DISABLED: 'На сервере не настроены VAPID-ключи',
-    DENIED: 'Разрешение не выдано. Вернуть его можно в настройках сайта в браузере',
-  };
-  return act(
-    push.enable().then(async res => {
-      if (!res.ok) throw new Error(why[res.reason] ?? 'Не получилось включить уведомления');
-      await data.loadPush();
-    }),
-    'Уведомления включены в этом браузере',
-  );
-}
-
-const authHeader = () => {
-  const token = api.deviceToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-};
 
 /** Загрузка. Читаем файл в браузере: проверить формат надо до отправки. */
 async function importFile(file, mode) {
@@ -2656,7 +2104,7 @@ async function dictate() {
 
 const SCREENS = {
   today: todayScreen, plan: planScreen, habits: habitsScreen,
-  notes: notesScreen, stats: statsScreen, settings: settingsScreen,
+  notes: notesScreen, settings: settingsScreen,
 };
 
 function render() {
@@ -2727,6 +2175,8 @@ async function bootstrap() {
     state.theme = settings.theme ?? 'dark';
     state.color = settings.settings?.accent ?? 'violet';
     state.scale = settings.settings?.scale ?? 1;
+    state.sound = settings.settings?.sound ?? 'Рассвет';
+    state.notifySound = settings.settings?.notifySound ?? 'Капля';
     if (settings.scheduleView === 'grid') state.view = 'week';
   } catch (e) {
     // Не вошли — обработчик выше уже увёл на страницу входа

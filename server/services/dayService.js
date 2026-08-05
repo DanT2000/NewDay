@@ -1,4 +1,5 @@
 const { ApiError, notFound } = require('../lib/errors');
+const { todayFor } = require('../lib/dates');
 const { daysRepo, bumpRev } = require('../repos/days');
 const { scheduleRepo } = require('../repos/schedule');
 const { tasksRepo } = require('../repos/tasks');
@@ -34,7 +35,7 @@ function dayService(db, opts = {}) {
   function getFull(user, date) {
     // Повторы достраиваются при открытии дня: человек, открывший завтра,
     // ожидает увидеть своё расписание, а не пустоту.
-    series.materializeDay(user.id, date);
+    series.materializeDay(user.id, date, { today: todayFor(user.timezone) });
     const day = days.get(user.id, date);
     const allTasks = tasks.list(user.id, date);
     return {
@@ -67,10 +68,11 @@ function dayService(db, opts = {}) {
    * иначе в сетке зияли бы пустые дни, у которых расписание есть.
    */
   function getRange(user, from, to, { limit = 62 } = {}) {
+    const today = todayFor(user.timezone);
     const days = [];
     let cur = from;
     for (let i = 0; i < limit && cur <= to; i++) {
-      series.materializeDay(user.id, cur);
+      series.materializeDay(user.id, cur, { today });
       const rows = schedule.list(user.id, cur);
       days.push({
         date: cur,

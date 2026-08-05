@@ -6,7 +6,7 @@ const { seriesService } = require('../../services/seriesService');
 const { parseTimeRange } = require('../../lib/dates');
 
 const TARGETS = ['schedule'];          // задачи и питание получат повторы на следующем этапе
-const FREQS = ['daily', 'weekly', 'monthly'];
+const FREQS = ['daily', 'weekly', 'monthly', 'yearly'];
 
 /** Одна строка шаблона: те же поля, что у строки расписания. */
 function normalizeRow(row) {

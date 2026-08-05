@@ -172,7 +172,7 @@ if (process.env.SHOT_AI) {
  * шторки — они и есть половина макета, а увидеть их иначе нечем.
  */
 if (process.env.SHOT_WEB) {
-  const SECTIONS = ['today', 'plan', 'habits', 'notes', 'stats', 'settings'];
+  const SECTIONS = ['today', 'plan', 'habits', 'notes', 'settings'];
   for (let i = 0; i < SECTIONS.length; i++) {
     // По названию, а не по номеру: добавили раздел — номера съехали
     await rpc(ws, 'Runtime.evaluate', { expression: `[...document.querySelectorAll('.wnav-item')][${i}].click()` });
@@ -193,8 +193,8 @@ if (process.env.SHOT_WEB) {
     console.log(`  расписание: ${label}`);
   }
 
-  const MODALS = ['row', 'schedule', 'ai', 'habit', 'note', 'task', 'meal', 'sport',
-    'notify', 'file', 'template', 'tplRow', 'print', 'password', 'token', 'pair', 'assistant'];
+  const MODALS = ['row', 'schedule', 'ai', 'habit', 'note', 'task', 'meal',
+    'reminder', 'sound', 'file', 'template', 'tplRow', 'print'];
   for (const m of MODALS) {
     await rpc(ws, 'Runtime.evaluate', {
       expression: `(() => {

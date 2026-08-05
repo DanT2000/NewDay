@@ -53,6 +53,22 @@
 .wroot * { box-sizing: border-box; }
 .wroot button { font-family: inherit; }
 
+/*
+ * Ссылки без подчёркивания и в цвете акцента — как на эталоне. Свой лист
+ * ничего не наследует от прежних стилей, поэтому браузерное подчёркивание
+ * иначе остаётся и вылезает при наведении.
+ */
+.wroot a { color: var(--accent); text-decoration: none; }
+.wroot a:hover { color: var(--accent); text-decoration: none; }
+
+/* Выделение текста — тем же акцентом, а не системным синим */
+.wroot ::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+
+/* Обводка по Tab видна, мышью — нет: рамка вокруг только что нажатой
+   кнопки читается как ошибка */
+.wroot :focus { outline: none; }
+.wroot :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 /* Полосы прокрутки убраны там, где они мешают рисунку сетки */
 .wscroll { scrollbar-width: none; }
 .wscroll::-webkit-scrollbar { width: 0; height: 0; }
@@ -149,16 +165,6 @@
 }
 .wsq:hover { color: var(--text); }
 
-/*
- * Выбор даты: родное поле лежит поверх кнопки прозрачным, чтобы календарь
- * браузера открывался там же, где нажали, а видна была своя иконка.
- */
-.wtop-pick { position: relative; display: inline-flex; }
-.wtop-pick input {
-  position: absolute; inset: 0; width: 100%; height: 100%;
-  opacity: 0; pointer-events: none; border: 0; padding: 0;
-}
-
 .wdays { flex: 1; min-width: 0; display: flex; gap: 4px; justify-content: center; }
 .wday {
   display: flex; flex-direction: column; align-items: center;
@@ -178,12 +184,15 @@
 /* ── Кнопки ────────────────────────────────────────────────── */
 
 .wbtn {
-  display: flex; align-items: center; height: 44px; padding: 0 18px;
-  border-radius: 12px; border: 0; cursor: pointer;
-  background: var(--accent); color: #fff; font: 500 14px/1 var(--ui);
+  display: flex; align-items: center; height: 52px; padding: 0 22px; flex: none;
+  border-radius: 13px; border: 0; cursor: pointer;
+  background: var(--accent); color: #fff; font: 500 16px/1 var(--ui);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 .wbtn:hover { filter: brightness(1.06); }
-.wbtn i { font-size: 16px; margin-right: 8px; }
+/* Иконка у нас <svg>, а не <i>: правило только на i не срабатывало,
+   и знак плюса прилипал к слову */
+.wbtn > svg, .wbtn > i { margin-right: 8px; }
 
 .wbtn-ghost {
   display: flex; align-items: center; gap: 8px; flex: none; white-space: nowrap;
@@ -203,7 +212,9 @@
 
 /* Главная кнопка шторки: 56 px и тень акцентом — так в эталоне */
 .wbtn-wide {
-  flex: 1; height: 56px; border-radius: 13px; border: 0; cursor: pointer;
+  /* min-height обязателен: flex:1 в колонке даёт основу 0, и кнопка
+     сплющивалась в полоску, когда лежала прямо в .wstack */
+  flex: 1; height: 56px; min-height: 56px; border-radius: 13px; border: 0; cursor: pointer;
   background: var(--accent); color: #fff; font: 500 17px/1 var(--ui);
   box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 35%, transparent);
 }
@@ -218,7 +229,7 @@
 
 .wbtn-dashed {
   display: flex; align-items: center; justify-content: center; gap: 8px;
-  flex: 1; height: 50px; border-radius: 12px; cursor: pointer;
+  flex: 1; height: 50px; min-height: 50px; border-radius: 12px; cursor: pointer;
   border: 1px dashed var(--line); background: transparent;
   color: var(--dim); font: 500 15px/1 var(--ui);
 }
@@ -967,6 +978,35 @@ select.winput { appearance: auto; cursor: pointer; }
   .whabit-bar { display: none; }
   .whabit-stat { padding: 11px 16px; }
 }
+
+
+/* Заметки дня в правой колонке — карточки, как на эталоне */
+.wdaynotes { display: flex; flex-direction: column; gap: 8px; }
+.wdaynote {
+  border-radius: 14px; background: var(--surface); padding: 13px 14px; cursor: pointer;
+}
+.wdaynote:hover { box-shadow: inset 0 0 0 1px var(--accent-line); }
+.wdaynote-title { font: 500 14px/1.3 var(--ui); }
+.wdaynote-text { font: 400 13px/1.45 var(--ui); color: var(--faint); margin-top: 6px; }
+
+/* Список привычек на своём экране */
+.whabits { display: flex; flex-direction: column; gap: 12px; }
+
+/* Устройства в настройках */
+.wdevs { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+
+/* Вариант в шторке звука: название и подпись под ним */
+.wopt-body { flex: 1; text-align: left; }
+.wopt-title { font: 500 15px/1.2 var(--ui); }
+.wopt-hint { font: 400 12px/1.4 var(--ui); opacity: .75; margin-top: 4px; }
+
+/* Поле даты и времени в напоминании */
+.wtime {
+  width: 120px; height: 44px; padding: 0 12px; border-radius: 11px;
+  border: 1px solid var(--line); background: var(--raise);
+  color: var(--text); font: 500 15px/1 var(--mono); text-align: center; outline: none;
+}
+.wtime:focus { border-color: var(--accent); }
 
 /* ── Лист на печать ────────────────────────────────────────── */
 

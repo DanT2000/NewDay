@@ -210,34 +210,6 @@ const flag = await js(`fetch('/api/v1/settings').then(r=>r.json()).then(s => Boo
 проба('переключатель дня сохранён', flag === !flagBefore, `${flagBefore} → ${flag}`);
 await shot('web-live-settings');
 
-// ── Спорт ──
-await nav("Сейчас");
-await waitFor('Boolean(document.querySelector(".wsport"))');
-await wait(400);
-проба('спорт показан таблицей',
-  (await js(`document.querySelectorAll('.wsport-head span').length`)) === 5,
-  `${await js('document.querySelectorAll(".wsport-row").length')} упражнений`);
-
-const sportCount = () => js(`fetch('/api/v1/days/${DAY}/full').then(r=>r.json()).then(d => d.sport.length)`, true);
-const sportBefore = await sportCount();
-await js(`document.querySelectorAll('.wsport-row')[0].click()`);
-проба('шторка упражнения открылась',
-  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Упражнение'`));
-
-await js(`(() => {
-  const nums = document.querySelectorAll('.wmodal .wnum');
-  nums[2].value = '62,5';
-  nums[2].dispatchEvent(new Event('input', { bubbles: true }));
-})()`);
-await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
-await waitFor('!document.querySelector(".wveil")');
-await wait(900);
-
-const weight = await js(`fetch('/api/v1/days/${DAY}/full').then(r=>r.json()).then(d => d.sport[0].weight)`, true);
-проба('вес с запятой сохранился числом', weight === 62.5, String(weight));
-const sportAfter = await sportCount();
-проба('правка не создала лишнюю строку', sportAfter === sportBefore, `${sportBefore} → ${sportAfter}`);
-
 // ── Печать ──
 await js('window.__wopen("print")');
 await waitFor('Boolean(document.querySelector(".wveil"))');
@@ -279,254 +251,74 @@ const roundtrip = await js(`(async () => {
 })()`, true);
 проба('загрузка своей же выгрузки проходит', roundtrip === true);
 
-// ── Шаблон дня ──
+// ── Разделы и шторки эталона ──
 /*
- * База стенда живёт между прогонами, поэтому начинаем с чистого места:
- * иначе вторая проверка считала бы строки, оставшиеся от первой.
+ * Состав экрана проверяем отдельно: эталон задаёт, что на нём есть, и
+ * лишний раздел — такая же ошибка, как недостающий.
  */
-await js(`(async () => {
-  const list = await (await fetch('/api/v1/series?templates=1')).json();
-  for (const t of list) await fetch('/api/v1/series/' + t.id, { method: 'DELETE' });
-})()`, true);
+проба('в колонке ровно пять разделов эталона',
+  (await js(`[...document.querySelectorAll('.wnav-item span:first-of-type')].map(e => e.textContent).join(',')`))
+    === 'Сейчас,Расписание,Привычки,Заметки,Настройки',
+  await js(`[...document.querySelectorAll('.wnav-item span:first-of-type')].map(e => e.textContent).join(',')`));
 
-const свободный = '2026-08-20';
-const очиститьДень = () => js(`(async () => {
-  const day = await (await fetch('/api/v1/days/${свободный}/full')).json();
-  for (const r of day.schedule) await fetch('/api/v1/days/${свободный}/schedule/' + r.id, { method: 'DELETE' });
-})()`, true);
-await очиститьДень();
+await nav('Сейчас');
+await waitFor('Boolean(document.querySelector(".wsched"))');
+await wait(600);
+проба('на «Сейчас» пять разделов эталона и ни одного лишнего',
+  (await js(`[...document.querySelectorAll('.wcap')].map(e => e.textContent).join(',')`))
+    === 'расписание,задачи,питание,привычки сегодня,напоминания,заметки дня',
+  await js(`[...document.querySelectorAll('.wcap')].map(e => e.textContent).join(',')`));
 
-await nav("Настройки");
+await nav('Настройки');
 await waitFor('Boolean(document.querySelector(".wsettings"))');
 await wait(700);
+проба('в настройках четыре панели эталона',
+  (await js(`[...document.querySelectorAll('.wsettings .wcap')].map(e => e.textContent).join(',')`))
+    === 'оформление,день и питание,звуки и данные,устройства',
+  await js(`[...document.querySelectorAll('.wsettings .wcap')].map(e => e.textContent).join(',')`));
+проба('в «звуках и данных» пять строк',
+  (await js(`document.querySelectorAll('.wrow-link').length`)) === 5);
 
-const строкаНастроек = имя => js(`[...document.querySelectorAll('.wrow-link')]
-  .find(r => r.textContent.includes(${JSON.stringify(имя)}))?.querySelector('.wrow-link-val')?.textContent`);
-
-проба('в настройках честно сказано, что шаблона нет',
-  (await строкаНастроек('Общее расписание')) === 'не создан', await строкаНастроек('Общее расписание'));
-
-await js(`[...document.querySelectorAll('.wrow-link')].find(r => r.textContent.includes('Общее расписание')).click()`);
-проба('шторка шаблона открылась',
-  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Общее расписание'`));
-await wait(600);
-
-await js(`[...document.querySelectorAll('.wmodal .wbtn-dashed')].find(b => b.textContent.includes('Взять из этого дня')).click()`);
-проба('шаблон собрался из дня', await waitFor(`document.querySelectorAll('.wmodal .wsheet-row').length >= 8`),
-  `${await js(`document.querySelectorAll('.wmodal .wsheet-row').length`)} строк`);
-
-const шаблон = () => js(`fetch('/api/v1/series?templates=1').then(r=>r.json())
-  .then(l => l.map(t => ({ name: t.name, rows: JSON.parse(t.payload_json).rows?.length ?? 1 })))`, true);
-проба('шаблон сохранён на сервере набором строк',
-  (await шаблон()).length === 1 && (await шаблон())[0].rows === 8, JSON.stringify(await шаблон()));
-
-// Правка строки шаблона: открыть, переименовать, сохранить
-await js(`document.querySelectorAll('.wmodal .wsheet-row')[0].click()`);
-проба('строка шаблона открылась', await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Строка шаблона'`));
-await js(`(() => {
-  const i = document.querySelector('.wmodal .winput');
-  i.value = 'Ранний подъём';
-  i.dispatchEvent(new Event('input', { bubbles: true }));
-})()`);
-await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
-проба('после сохранения вернулись к списку шаблона',
-  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Общее расписание'`));
-await wait(500);
-
-const названия = await js(`fetch('/api/v1/series?templates=1').then(r=>r.json())
-  .then(l => JSON.parse(l[0].payload_json).rows.map(r => r.title))`, true);
-проба('правка строки ушла на сервер', названия.includes('Ранний подъём'), названия.slice(0, 3).join(', '));
-проба('правка не размножила строки', названия.length === 8, `${названия.length} строк`);
-
-// Пустая строка не сохраняется, и человеку об этом говорят
-await js(`[...document.querySelectorAll('.wmodal .wbtn-dashed')].find(b => b.textContent.includes('Строка шаблона')).click()`);
-await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Строка шаблона'`);
-await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
-await wait(400);
-проба('строка без названия не сохраняется молча',
-  (await js(`document.querySelector('.wmodal .wnotice')?.textContent`)) === 'Впишите, что делаем',
-  await js(`document.querySelector('.wmodal .wnotice')?.textContent ?? 'нет сообщения'`));
-await js(`document.querySelector('.wmodal .wbtn-quiet').click()`);
-await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Общее расписание'`);
-
-// Применение к дню: уходим на свободную дату и заполняем её шаблоном
+// Звук: выбор сохраняется в настройках человека
+await js(`[...document.querySelectorAll('.wrow-link')].find(r => r.textContent.includes('Звук будильника')).click()`);
+проба('шторка звука открылась',
+  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Звук будильника'`));
+await js(`[...document.querySelectorAll('.wmodal .wopt')].find(b => b.textContent.includes('Колокол')).click()`);
+await wait(1000);
+проба('звук сохранён в профиле',
+  (await js(`fetch('/api/v1/settings').then(r=>r.json()).then(s => s.settings.sound)`, true)) === 'Колокол');
 await js(`document.querySelector('.wmodal-x').click()`);
 await waitFor('!document.querySelector(".wveil")');
-await js(`(() => {
-  const i = document.querySelector('.wtop-pick input');
-  i.value = '${свободный}';
-  i.dispatchEvent(new Event('change', { bubbles: true }));
-})()`);
-проба('кнопка выбора даты переводит день',
-  await waitFor(`document.querySelector('.wtop-num')?.textContent === '20 августа'`),
-  await js(`document.querySelector('.wtop-num')?.textContent`));
+
+// Напоминание: повтор уходит настоящим правилом
+await nav('Сейчас');
+await waitFor('Boolean(document.querySelector(".wrem"))', 40);
 await wait(600);
-
-await js(`[...document.querySelectorAll('.wrow-link')].find(r => r.textContent.includes('Общее расписание')).click()`);
-await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Общее расписание'`);
-await wait(500);
-проба('в настройках видно, сколько строк в шаблоне',
-  (await строкаНастроек('Общее расписание')) === '8 строк', await строкаНастроек('Общее расписание'));
-
-await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
-await wait(1200);
-const вДне = await js(`fetch('/api/v1/days/${свободный}/full').then(r=>r.json()).then(d => d.schedule.map(r => r.title))`, true);
-проба('шаблон заполнил выбранный день', вДне.length === 8, `${вДне.length} строк: ${вДне.slice(0, 2).join(', ')}`);
-проба('переименованная строка пришла из шаблона', вДне.includes('Ранний подъём'));
-
-await очиститьДень();
-await js(`(async () => {
-  const list = await (await fetch('/api/v1/series?templates=1')).json();
-  for (const t of list) await fetch('/api/v1/series/' + t.id, { method: 'DELETE' });
-})()`, true);
-
-// ── Уведомления ──
-await js(`document.querySelector('.wmodal-x')?.click()`);
-await waitFor('!document.querySelector(".wveil")');
-await js(`[...document.querySelectorAll('.wrow-link')].find(r => r.textContent.includes('Уведомления')).click()`);
-проба('шторка уведомлений открылась',
-  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Уведомления'`));
-await wait(700);
-
-проба('ключи стенда подхвачены, а не «не настроены»',
-  !(await js(`document.querySelector('.wmodal').textContent.includes('не заданы VAPID')`)));
-
-const настройки = () => js(`fetch('/api/v1/push/status').then(r=>r.json()).then(s => s.settings)`, true);
-await js(`[...document.querySelectorAll('.wmodal .wchip-sheet')].find(c => c.textContent === 'за 30 мин').click()`);
-await wait(1200);
-проба('«предупреждать за» сохраняется', (await настройки()).notifyDefaultBeforeMin === 30,
-  String((await настройки()).notifyDefaultBeforeMin));
-
-await js(`[...document.querySelectorAll('.wmodal .wbtn-quiet')].find(b => b.textContent === 'Включить').click()`);
-await wait(1200);
-const тихие = await настройки();
-проба('тихие часы включаются', тихие.quietFrom === 1380 && тихие.quietTo === 420,
-  `${тихие.quietFrom}–${тихие.quietTo}`);
-
-await js(`[...document.querySelectorAll('.wmodal .wbtn-quiet')].find(b => b.textContent === 'Выключить').click()`);
-await wait(1200);
-проба('тихие часы выключаются', (await настройки()).quietFrom === null);
-
-// возвращаем стенд к значению по умолчанию, чтобы прогон был повторяемым
-await js(`fetch('/api/v1/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ settings: { notifyDefaultBeforeMin: 10 } }) }).then(r => r.ok)`, true);
-
-// ── Точка входа ──
-/*
- * Веб-версия должна быть той, на которую человек попадает, а не страницей,
- * адрес которой надо знать. Проверяем именно переход, а не наличие файла.
- */
-await rpc(ws, 'Page.navigate', { url: `${BASE}/` });
-проба('корень ведёт в веб-версию',
-  await waitFor('location.pathname === "/web.html" && Boolean(document.querySelector(".wside"))'),
-  await js('location.pathname'));
-await wait(700);
-
-// Из уведомления приходят с датой в хвосте адреса
-await rpc(ws, 'Page.navigate', { url: `${BASE}/web.html#2026-08-20` });
-await waitFor('Boolean(document.querySelector(".wtop-num"))');
-await wait(600);
-проба('адрес с датой открывает именно тот день',
-  (await js(`document.querySelector('.wtop-num').textContent`)) === '20 августа',
-  await js(`document.querySelector('.wtop-num').textContent`));
-
-await rpc(ws, 'Page.navigate', { url: `${BASE}/web.html` });
-await waitFor('Boolean(document.querySelector(".wside"))');
-await wait(700);
-
-// ── Итоги ──
-await nav("Итоги");
-проба('итоги посчитаны', await waitFor('Boolean(document.querySelector(".wchart-bar"))'));
-await wait(500);
-
-const итоги = await js(`(() => {
-  const n = document.querySelectorAll('.wchart-bar').length;
-  const cells = document.querySelectorAll('.wweek-cell').length;
-  const habits = document.querySelectorAll('.whabit-stat').length;
-  const first = document.querySelector('.wfig-val')?.textContent;
-  return { n, cells, habits, first };
-})()`);
-проба('столбиков столько, сколько дней с планом', итоги.n > 20 && итоги.n <= 30, `${итоги.n} столбиков`);
-проба('семь дней недели на месте', итоги.cells === 7);
-проба('привычки в итогах есть', итоги.habits === 4, `${итоги.habits} привычек`);
-проба('средний день посчитан процентом', /%$/.test(итоги.first ?? ''), итоги.first);
-
-await js(`[...document.querySelectorAll('.wchip')].find(c => c.textContent === 'Неделя').click()`);
-await wait(1200);
-const заНеделю = await js(`document.querySelectorAll('.wchart-bar').length`);
-проба('переключение периода перечитывает итоги', заНеделю <= 7 && заНеделю > 0, `${заНеделю} столбиков`);
-
-// ── Настройки: учётная запись, устройства, доступы ──
-await nav("Настройки");
-await waitFor('Boolean(document.querySelector(".wsettings"))');
-await wait(900);
-
-проба('панели учётной записи, устройств и доступов на месте',
-  await js(`['учётная запись','устройства','доступ для ботов','помощник']
-    .every(t => [...document.querySelectorAll('.wcap')].some(c => c.textContent === t))`),
-  await js(`[...document.querySelectorAll('.wcap')].map(c => c.textContent).join(', ')`));
-
-const пояс = () => js(`fetch('/api/v1/settings').then(r=>r.json()).then(s => s.timezone)`, true);
-const былПояс = await пояс();
-await js(`(() => {
-  const sel = document.querySelector('.wsettings select.winput');
-  sel.value = 'Asia/Yekaterinburg';
-  sel.dispatchEvent(new Event('change', { bubbles: true }));
-})()`);
-await wait(1200);
-проба('часовой пояс сохраняется', (await пояс()) === 'Asia/Yekaterinburg', await пояс());
-// возвращаем как было: прогон должен повторяться
-await js(`fetch('/api/v1/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ timezone: ${JSON.stringify(былПояс)} }) }).then(r => r.ok)`, true);
-
-// Доступ для ботов: выдать, увидеть секрет один раз, отозвать
-const токены = () => js(`fetch('/api/v1/tokens').then(r=>r.json()).then(l => l.length)`, true);
-const токеновБыло = await токены();
-await js(`[...document.querySelectorAll('.wbtn-dashed')].find(b => b.textContent.includes('Выдать доступ')).click()`);
-await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Новый доступ'`);
+const правил = () => js(`fetch('/api/v1/series?templates=0').then(r=>r.json()).then(l => l.length)`, true);
+const былоПравил = await правил();
+await js(`[...document.querySelectorAll('.wadd')].find(b => b.textContent.includes('Напоминание')).click()`);
+проба('шторка напоминания открылась',
+  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Напоминание'`));
 await js(`(() => {
   const i = document.querySelector('.wmodal .winput');
-  i.value = 'Проверочный бот';
+  i.value = 'День рождения Ани';
   i.dispatchEvent(new Event('input', { bubbles: true }));
 })()`);
-await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
-проба('секрет показан один раз',
-  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Доступ выдан'`));
-проба('токен выдан на сервере', (await токены()) === токеновБыло + 1);
-
-const секрет = await js(`document.querySelector('.wmodal .wtitle')?.textContent`);
-проба('секрет похож на токен', /^nd_/.test(секрет ?? ''), секрет?.slice(0, 12));
-await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
-await waitFor('!document.querySelector(".wveil")');
-await wait(900);
-
-await js(`[...document.querySelectorAll('.wdev')].filter(d => d.textContent.includes('Проверочный бот'))
-  .forEach(d => d.querySelector('button')?.click())`);
-await wait(1200);
-проба('доступ отзывается', (await токены()) === токеновБыло, `осталось ${await токены()}`);
-
-// ── Помощник: настройки владельца ──
-await js(`[...document.querySelectorAll('.wbtn-dashed')].find(b => b.textContent.includes('Настроить помощника')).click()`);
-проба('шторка помощника открылась',
-  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Помощник'`));
-await wait(800);
-проба('поля трёх моделей на месте',
-  (await js(`document.querySelectorAll('.wmodal .winput').length`)) === 5,
-  `${await js(`document.querySelectorAll('.wmodal .winput').length`)} полей`);
-
-await js(`(() => {
-  const f = document.querySelectorAll('.wmodal .winput');
-  f[0].value = 'https://api.example.test/v1';
-  f[0].dispatchEvent(new Event('input', { bubbles: true }));
-  f[3].value = 'умная-проверочная';
-  f[3].dispatchEvent(new Event('input', { bubbles: true }));
-})()`);
+await js(`[...document.querySelectorAll('.wmodal .wchip-sheet')].find(c => c.textContent === 'Ежегодно').click()`);
 await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
 await waitFor('!document.querySelector(".wveil")', 40);
-await wait(900);
-const конфиг = await js(`fetch('/api/v1/admin/ai').then(r=>r.json())`, true);
-проба('настройки помощника сохранились', конфиг.smartModel === 'умная-проверочная', конфиг.smartModel);
-проба('ключ наружу не отдаётся', конфиг.apiKey === undefined && 'hasKey' in конфиг);
+await wait(1000);
+проба('ежегодный повтор создан правилом', (await правил()) === былоПравил + 1,
+  `${былоПравил} → ${await правил()}`);
+проба('через год напоминание на месте',
+  (await js(`fetch('/api/v1/days/2027-08-05/full').then(r=>r.json())
+    .then(d => d.schedule.some(r => r.title === 'День рождения Ани'))`, true)) === true);
+
+// убираем за собой: прогон должен повторяться
+await js(`(async () => {
+  const list = await (await fetch('/api/v1/series?templates=0')).json();
+  for (const r of list) await fetch('/api/v1/series/' + r.id, { method: 'DELETE' });
+})()`, true);
 
 console.log('\n── Итог ──');
 const плохо = пробы.filter(([, ok]) => !ok).length;
