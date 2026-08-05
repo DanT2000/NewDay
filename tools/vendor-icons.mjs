@@ -26,6 +26,7 @@ const WANTED = {
     'arrow-line-down', 'arrow-line-up', 'arrows-clockwise', 'arrows-down-up',
     'arrows-in-line-vertical', 'arrows-out-line-horizontal', 'battery-high',
     'bell', 'bell-ringing', 'bell-slash', 'browser', 'cake', 'calendar-blank',
+    'envelope-simple', 'lock-simple', 'sign-out',
     'calendar-check', 'caret-left', 'caret-right', 'cell-signal-full',
     'chart-bar', 'check-circle', 'clock',
     'clock-clockwise', 'device-mobile', 'dots-six-vertical', 'dots-three-vertical',

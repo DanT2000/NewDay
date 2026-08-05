@@ -6,6 +6,7 @@ const MIGRATIONS = [
   require('./005-ai-usage'),
   require('./006-remind-many'),
   require('./007-color-window'),
+  require('./008-food-plan'),
 ];
 
 function currentVersion(db) {

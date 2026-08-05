@@ -91,11 +91,11 @@
 .wside::-webkit-scrollbar { width: 0; }
 
 .wbrand { display: flex; align-items: center; gap: 10px; padding: 0 6px; }
-.wbrand-mark {
-  width: 30px; height: 30px; border-radius: 9px;
-  border: 1px solid var(--accent); color: var(--accent);
-  display: grid; place-items: center; font-size: 16px;
-}
+/*
+ * Знак уже нарисован плиткой со скруглением, поэтому рамка ему не нужна:
+ * рамка вокруг скругления даёт вторую границу и выглядит как обводка наклейки.
+ */
+.wbrand-mark { width: 28px; height: 28px; display: block; flex: none; }
 .wbrand b { font-weight: 500; font-size: 17px; letter-spacing: -.01em; }
 
 .wnav { display: flex; flex-direction: column; gap: 3px; }
@@ -156,7 +156,7 @@
 
 .wtop-nav { display: flex; align-items: center; gap: 6px; margin-left: 6px; }
 /* Стрелки обнимают полоску недель: листается именно она */
-.wtop-strip { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; }
+/* Стрелки стоят в той же группе, что «Сегодня» и «Календарь» — рядом с датой */
 .wsq {
   width: 34px; height: 34px; border-radius: 10px;
   border: 1px solid var(--line); background: transparent;
@@ -902,6 +902,142 @@ select.winput { appearance: auto; cursor: pointer; }
 }
 .wdate-chip i { color: var(--accent); }
 
+/* ── Телефон ───────────────────────────────────────────────── */
+
+/*
+ * Раскладка телефона по прототипу «NewDay»: разделы снизу, содержимое одной
+ * прокруткой, правки — шторками снизу вверх. Сетки расписания здесь нет вовсе.
+ *
+ * Размеры взяты из прототипа: шапка 28 px, кнопки 38×38, полоска недели в семь
+ * колонок с зазором 4, карточки радиусом 14, полоса разделов с иконкой 23 px.
+ */
+.wroot.wphone {
+  display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+}
+.wpbody {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 14px 16px calc(22px + env(safe-area-inset-bottom, 0px));
+}
+.wpscreen { display: flex; flex-direction: column; gap: 18px; }
+
+.wphead { display: flex; align-items: center; gap: 8px; }
+.wphead-text { flex: 1; min-width: 0; }
+.wphead-dow {
+  font: 500 12px/1 var(--ui); letter-spacing: .12em;
+  text-transform: uppercase; color: var(--faint);
+}
+.wphead-num { font: 500 28px/1.1 var(--ui); letter-spacing: -.02em; margin-top: 8px; }
+.wphead-title { font: 500 22px/1.1 var(--ui); letter-spacing: -.02em; }
+.wphead-hint { font: 400 13px/1.4 var(--ui); color: var(--faint); margin-top: 7px; }
+
+.wpbtn {
+  width: 38px; height: 38px; flex: none; border-radius: 12px; cursor: pointer;
+  border: 1px solid var(--line); background: transparent; color: var(--dim);
+  display: grid; place-items: center; font-size: 17px;
+}
+.wpbtn-accent { border-color: var(--accent); color: var(--accent); }
+.wpbtn-ai { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+
+.wpweek { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.wpday {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 9px 0 7px; border-radius: 12px; border: 0; cursor: pointer;
+  background: transparent; color: var(--dim);
+}
+.wpday.on { background: var(--accent); color: #fff; }
+.wpday-dow { font: 400 11px/1 var(--ui); letter-spacing: .06em; opacity: .8; }
+.wpday-num { font: 500 17px/1 var(--mono); margin-top: 6px; }
+.wpday-dot {
+  width: 4px; height: 4px; border-radius: 50%; margin-top: 6px; background: transparent;
+}
+.wpday.has .wpday-dot { background: var(--accent); }
+.wpday.on.has .wpday-dot { background: #fff; }
+
+/* Заголовок «Дела дня» тянется, кольцо стоит у правого края */
+.wprow-head > div:first-child { flex: 1; min-width: 0; }
+/*
+ * Чипы категорий уезжают в сторону, а не переносятся на вторую строку:
+ * перенос сдвигал весь список задач вниз, и «Покупки» висели одиноко.
+ */
+.wphone .wchips { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
+.wphone .wchips::-webkit-scrollbar { height: 0; }
+
+.wpcard { border-radius: 14px; background: var(--surface); padding: 4px 2px; }
+.wpempty { padding: 14px 12px; font: 400 14px/1.4 var(--ui); color: var(--faint); }
+.wprow {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 11px 12px;
+  border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer;
+}
+.wptag {
+  flex: none; padding: 3px 8px; border-radius: 7px; background: var(--raise);
+  font: 500 10px/1.2 var(--ui); letter-spacing: .06em; text-transform: uppercase; color: var(--faint);
+}
+.wptime { flex: none; font: 500 13px/1 var(--mono); color: var(--dim); }
+.wpname {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 400 15px/1.3 var(--ui);
+}
+.wprow-head { display: flex; align-items: center; gap: 12px; }
+.wpring { position: relative; width: 54px; height: 54px; flex: none; }
+.wpring svg { width: 54px; height: 54px; transform: rotate(-90deg); }
+.wpring span {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font: 500 13px/1 var(--mono);
+}
+
+.wpnav {
+  flex: none; display: grid; grid-template-columns: repeat(5, 1fr);
+  padding: 8px 6px calc(10px + env(safe-area-inset-bottom, 0px));
+  background: var(--bg); box-shadow: 0 -1px 0 var(--line);
+}
+.wpnav-item {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 8px 0; border: 0; border-radius: 14px; cursor: pointer;
+  background: transparent; color: var(--faint); font: 500 11px/1 var(--ui);
+}
+.wpnav-item.on { color: var(--accent); }
+/* У середины подложка: «Сейчас» — главный раздел, и он должен читаться первым */
+.wpnav-item.mid { background: var(--accent-soft); }
+
+/* Три колонки плиток и на телефоне: их и в прототипе три */
+.wphone .wstats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.wphone .wstat { min-height: 104px; padding: 13px 11px 12px; }
+.wphone .wstat-val { font-size: 22px; }
+.wphone .wstat-lab { font-size: 11px; }
+/* Заголовок дня в карточке «сейчас» на ладони крупнее, как в прототипе */
+.wphone .wnow { border-radius: 20px; }
+.wphone .wnow-title { font-size: 26px; }
+.wphone .wnotes { grid-template-columns: minmax(0, 1fr); }
+.wphone .whead { flex-wrap: wrap; }
+.wphone .whead-text { flex: 1 1 100%; }
+
+/*
+ * Значки и тип привычки — в две строки: в одну они не влезают, и «Выполнять /
+ * Бросаю» уезжало за правый край, где его никто не найдёт.
+ */
+.wphone .wrow-emoji { flex-wrap: wrap; }
+.wphone .wrow-emoji > span[style] { display: none; }
+
+/* Сетка времени: на ладони двенадцать колонок не влезают */
+.wphone .wclock-grid.wclock-hours { grid-template-columns: repeat(8, 1fr); gap: 4px; }
+.wphone .wclock-grid.wclock-mins { grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.wphone .wclock { padding: 12px; }
+
+/* Шторка снизу: окно посередине отобрало бы половину экрана под пустоту */
+.wphone .wveil { padding: 0; place-items: end stretch; }
+.wphone .wmodal, .wphone .wmodal.wide {
+  width: 100%; max-width: 100%; max-height: 88vh;
+  border-radius: 24px 24px 0 0; padding: 12px 18px 26px;
+  animation: wup 220ms cubic-bezier(.22, .61, .36, 1);
+}
+/* Ручка сверху: по ней видно, что шторку тянут, а не только закрывают крестиком */
+.wphone .wmodal::before {
+  content: ''; display: block; width: 38px; height: 4px; border-radius: 2px;
+  background: var(--line); margin: 0 auto 16px;
+}
+.wphone .wmodal-hd b { font-size: 19px; }
+@keyframes wup { from { transform: translateY(26px); opacity: .4; } }
+
 /* ── Узкие экраны ──────────────────────────────────────────── */
 
 /*
@@ -948,6 +1084,17 @@ select.winput { appearance: auto; cursor: pointer; }
 /* ── Служебные сообщения ───────────────────────────────────── */
 
 /* Отказ сервера виден на экране, а не только в консоли */
+/*
+ * Незаполненное поле видно, а не только подписано: обводка красным, и шторка
+ * подкручивается к нему. Красный здесь уместен — это не выбор, а препятствие,
+ * и без него человек нажимал «Готово» второй раз, считая кнопку сломанной.
+ */
+.winput.bad, .wtextarea.bad, .wnum.bad, .wtime.bad {
+  border-color: #ff6a5e;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #ff6a5e 22%, transparent);
+}
+.wnotice.bad { box-shadow: inset 3px 0 0 #ff6a5e; }
+
 .wnotice {
   margin-bottom: 16px; padding: 12px 14px; border-radius: 12px;
   background: var(--raise); color: var(--text);
@@ -1004,31 +1151,53 @@ select.winput { appearance: auto; cursor: pointer; }
     color: #000; background: #fff;
     font: 400 12pt/1.45 var(--ui, sans-serif);
   }
-  .phead { margin-bottom: 14pt; border-bottom: 1pt solid #000; padding-bottom: 6pt; }
-  .phead h1 { margin: 0; font: 600 18pt/1.2 var(--ui, sans-serif); }
-  .phead span { font-size: 10pt; color: #444; }
-
-  .pbox { margin-bottom: 12pt; break-inside: avoid; }
-  .pbox h2 {
-    margin: 0 0 5pt; font: 600 9pt/1 var(--ui, sans-serif);
-    letter-spacing: .1em; text-transform: uppercase; color: #444;
+  /*
+   * Шапка листа: дата крупно, ниже что это за лист — и тонкая линия, а не
+   * жирная. Жирная линия под заголовком спорит с самим заголовком: он и так
+   * набран крупнее всего на странице.
+   */
+  .phead {
+    display: flex; align-items: baseline; gap: 10pt;
+    margin: 0 0 16pt; border-bottom: .75pt solid #222; padding-bottom: 7pt;
   }
+  .phead h1 { flex: 1; margin: 0; font: 600 17pt/1.2 var(--ui, sans-serif); letter-spacing: -.01em; }
+  .phead span {
+    flex: none; font: 500 8.5pt/1 var(--ui, sans-serif);
+    letter-spacing: .12em; text-transform: uppercase; color: #666;
+  }
+
+  .pbox { margin-bottom: 14pt; break-inside: avoid; }
+  /* Название раздела с линией до края: так видно, где раздел кончается */
+  .pbox h2 {
+    display: flex; align-items: center; gap: 7pt;
+    margin: 0 0 4pt; font: 600 8.5pt/1 var(--ui, sans-serif);
+    letter-spacing: .12em; text-transform: uppercase; color: #666;
+  }
+  .pbox h2::after { content: ''; flex: 1; height: .5pt; background: #ccc; }
 
   .prow {
-    display: flex; align-items: baseline; gap: 8pt;
-    padding: 3pt 0; border-bottom: .5pt dotted #bbb;
+    display: flex; align-items: baseline; gap: 9pt;
+    padding: 4pt 0 3.5pt; border-bottom: .5pt solid #e2e2e2;
   }
+  .prow:last-child { border-bottom: 0; }
   /* Квадрат под галочку: лист печатают, чтобы отмечать ручкой */
   .psq {
     width: 10pt; height: 10pt; flex: none;
-    border: 1pt solid #000; border-radius: 2pt; align-self: center;
+    border: .75pt solid #333; border-radius: 2pt; align-self: center;
   }
-  .ptime { width: 62pt; flex: none; font-variant-numeric: tabular-nums; color: #333; }
+  .ptime {
+    width: 64pt; flex: none; font-variant-numeric: tabular-nums;
+    font-weight: 500; color: #222;
+  }
   .ptext { flex: 1; }
-  .pmeta { color: #555; font-size: 10pt; white-space: nowrap; }
+  .pmeta { color: #666; font-size: 9.5pt; white-space: nowrap; }
 
   .pnote { margin: 0; white-space: pre-wrap; }
-  .pline { height: 16pt; border-bottom: .5pt solid #bbb; }
+  .pline { height: 17pt; border-bottom: .5pt solid #ccc; }
 
-  @page { margin: 14mm; }
+  /*
+   * Поля страницы и колонтитул. Дата в подписи снизу нужна, когда лист
+   * пролежал на столе неделю: без неё непонятно, какой это день.
+   */
+  @page { margin: 15mm 14mm 12mm; }
 }

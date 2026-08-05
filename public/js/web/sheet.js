@@ -29,6 +29,13 @@ function longDate(date) {
 /** Пустой квадрат под галочку: лист печатают, чтобы отмечать ручкой. */
 const tick = () => h('span.psq');
 
+/** «1 ч 30 мин» — на бумаге длительность не посчитать глазом по сетке. */
+function durText(min) {
+  const hrs = Math.floor(min / 60);
+  const mins = min % 60;
+  return (hrs ? `${hrs} ч` : '') + (hrs && mins ? ' ' : '') + (mins ? `${mins} мин` : (hrs ? '' : ''));
+}
+
 function section(title, rows) {
   if (!rows.length) return null;
   const box = h('section.pbox', h('h2', { text: title }));
@@ -54,7 +61,11 @@ export function buildSheet(day, { parts, scope = 'day', range = null } = {}) {
     const rows = (day.schedule ?? []).map(r => h('div.prow',
       tick(),
       h('span.ptime', { text: r.end_min === null ? adapt.hhmm(r.start_min) : `${adapt.hhmm(r.start_min)}–${adapt.hhmm(r.end_min)}` }),
-      h('span.ptext', { text: r.title })));
+      h('span.ptext', { text: r.title }),
+      // сколько длится — на бумаге это видно только числом
+      h('span.pmeta', {
+        text: r.end_min === null ? '' : durText(r.end_min - r.start_min),
+      })));
     add(sheet, section('Расписание', rows));
   }
 
@@ -90,8 +101,10 @@ export function buildSheet(day, { parts, scope = 'day', range = null } = {}) {
   }
 
   if (want('Напоминания')) {
+    // напоминание — момент с типом; момент с сигналом без типа тоже считается:
+    // так выглядят напоминания, созданные до появления типа
     const rows = (day.schedule ?? [])
-      .filter(r => r.end_min === null && r.alarm_mode !== 'none')
+      .filter(r => r.kind === 'reminder' || (r.end_min === null && r.alarm_mode !== 'none'))
       .map(r => h('div.prow', tick(),
         h('span.ptime', { text: adapt.hhmm(r.start_min) }),
         h('span.ptext', { text: r.title })));

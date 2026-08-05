@@ -85,6 +85,18 @@ export async function loadRange(date, view) {
   return store.range;
 }
 
+/**
+ * Устройства аккаунта — для панели «Устройства» в настройках.
+ *
+ * Раньше экран настроек звал функцию, которой не было: вызов падал сразу же,
+ * и вместо настроек человек читал «data.loadAccount is not a function».
+ * Отказ здесь не должен ронять экран — список устройств не главное на нём.
+ */
+export async function loadAccount() {
+  store.devices = await api.devices.list().catch(() => []);
+  return store.devices;
+}
+
 export async function loadNotes() {
   const rows = await api.GET('/notes');
   store.notes = Array.isArray(rows) ? rows : (rows.days ?? []);
@@ -238,6 +250,8 @@ export const removeMeal = (date, id) => api.meals.remove(date, id);
  * живёт своим списком. Вид определяется датой, и других правил тут нет.
  */
 export const saveDayNote = (date, text) => api.patchDay(date, { notes: text }, store.day?.rev);
+/** Поля самого дня: план питания, вес, заголовок. Вложенные сущности не трогает. */
+export const saveDayField = (date, patch) => api.patchDay(date, patch, store.day?.rev);
 export const createFreeNote = body => api.POST('/notes', body);
 export const updateFreeNote = (id, body) => api.PATCH(`/notes/${id}`, body);
 export const removeFreeNote = id => api.DELETE(`/notes/${id}`);

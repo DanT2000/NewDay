@@ -6,7 +6,7 @@
  * сказать, что связи нет.
  */
 
-const VERSION = 'newday-v7';
+const VERSION = 'newday-v8';
 const SHELL = [
   // Веб-версия: с неё начинается браузер, и офлайн она должна открываться
   '/web.html', '/css/web.css',
@@ -30,6 +30,8 @@ const SHELL = [
   '/js/views/datestrip.js', '/js/views/print.js',
   '/manifest.webmanifest',
   '/icons/favicon.png', '/icons/logo-256.png', '/icons/icon-192.png', '/icons/icon-512.png',
+  // знак для тёмной и светлой темы: без него в офлайне место логотипа пустует
+  '/icons/logo-dark-64.png', '/icons/logo-light-64.png',
 ];
 
 self.addEventListener('install', event => {

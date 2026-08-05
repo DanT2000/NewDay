@@ -1,6 +1,16 @@
 const { notFound } = require('../lib/errors');
 
-const DAY_FIELDS = ['title', 'focus', 'weight', 'notes'];
+/*
+ * Поле дня → колонка.
+ *
+ * Раньше здесь был просто список имён, и имя подставлялось в SQL как есть.
+ * Пока все поля назывались одним словом, это работало; первое же составное
+ * («план питания») дало «нет такой колонки» и «внутреннюю ошибку» на запись
+ * дня целиком.
+ */
+const DAY_FIELDS = {
+  title: 'title', focus: 'focus', weight: 'weight', notes: 'notes', foodPlan: 'food_plan',
+};
 
 /**
  * Создаёт день, если его ещё нет, и увеличивает его версию.
@@ -28,9 +38,9 @@ function daysRepo(db) {
     patch(userId, date, fields) {
       self.ensure(userId, date);
       const cols = [], vals = [];
-      for (const key of DAY_FIELDS) {
+      for (const [key, col] of Object.entries(DAY_FIELDS)) {
         if (fields[key] === undefined) continue;
-        cols.push(`${key} = ?`);
+        cols.push(`${col} = ?`);
         vals.push(fields[key]);
       }
       if (cols.length) {

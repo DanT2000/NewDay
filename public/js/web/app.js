@@ -16,8 +16,8 @@
 import { h, add, replace, svg, $ } from '../dom.js';
 import { icon } from '../vendor/icons.js';
 import {
-  DARK, LIGHT, PALETTE, ALARM, LEADS, CATS, NAV, MONTHS, MONTHS_NOM, DOW_LONG, DOW_SHORT,
-  SOUNDS, REPEATS, PRINT_PARTS, HABIT_EMOJI,
+  DARK, LIGHT, PALETTE, ALARM, LEADS, CATS, NAV, NAV_PHONE, MONTHS, MONTHS_NOM,
+  DOW_LONG, DOW_SHORT, SOUNDS, REPEATS, PRINT_PARTS, HABIT_EMOJI,
 } from './data.js';
 import * as adapt from './adapt.js';
 import * as data from './store.js';
@@ -38,12 +38,13 @@ const state = {
   theme: 'dark', color: 'violet', screen: 'today', scale: 1,
   date: '', view: 'week',
   catFilter: 'all', noteFilter: 'all',
-  modal: null, busy: false, notice: null,
+  modal: null, busy: false, notice: null, noticeBad: false,
   rowId: null, rowStart: null, rowEnd: null, rowField: 'start', rowTitle: '', rowAlarm: 'off', rowLeads: ['at'],
   rowKind: 'normal', rowColor: null, rowConflict: 'overlap',
   taskId: null, taskTitle: '', taskCat: 'work',
   mealId: null, mealTitle: '', mealKcal: '', mealMode: 'none', mealDur: 30, mealSched: false,
   mealStart: 720, mealEnd: 840, mealLeads: ['at'], mealSchedId: null, mealConflict: 'overlap',
+  foodPlan: '', foodGoal: '',
   sportId: null, sportTitle: '', sportSets: '', sportReps: '', sportWeight: '',
   noteId: null, noteTitle: '', noteText: '', noteDated: true, noteDate: '',
   remId: null, remRepeat: 'Разово', remTitle: '', remDate: '', remTime: '10:00', remLeads: ['at'],
@@ -99,6 +100,25 @@ const set = patch => {
  * Курсор возвращаем по имени поля: без этого набор в «своё: N минут»
  * обрывался бы на первой цифре.
  */
+/**
+ * Сказать, что поле не заполнено, — и показать, какое именно.
+ *
+ * Одной подписи мало: она набрана акцентом, стоит выше поля, и на длинной
+ * шторке её можно вовсе не увидеть — человек нажимает «Готово» второй раз и
+ * считает, что кнопка не работает. Поэтому поле обводим красным, ставим в него
+ * курсор и подкручиваем к нему шторку.
+ */
+function needField(name, text) {
+  setIn({ notice: text, noticeBad: true });
+  const field = document.querySelector(`.wmodal [name="${name}"]`);
+  if (!field) return;
+  field.classList.add('bad');
+  // обводка снимается с первой же буквой: человек уже понял
+  field.addEventListener('input', () => field.classList.remove('bad'), { once: true });
+  field.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  field.focus();
+}
+
 const setIn = patch => {
   Object.assign(state, typeof patch === 'function' ? patch(state) : patch);
   const body = $('.wmodal-body');
@@ -254,7 +274,14 @@ function note(text) {
 }
 
 /** Сообщение об отказе. Молчаливая неудача — худшее, что может быть. */
-const fail = e => note(e?.message || 'Не удалось сохранить');
+/*
+ * Отказ из-за связи и отказ сервера — разные вещи, и говорить о них надо
+ * по-разному. «Не удалось сохранить» при выключенном интернете звучит как
+ * поломка приложения, хотя приложение тут ни при чём.
+ */
+const fail = e => note(navigator.onLine === false
+  ? 'Нет связи — правка не ушла на сервер. Появится связь, попробуйте снова'
+  : (e?.message || 'Не удалось сохранить'));
 
 /**
  * Действие в шторке: кнопка занята, пока запрос в пути, исход виден.
@@ -349,27 +376,23 @@ const sectHd = (label, right = null, mark = null) =>
 const userName = () =>
   store.settings?.displayName || String(store.user?.email ?? '').split('@')[0] || 'Профиль';
 
-/** Счётчик у раздела: показываем только то, что посчитано по-настоящему. */
-function badgeFor(key) {
-  if (key === 'habits') {
-    const act = HABITS.filter(x => x.active);
-    return act.length ? `${act.filter(isDone).length}/${act.length}` : '';
-  }
-  if (key === 'notes') return store.notes.length ? String(store.notes.length) : '';
-  return '';
-}
-
 function sideBar() {
   const nav = h('nav.wnav', { 'aria-label': 'Разделы' });
+  /*
+   * Цифр у разделов нет.
+   *
+   * Они показывали разное в зависимости от того, где человек находится:
+   * привычки на «Сейчас» считались по дню, а внутри раздела — по всему списку,
+   * и число на глазах менялось с «0 из 1» на «1 из 1». Счётчик, который врёт
+   * при переходе, хуже отсутствующего.
+   */
   add(nav, ...NAV.map(n => {
     const on = state.screen === n.key;
     const b = h('button.wnav-item', {
       type: 'button', class: on ? 'on' : '',
       onclick: () => { state.screen = n.key; state.modal = null; render(); reload(); },
     });
-    const badge = badgeFor(n.key);
-    add(b, ico(on ? `${n.icon}-fill` : n.icon, '19px'), h('span', { text: n.label }),
-      badge ? h('span.wnav-badge', { text: badge }) : null);
+    add(b, ico(on ? `${n.icon}-fill` : n.icon, '19px'), h('span', { text: n.label }));
     return b;
   }));
 
@@ -389,7 +412,16 @@ function sideBar() {
   add(ai, ico('sparkle-fill', '17px'), h('span', { text: 'Помощник' }));
 
   return h('aside.wside',
-    h('div.wbrand', h('span.wbrand-mark', ico('sun-horizon', '16px')), h('b', { text: 'NewDay' })),
+    /*
+     * Знак — картинкой, и своей для каждой темы: у светлого знака подложка
+     * почти белая, и на тёмном фоне он светится пятном, у тёмного наоборот.
+     */
+    h('div.wbrand',
+      h('img.wbrand-mark', {
+        src: dark() ? '/icons/logo-dark-64.png' : '/icons/logo-light-64.png',
+        width: '28', height: '28', alt: '', draggable: 'false',
+      }),
+      h('b', { text: 'NewDay' })),
     nav,
     h('div.wside-foot',
       ai,
@@ -436,17 +468,19 @@ function topBar() {
     h('div.wtop-date',
       h('div.wtop-dow', { text: period.top }),
       h('div.wtop-num', { text: period.main })),
+    /*
+     * Стрелки — рядом с датой, а не по краям полоски недель.
+     *
+     * Разнесённые по краям они читались как рамка вокруг недели, а тянуться до
+     * них приходилось через весь экран. Листают они по-прежнему выбранный
+     * период: на месяце — месяц.
+     */
     h('div.wtop-nav',
       chip('Сегодня', state.date === todayKey(), () => go(todayKey())),
-      cal),
-    /*
-     * Стрелки по бокам полоски недель, а не обе слева: листают они именно её —
-     * и на месяце листают месяц, поэтому стоят там, где человек ждёт.
-     */
-    h('div.wtop-strip',
+      cal,
       iconBtn('caret-left', { title: `Предыдущий ${what}`, onclick: () => shiftPeriod(-1) }),
-      days,
       iconBtn('caret-right', { title: `Следующий ${what}`, onclick: () => shiftPeriod(1) })),
+    days,
     (() => {
       const b = h('button.wbtn-ghost', { type: 'button', onclick: () => set({ modal: 'print' }) });
       add(b, ico('printer', '16px'), h('span', { text: 'Печать' }));
@@ -602,7 +636,7 @@ function tasksBlock() {
   const shades = shadeSet();
   const filtered = TASKS.filter(t => state.catFilter === 'all' || t.cat === state.catFilter);
 
-  const chips = h('div.wwrap', { style: { paddingBottom: '10px' } });
+  const chips = h('div.wwrap.wchips', { style: { paddingBottom: '10px' } });
   add(chips, ...[{ k: 'all', label: 'Все' }, ...CATS].map(c =>
     chip(c.label, state.catFilter === c.k, () => set({ catFilter: c.k }))));
 
@@ -659,12 +693,55 @@ function foodBlock() {
   add(addBtn, ico('plus', '15px'), h('span', { text: 'Добавить приём пищи' }));
   add(inner, addBtn);
 
+  /*
+   * План дня и цель по калориям — настоящие, а не строка из макета.
+   *
+   * Раньше здесь стояло «Курица, рис, овощи, творог, кофе без сахара» и цель
+   * 2200 ккал: одно и то же во всех днях и у всех людей. План живёт в дне,
+   * цель — в настройках, потому что она общая для всех дней.
+   */
+  const goal = kcalGoal();
+  const plan = store.day?.foodPlan ?? '';
+  const planLine = h('button.wfood-plan', {
+    type: 'button', class: plan ? '' : 'empty',
+    title: 'Изменить план питания на день',
+    onclick: openFood,
+  }, h('span', { text: plan || 'План на день: что нужно съесть' }));
+
   return h('div',
-    sectHd('питание', h('span.wcount', { text: `${kcal} из 2200 ккал` }), shades[1]),
+    sectHd('питание', h('span.wcount', { text: goal ? `${kcal} из ${goal} ккал` : `${kcal} ккал` }), shades[1]),
     h('div.wfood',
-      h('div.wfood-plan', { text: 'Курица, рис, овощи, творог, кофе без сахара' }),
-      h('div.wbar', h('i', { style: { width: `${Math.min(100, (kcal / 2200) * 100)}%` } })),
+      planLine,
+      goal ? h('div.wbar', h('i', { style: { width: `${Math.min(100, (kcal / goal) * 100)}%` } })) : null,
       inner));
+}
+
+/**
+ * Цель по калориям. Ноль или пусто значит «не считаю»: тогда ни полосы, ни
+ * доли — считать калории хочет не каждый, и навязывать это нечестно.
+ */
+const kcalGoal = () => {
+  const raw = store.settings?.settings?.kcalGoal;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+};
+
+/** Шторка «Питание на день»: свободный план и цель по калориям. */
+function openFood() {
+  set({
+    modal: 'food', notice: null,
+    foodPlan: store.day?.foodPlan ?? '',
+    foodGoal: kcalGoal() ? String(kcalGoal()) : '',
+  });
+}
+
+function saveFood() {
+  const goalRaw = String(state.foodGoal ?? '').replace(/\D+/g, '');
+  const goal = goalRaw ? Math.min(20000, Number(goalRaw)) : 0;
+  busy((async () => {
+    await data.saveDayField(state.date, { foodPlan: String(state.foodPlan ?? '').slice(0, 500) });
+    if (goal !== kcalGoal()) await data.saveSettings({ kcalGoal: goal });
+  })());
 }
 
 /** Четыре оттенка акцента для точек-маркеров разделов. */
@@ -771,6 +848,187 @@ function todayScreen() {
     h('div', sectHd('заметки дня'), dayNotes()));
 
   return h('div.wcols', left, mid, right);
+}
+
+// ── Телефон ──────────────────────────────────────────────────
+
+/*
+ * Телефонная раскладка — не сжатый компьютер, а другая расстановка.
+ *
+ * Сетки расписания здесь нет вовсе: в прототипе телефона её нет, и это верно —
+ * восемнадцать часов по вертикали на ладони не читаются. Само расписание живёт
+ * шторкой, а содержимое дня собрано в «Делах» одной прокруткой.
+ *
+ * Разделов пять, «Сейчас» в середине. Правки — снизу вверх шторками: на
+ * телефоне окно посередине экрана отбирает половину места под пустоту.
+ */
+const PHONE_MAX = 720;
+const isPhone = () => matchMedia(`(max-width: ${PHONE_MAX}px)`).matches;
+
+/** Шапка дня: день недели, число, стрелки, календарь и помощник. */
+function phoneDayHead() {
+  const cur = dayOf();
+  const ai = h('button.wpbtn.wpbtn-ai', {
+    type: 'button', title: 'Помощник', 'aria-label': 'Помощник',
+    onclick: () => set({ modal: 'ai', aiStep: 'input' }),
+  });
+  add(ai, ico('sparkle-fill', '17px'));
+
+  const cal = h('button.wpbtn.wpbtn-accent', {
+    type: 'button', title: 'Выбрать день', 'aria-label': 'Выбрать день',
+    onclick: () => openCalendar('day'),
+  });
+  add(cal, ico('calendar-blank', '17px'));
+
+  return h('div.wphead',
+    h('div.wphead-text',
+      h('div.wphead-dow', { text: DOW_LONG[cur.getDay()] }),
+      h('div.wphead-num', { text: `${cur.getDate()} ${MONTHS[cur.getMonth()]}` })),
+    (() => {
+      const b = h('button.wpbtn', { type: 'button', title: 'Предыдущий день', 'aria-label': 'Предыдущий день', onclick: () => shiftDay(-1) });
+      add(b, ico('caret-left', '17px'));
+      return b;
+    })(),
+    (() => {
+      const b = h('button.wpbtn', { type: 'button', title: 'Следующий день', 'aria-label': 'Следующий день', onclick: () => shiftDay(1) });
+      add(b, ico('caret-right', '17px'));
+      return b;
+    })(),
+    cal, ai);
+}
+
+/** Полоска недели: семь дней, точка — «в этом дне что-то есть». */
+function phoneWeek() {
+  const mon = mondayOf(dayOf());
+  const strip = h('div.wpweek');
+  add(strip, ...Array.from({ length: 7 }, (_, i) => {
+    const dt = new Date(mon); dt.setDate(mon.getDate() + i);
+    const key = keyOf(dt);
+    const b = h('button.wpday', {
+      type: 'button',
+      class: [key === state.date ? 'on' : '', hasPlans(key) ? 'has' : ''].filter(Boolean).join(' '),
+      onclick: () => go(key),
+    });
+    add(b,
+      h('span.wpday-dow', { text: DOW_SHORT[i] }),
+      h('span.wpday-num', { text: pad2(dt.getDate()) }),
+      h('span.wpday-dot'));
+    return b;
+  }));
+  return strip;
+}
+
+/**
+ * Экран «Сейчас» на телефоне: текущий блок, две строки расписания вокруг него
+ * и три плитки прогресса. Всё остальное — в «Делах»: на телефоне длинная
+ * прокрутка на главном экране означает, что главное в ней теряется.
+ */
+function phoneToday() {
+  const now = new Date();
+  const minutes = now.getHours() * 60 + now.getMinutes();
+  const isToday = state.date === todayKey();
+
+  const past = isToday ? [...SCHEDULE].reverse().find(r => (r.end ?? r.start) <= minutes) : null;
+  const next = isToday
+    ? SCHEDULE.find(r => r.start > minutes)
+    : SCHEDULE.find(r => !r.past);
+
+  const near = h('div.wpcard');
+  const nearRows = [
+    past ? { tag: 'было', row: past } : null,
+    next ? { tag: 'дальше', row: next } : null,
+  ].filter(Boolean);
+
+  if (!nearRows.length) {
+    add(near, h('div.wpempty', { text: 'На этот день расписания нет' }));
+  } else {
+    add(near, ...nearRows.map(({ tag, row }) => {
+      const line = h('button.wprow', { type: 'button', onclick: () => openRow(row) });
+      const mode = alarmOf(row);
+      add(line,
+        h('span.wptag', { text: tag }),
+        h('span.wptime', { text: hhmm(row.start) }),
+        h('span.wpname', { text: row.title }),
+        mode === 'off' ? null : ico(bellOf(mode).icon, '15px', 'wbell'));
+      return line;
+    }));
+  }
+
+  const all = h('button.wlink', { type: 'button', onclick: () => set({ modal: 'schedule' }) });
+  add(all, h('span', { text: 'всё расписание' }), ico('caret-right', '13px'));
+
+  return h('div.wpscreen',
+    phoneDayHead(), phoneWeek(), nowCard(),
+    h('div', sectHd('расписание', all), near),
+    statCards());
+}
+
+/** Экран «Дела»: всё содержимое дня одной прокруткой. */
+function phoneTasks() {
+  const { done, total, percent, empty } = progress();
+  const C = 2 * Math.PI * 25;
+
+  const ring = h('div.wpring');
+  ring.innerHTML = `<svg viewBox="0 0 60 60">
+    <circle cx="30" cy="30" r="25" fill="none" stroke="${dark() ? 'rgba(233,233,237,0.10)' : 'rgba(41,43,49,0.12)'}" stroke-width="5"></circle>
+    <circle cx="30" cy="30" r="25" fill="none" stroke="${accent()}" stroke-width="5" stroke-linecap="round"
+      stroke-dasharray="${(C * percent) / 100} ${C}"></circle>
+  </svg>`;
+  add(ring, h('span', { text: empty ? '—' : `${percent}%` }));
+
+  const remList = h('div.wpcard');
+  if (!REMINDERS.length) {
+    add(remList, h('div.wpempty', { text: 'На этот день напоминаний нет' }));
+  } else {
+    add(remList, ...REMINDERS.map(r => {
+      const row = h('button.wprow', { type: 'button', onclick: () => openReminder(r.raw) });
+      add(row, ico(r.icon, '17px'),
+        h('div.wrem-body', h('div.wrem-title', { text: r.title }), h('div.wrem-meta', { text: r.meta })),
+        ico('caret-right', '14px', 'wchev'));
+      return row;
+    }));
+  }
+  const addRem = h('button.wadd', { type: 'button', onclick: () => openReminder(null) });
+  add(addRem, ico('plus', '15px'), h('span', { text: 'Добавить напоминание' }));
+  add(remList, addRem);
+
+  const notesLink = h('button.wlink', { type: 'button', onclick: () => set({ screen: 'notes' }) });
+  add(notesLink, h('span', { text: 'все заметки' }), ico('caret-right', '13px'));
+
+  const shades = shadeSet();
+  return h('div.wpscreen',
+    phoneDayHead(), phoneWeek(),
+    h('div.wprow-head',
+      h('div',
+        h('div.wphead-title', { text: 'Дела дня' }),
+        h('div.wphead-hint', {
+          text: total ? `${done} из ${total} отмечено` : 'на этот день ничего не запланировано',
+        })),
+      ring),
+    tasksBlock(),
+    foodBlock(),
+    h('div', sectHd('напоминания', null, shades[3]), remList),
+    h('div', sectHd('заметки дня', notesLink), dayNotes()));
+}
+
+/** Нижняя полоса разделов. «Сейчас» в середине — до него дотягивается палец. */
+function phoneNav() {
+  const bar = h('nav.wpnav');
+  add(bar, ...NAV_PHONE.map(n => {
+    const on = state.screen === n.key;
+    const b = h('button.wpnav-item', {
+      type: 'button',
+      class: [on ? 'on' : '', on && n.key === 'today' ? 'mid' : ''].filter(Boolean).join(' '),
+      onclick: () => {
+        if (state.screen === n.key) return;
+        set({ screen: n.key, modal: null });
+        reload();
+      },
+    });
+    add(b, ico(on ? `${n.icon}-fill` : n.icon, '23px'), h('span', { text: n.label }));
+    return b;
+  }));
+  return bar;
 }
 
 // ── Экран «Расписание» ───────────────────────────────────────
@@ -1089,7 +1347,14 @@ function habitsScreen() {
 
   const act = HABITS.filter(x => x.active);
   const best = HABITS.reduce((m, x) => Math.max(m, x.raw?.bestStreak ?? 0), 0);
-  return h('div.wnarrow',
+  /*
+   * Шапка во всю ширину, а сами карточки — в узкой колонке.
+   *
+   * Раньше в узкую колонку уходил и заголовок, и кнопка «Новая привычка»
+   * оказывалась посреди экрана: на остальных экранах главная кнопка стоит у
+   * правого края, и одна выбивающаяся выглядит ошибкой вёрстки.
+   */
+  return h('div',
     h('div.whead',
       h('div.whead-text',
         h('div.whead-title', { text: 'Привычки' }),
@@ -1098,7 +1363,7 @@ function habitsScreen() {
             + (best ? ` · лучшая серия ${best} ${adapt.plural(best, 'день', 'дня', 'дней')}` : ''),
         })),
       addBtn),
-    h('div.whabits', ...HABITS.map(hb => habitCard(hb, true))));
+    h('div.whabits.wnarrow', ...HABITS.map(hb => habitCard(hb, true))));
 }
 
 function notesScreen() {
@@ -1237,11 +1502,32 @@ function settingsScreen() {
    * она есть, и без неё имя и пароль поменять нечем — а человек про них
    * спросил прямо.
    */
+  /*
+   * Строк несколько, а не одна.
+   *
+   * С одной строкой панель выглядела недоделанной: заголовок, полоса и пустота
+   * под ней. И главное — выйти из аккаунта было нечем: выход жил внутри шторки,
+   * и найти его там никто не догадывался.
+   */
   const account = h('div.wpanel-list', cap('аккаунт'));
-  const accountRow = h('button.wrow-link', { type: 'button', onclick: openAccount });
-  add(accountRow, ico('user', '17px'), h('span', { text: userName() }),
-    h('span.wrow-link-val', { text: store.user?.email ?? '' }), ico('caret-right', '14px'));
-  add(account, accountRow);
+  const accountRows = [
+    { icon: 'user', label: 'Имя', value: userName(), go: openAccount },
+    { icon: 'envelope-simple', label: 'Почта', value: store.user?.email ?? '—', go: openAccount },
+    { icon: 'lock-simple', label: 'Пароль', value: 'сменить', go: openAccount },
+  ];
+  add(account, ...accountRows.map(r => {
+    const row = h('button.wrow-link', { type: 'button', onclick: r.go });
+    add(row, ico(r.icon, '17px'), h('span', { text: r.label }),
+      h('span.wrow-link-val', { text: r.value }), ico('caret-right', '14px'));
+    return row;
+  }));
+  const out = h('button.wrow-link.wrow-danger', {
+    type: 'button',
+    onclick: () => api.POST('/auth/logout').finally(() => { location.href = '/login.html'; }),
+  });
+  add(out, ico('sign-out', '17px'), h('span', { text: 'Выйти из аккаунта' }),
+    h('span.wrow-link-val', { text: '' }), ico('caret-right', '14px'));
+  add(account, out);
 
   return h('div',
     h('div.whead-title', { text: 'Настройки', style: { marginBottom: '18px' } }),
@@ -1362,7 +1648,7 @@ function saveRow() {
     color: state.rowColor, kind: state.rowKind,
   });
   if (!body.title) {
-    setIn({ notice: state.rowKind === 'reminder' ? 'Впишите, о чём напомнить' : 'Впишите, что делаем' });
+    needField('rowTitle', state.rowKind === 'reminder' ? 'Впишите, о чём напомнить' : 'Впишите, что делаем');
     return;
   }
 
@@ -1403,7 +1689,7 @@ function openHabit(hb) {
 
 function saveHabit() {
   const title = state.habitTitle.trim();
-  if (!title) { setIn({ notice: 'Впишите название' }); return; }
+  if (!title) { needField('habitTitle', 'Впишите название'); return; }
 
   const mask = Object.entries(state.habitDays)
     .reduce((acc, [i, on]) => (on ? acc | (1 << Number(i)) : acc), 0);
@@ -1486,7 +1772,7 @@ function saveMeal() {
     start: state.mealStart, end: state.mealEnd,
     kcal: state.mealKcal, leads: state.mealLeads,
   });
-  if (!body.title) { setIn({ notice: 'Впишите, что едим' }); return; }
+  if (!body.title) { needField('mealTitle', 'Впишите, что едим'); return; }
 
   const date = state.date;
   const wantBlock = state.mealMode === 'exact' && state.mealSched;
@@ -1566,7 +1852,7 @@ function openNote(n) {
 function saveNote() {
   const title = String(state.noteTitle ?? '').trim();
   const text = String(state.noteText ?? '');
-  if (!title && !text.trim()) { setIn({ notice: 'Заметка пустая' }); return; }
+  if (!title && !text.trim()) { needField('noteTitle', 'Заметка пустая: впишите заголовок или текст'); return; }
 
   const wasDated = typeof state.noteId === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(state.noteId);
   const wasFree = state.noteId !== 'new' && !wasDated;
@@ -1651,7 +1937,7 @@ function openReminder(row) {
 
 function saveReminder() {
   const title = String(state.remTitle ?? '').trim();
-  if (!title) { setIn({ notice: 'О чём напомнить?' }); return; }
+  if (!title) { needField('remTitle', 'Впишите, о чём напомнить'); return; }
   const date = fromRuDate(state.remDate);
   if (!date) { setIn({ notice: 'Дата пишется как 05.08.2026' }); return; }
   const startMin = parseHhmm(state.remTime);
@@ -1790,6 +2076,7 @@ function busy(job) {
     // сообщение о проверке относилось к шторке: после удачного сохранения оно
     // висело красной плашкой над днём, и человек читал это как «не сохранилось»
     state.notice = null;
+    state.noticeBad = false;
     return reload();
   }).catch(e => { state.busy = false; fail(e); });
 }
@@ -1800,9 +2087,10 @@ const TITLES = {
   row: () => (state.rowId === 'new' ? 'Новый блок' : 'Строка расписания'),
   schedule: () => 'Расписание дня',
   ai: () => 'Помощник',
-  habit: () => 'Новая привычка',
+  habit: () => (state.habitId === 'new' ? 'Новая привычка' : 'Привычка'),
   note: () => 'Заметка',
   task: () => 'Задача',
+  food: () => 'Питание на день',
   meal: () => 'Приём пищи',
   reminder: () => 'Напоминание',
   calendar: () => 'Выбор дня',
@@ -1823,7 +2111,7 @@ const WIDE = new Set(['ai', 'schedule', 'note', 'habit']);
 const modalBody = () => [
   // Отказ, случившийся в шторке, виден в ней же: на экране под затемнением
   // его никто не прочитает — а «Готово» без названия молчала бы совсем
-  state.notice ? h('div.wnotice', { text: state.notice }) : null,
+  state.notice ? h('div.wnotice', { class: state.noticeBad ? 'bad' : '', text: state.notice }) : null,
   BODIES[state.modal]?.() ?? h('div'),
 ];
 
@@ -1981,7 +2269,12 @@ function colorRow() {
 }
 
 function clockGrid(count, step, value, onPick) {
-  const grid = h('div.wclock-grid');
+  /*
+   * Часы и минуты помечены отдельно: на телефоне двенадцать колонок не влезают,
+   * и правый край сетки уезжал за экран — часы 11 и 23 были обрезаны пополам.
+   * Там их восемь и шесть, как в прототипе телефона.
+   */
+  const grid = h('div.wclock-grid', { class: step === 1 ? 'wclock-hours' : 'wclock-mins' });
   add(grid, ...Array.from({ length: count }, (_, i) => {
     const v = i * step;
     const on = step === 1 ? Math.floor(value / 60) === v : value % 60 === v;
@@ -2225,7 +2518,7 @@ const BODIES = {
      * почти всегда среди предложенных, а когда нет — искать его в шести
      * вариантах бессмысленно. Пикер тот же, что был в прежней версии.
      */
-    const emoji = h('div.wrow');
+    const emoji = h('div.wrow.wrow-emoji');
     add(emoji, ...[...new Set([state.habitEmoji, ...HABIT_EMOJI])].slice(0, 6).map(e =>
       h('button.wemoji', {
         type: 'button', text: e, class: state.habitEmoji === e ? 'on' : '',
@@ -2383,6 +2676,32 @@ const BODIES = {
           onclick: () => (state.taskId === 'new' ? closeModal() : busy(data.removeTask(state.date, state.taskId))),
         }),
         h('button.wbtn-wide', { type: 'button', text: state.busy ? 'Сохраняю…' : 'Готово', disabled: state.busy, onclick: save })));
+  },
+
+  // ── Питание на день ──
+  food() {
+    return h('div.wstack',
+      h('label', h('span.wfield-label', { text: 'что нужно съесть за день' }),
+        h('textarea.wtextarea', {
+          name: 'foodPlan', value: state.foodPlan,
+          placeholder: 'Например, курица, рис, овощи, творог',
+          oninput: e => { state.foodPlan = e.target.value; },
+        })),
+      h('div.wclock-cap', { text: 'свободный текст: время и калории — по желанию' }),
+      h('div',
+        h('div.wfield-label', { text: 'цель по калориям' }),
+        h('div.wrow',
+          h('input.wnum', {
+            name: 'foodGoal', value: state.foodGoal, placeholder: '—', inputMode: 'numeric',
+            oninput: e => { state.foodGoal = e.target.value; },
+          }),
+          h('span.wsmall', { text: 'ккал в день — пусто значит «не считаю»' }))),
+      h('div.wrow-end',
+        h('button.wbtn-quiet', { type: 'button', text: 'Отмена', onclick: closeModal }),
+        h('button.wbtn-wide', {
+          type: 'button', text: state.busy ? 'Сохраняю…' : 'Готово',
+          disabled: state.busy, onclick: saveFood,
+        })));
   },
 
   // ── Приём пищи ──
@@ -3073,6 +3392,17 @@ const SCREENS = {
   notes: notesScreen, settings: settingsScreen,
 };
 
+/*
+ * На телефоне свой набор: «Расписание» сеткой отсутствует, зато есть «Дела».
+ * Раздел, которого в этой раскладке нет, переводим в ближайший осмысленный —
+ * иначе поворот телефона или сужение окна оставляли бы пустой экран.
+ */
+const PHONE_SCREENS = {
+  today: phoneToday, tasks: phoneTasks, habits: habitsScreen,
+  notes: notesScreen, settings: settingsScreen,
+};
+const SAME_SCREEN = { plan: 'tasks', tasks: 'plan' };
+
 function render() {
   const root = $('#wapp');
   if (!root) return;
@@ -3086,14 +3416,54 @@ function render() {
   for (const [k, v] of Object.entries(vars)) root.style.setProperty(k, v);
   root.style.zoom = String(state.scale);
 
+  const phone = isPhone();
+  root.classList.toggle('wphone', phone);
+  const screens = phone ? PHONE_SCREENS : SCREENS;
+  if (!screens[state.screen]) state.screen = SAME_SCREEN[state.screen] ?? 'today';
+
+  /*
+   * Полоса «нет связи» стоит выше всего остального: пока её нет, человек
+   * считает, что правки уходят на сервер, и узнаёт обратное позже — когда
+   * откроет тот же день на другом устройстве.
+   */
+  const offline = navigator.onLine === false
+    ? h('div.wnotice.bad', { text: 'Нет связи. Смотреть можно, а правки не сохранятся — они не уходят на сервер' })
+    : null;
+
+  const notice = state.notice && !state.modal
+    ? h('div.wnotice', { class: state.noticeBad ? 'bad' : '', text: state.notice })
+    : null;
+
+  if (phone) {
+    replace(root,
+      h('div.wpbody.wscroll', offline, notice, screens[state.screen]()),
+      phoneNav(),
+      modal());
+    return;
+  }
+
   replace(root,
     sideBar(),
-    h('div.wmain', topBar(), h('div.wbody.wscroll',
-      // Отказ сервера виден на экране, а не только в консоли
-      state.notice && !state.modal ? h('div.wnotice', { text: state.notice }) : null,
-      SCREENS[state.screen]())),
+    h('div.wmain', topBar(), h('div.wbody.wscroll', offline, notice, screens[state.screen]())),
     modal());
 }
+
+/*
+ * Смена ширины меняет раскладку целиком, поэтому перерисовываем — но только
+ * когда сторона действительно поменялась: на телефоне при появлении клавиатуры
+ * событие приходит десятками, и перерисовка на каждое отбирала бы фокус у поля.
+ */
+let wasPhone = null;
+addEventListener('resize', () => {
+  const now = isPhone();
+  if (now === wasPhone) return;
+  wasPhone = now;
+  render();
+});
+
+// Связь появилась или пропала — видно сразу, а не при первой неудачной правке
+addEventListener('online', () => { render(); reload(); });
+addEventListener('offline', render);
 
 /*
  * Дата в хвосте адреса. Нажатие на уведомление в уже открытой вкладке

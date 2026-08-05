@@ -595,7 +595,7 @@ await waitFor('!document.querySelector(".wveil")', 40);
 await js(`[...document.querySelectorAll('.wseg button')].find(b => b.textContent === 'Месяц').click()`);
 await wait(600);
 const шапкаДо = await js(`document.querySelector('.wtop-num').textContent`);
-await js(`document.querySelectorAll('.wtop-strip .wsq')[1].click()`);
+await js(`document.querySelectorAll('.wtop-nav .wsq')[1].click()`);
 await wait(900);
 const шапкаПосле = await js(`document.querySelector('.wtop-num').textContent`);
 проба('на месяце стрелка листает месяц', шапкаДо !== шапкаПосле, `${шапкаДо} → ${шапкаПосле}`);
@@ -668,8 +668,10 @@ await nav('Привычки');
 await waitFor('Boolean(document.querySelector(".whabits"))');
 await wait(600);
 await js(`document.querySelector('.whabit-more').click()`);
+// заголовок честный: у существующей — «Привычка», «Новая» только у новой
 проба('правка привычки открывается из карточки',
-  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Новая привычка'`));
+  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Привычка'`),
+  await js(`document.querySelector('.wmodal-hd b')?.textContent ?? 'шторка не открылась'`));
 проба('в шторке привычки есть плюсик на все смайлики',
   await js(`Boolean(document.querySelector('.wmodal .wemoji-more'))`));
 проба('график — выбор между днями недели и разами в неделю',

@@ -332,3 +332,27 @@ test('слишком длинный период честно сообщает, 
     assert.strictEqual(range.to, range.days[range.days.length - 1].date, 'to — конец отданного');
   } finally { await s.close(); }
 });
+
+/*
+ * План питания на день — настоящее поле, а не строка в разметке.
+ *
+ * Заодно закрывает ошибку, которая нашлась при его добавлении: имя поля
+ * подставлялось в SQL как есть, и первое же составное имя дало «внутреннюю
+ * ошибку» на любой записи дня целиком.
+ */
+test('план питания сохраняется в дне и переживает запись дня целиком', async () => {
+  const s = await loggedIn();
+  const date = '2026-08-14';
+  try {
+    const cur = await getJson(s.url, s.cookie, `/api/v1/days/${date}/full`);
+    const after = await api(s.url, s.cookie, 'PATCH', `/api/v1/days/${date}`,
+      { foodPlan: 'Курица, рис, овощи' }, { 'If-Match': `"${cur.rev}"` });
+    assert.strictEqual(after.foodPlan, 'Курица, рис, овощи');
+
+    const full = await api(s.url, s.cookie, 'PUT', `/api/v1/days/${date}/full`, {
+      title: 'День', foodPlan: 'Рыба и салат',
+      schedule: [{ time: '09:00-10:00', title: 'Работа' }],
+    }, { 'If-Match': `"${after.rev}"` });
+    assert.strictEqual(full.foodPlan, 'Рыба и салат', 'запись дня целиком его тоже пишет');
+  } finally { await s.close(); }
+});

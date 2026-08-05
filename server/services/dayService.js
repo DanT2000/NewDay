@@ -45,6 +45,7 @@ function dayService(db, opts = {}) {
       focus: day?.focus ?? '',
       weight: day?.weight ?? null,
       notes: day?.notes ?? '',
+      foodPlan: day?.food_plan ?? '',
       schedule: schedule.list(user.id, date),
       tasks: {
         work: allTasks.filter(t => t.bucket === 'work'),
@@ -123,6 +124,7 @@ function dayService(db, opts = {}) {
         focus: String(body.focus ?? ''),
         weight: body.weight === undefined || body.weight === null ? null : Number(body.weight),
         notes: String(body.notes ?? ''),
+        foodPlan: String(body.foodPlan ?? ''),
       });
 
       /*
@@ -167,6 +169,7 @@ function dayService(db, opts = {}) {
     if (body.title !== undefined) fields.title = String(body.title);
     if (body.focus !== undefined) fields.focus = String(body.focus);
     if (body.notes !== undefined) fields.notes = String(body.notes);
+    if (body.foodPlan !== undefined) fields.foodPlan = String(body.foodPlan).slice(0, 500);
     if (body.weight !== undefined) {
       fields.weight = body.weight === null || body.weight === '' ? null : Number(body.weight);
     }
