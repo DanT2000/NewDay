@@ -7,13 +7,14 @@ const FIELD_MAP = {
   startMin: 'start_min', endMin: 'end_min', title: 'title', note: 'note',
   done: 'done', sortOrder: 'sort_order', kind: 'kind',
   alarmMode: 'alarm_mode', alarmProfile: 'alarm_profile',
-  remindBeforeMin: 'remind_before_min', seriesId: 'series_id',
+  remindBeforeMin: 'remind_before_min', remindBefore: 'remind_before_json',
+  seriesId: 'series_id',
 };
 
 const DEFAULTS = {
   startMin: 0, endMin: null, title: '', note: '', done: 0,
   kind: 'normal', alarmMode: 'none', alarmProfile: 'gentle',
-  remindBeforeMin: null, seriesId: null,
+  remindBeforeMin: null, remindBefore: null, seriesId: null,
 };
 
 /**

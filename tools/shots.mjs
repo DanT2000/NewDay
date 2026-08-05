@@ -193,6 +193,44 @@ if (process.env.SHOT_WEB) {
     console.log(`  расписание: ${label}`);
   }
 
+  /*
+   * Светлая тема — отдельный проход по разделам с SHOT_LIGHT=1. Её смотрят
+   * реже тёмной, и именно поэтому расхождения в ней живут дольше.
+   */
+  if (process.env.SHOT_LIGHT) {
+    const nav = label => rpc(ws, 'Runtime.evaluate', {
+      expression: `[...document.querySelectorAll('.wnav-item')]`
+        + `.find(b => b.textContent.includes(${JSON.stringify(label)})).click()`,
+    });
+    const theme = label => rpc(ws, 'Runtime.evaluate', {
+      expression: `[...document.querySelectorAll('.wsegline button')]`
+        + `.find(b => b.textContent === ${JSON.stringify(label)}).click()`,
+    });
+    const LABELS = {
+      today: 'Сейчас', plan: 'Расписание', habits: 'Привычки',
+      notes: 'Заметки', settings: 'Настройки',
+    };
+
+    await nav('Настройки');
+    await new Promise(r => setTimeout(r, 500));
+    await theme('Светлая');
+    await new Promise(r => setTimeout(r, 700));
+
+    for (const name of SECTIONS) {
+      await nav(LABELS[name]);
+      await new Promise(r => setTimeout(r, 600));
+      const shot = await rpc(ws, 'Page.captureScreenshot', { format: 'png' });
+      await fs.writeFile(path.join(OUT, `web-${name}-light-${WIDTH}.png`), Buffer.from(shot.data, 'base64'));
+      console.log(`  светлая: ${name}`);
+    }
+
+    // возвращаем тёмную: иначе стенд останется светлым для следующих прогонов
+    await nav('Настройки');
+    await new Promise(r => setTimeout(r, 500));
+    await theme('Тёмная');
+    await new Promise(r => setTimeout(r, 600));
+  }
+
   const MODALS = ['row', 'schedule', 'ai', 'habit', 'note', 'task', 'meal',
     'reminder', 'sound', 'file', 'template', 'tplRow', 'print'];
   for (const m of MODALS) {

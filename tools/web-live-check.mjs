@@ -314,10 +314,103 @@ await wait(1000);
   (await js(`fetch('/api/v1/days/2027-08-05/full').then(r=>r.json())
     .then(d => d.schedule.some(r => r.title === 'День рождения Ани'))`, true)) === true);
 
-// убираем за собой: прогон должен повторяться
+/*
+ * Убираем за собой. Удалить правило недостаточно: уже созданные им строки
+ * от него только отвязываются и остаются в дне — за пять прогонов в
+ * расписании набралось пять «Дней рождения Ани».
+ */
 await js(`(async () => {
   const list = await (await fetch('/api/v1/series?templates=0')).json();
   for (const r of list) await fetch('/api/v1/series/' + r.id, { method: 'DELETE' });
+  const day = await (await fetch('/api/v1/days/${DAY}/full')).json();
+  for (const r of day.schedule.filter(x => x.title === 'День рождения Ани')) {
+    await fetch('/api/v1/days/${DAY}/schedule/' + r.id, { method: 'DELETE' });
+  }
+})()`, true);
+проба('прогон убрал за собой напоминание',
+  (await js(`fetch('/api/v1/days/${DAY}/full').then(r=>r.json())
+    .then(d => d.schedule.filter(x => x.title === 'День рождения Ани').length)`, true)) === 0);
+
+// ── Заметка: заголовок и текст ──
+/*
+ * На эталоне у заметки два поля. В модели это один текст дня, где первая
+ * строка — заголовок; проверяем, что разделение и склейка не теряют ничего.
+ */
+await nav('Заметки');
+await waitFor('Boolean(document.querySelector(".wnotes"))', 40);
+await wait(600);
+await js(`[...document.querySelectorAll('.wbtn')].find(b => b.textContent.includes('Новая заметка')).click()`);
+проба('шторка заметки открылась',
+  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Заметка'`));
+проба('в шторке два поля: заголовок и текст',
+  (await js(`Boolean(document.querySelector('.wmodal .winput')) && Boolean(document.querySelector('.wmodal .wtextarea'))`)) === true);
+
+await js(`(() => {
+  const t = document.querySelector('.wmodal .winput');
+  t.value = 'Сервис ноутбука';
+  t.dispatchEvent(new Event('input', { bubbles: true }));
+  const b = document.querySelector('.wmodal .wtextarea');
+  b.value = 'Спросить про сроки и стоимость.';
+  b.dispatchEvent(new Event('input', { bubbles: true }));
+})()`);
+await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
+await waitFor('!document.querySelector(".wveil")', 40);
+await wait(1000);
+проба('заголовок стал первой строкой заметки дня',
+  (await js(`fetch('/api/v1/days/${DAY}/full').then(r=>r.json()).then(d => d.notes)`, true))
+    === 'Сервис ноутбука\nСпросить про сроки и стоимость.');
+
+// открыть снова: поля должны разделиться обратно
+await js(`document.querySelector('.wnote').click()`);
+await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Заметка'`);
+await wait(400);
+проба('при открытии поля разделяются обратно',
+  (await js(`document.querySelector('.wmodal .winput').value`)) === 'Сервис ноутбука'
+  && (await js(`document.querySelector('.wmodal .wtextarea').value`)) === 'Спросить про сроки и стоимость.',
+  await js(`document.querySelector('.wmodal .winput').value`));
+await js(`document.querySelector('.wmodal-x').click()`);
+await waitFor('!document.querySelector(".wveil")');
+
+// ── Несколько сроков предупреждения ──
+/*
+ * Подпись на эталоне обещает «можно несколько». Проверяем, что чипы
+ * действительно набираются и что оба срока доезжают до сервера.
+ */
+await nav('Расписание');
+await wait(500);
+// вид мог остаться месяцем от прошлых проверок — блоков в нём нет
+await js(`[...document.querySelectorAll('.wseg button')].find(b => b.textContent === 'День').click()`);
+await waitFor('document.querySelectorAll(".wblock").length > 0', 40);
+await wait(700);
+await js(`[...document.querySelectorAll('.wblock')].find(b => b.textContent.includes('Зал')).click()`);
+проба('редактор строки открылся',
+  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Строка расписания'`));
+проба('подпись про несколько сроков на месте',
+  await js(`[...document.querySelectorAll('.wmodal .wfield-label')].some(e => e.textContent === 'предупредить · можно несколько')`));
+
+await js(`[...document.querySelectorAll('.wmodal .wchip-sheet')].find(c => c.textContent === 'за день').click()`);
+await js(`[...document.querySelectorAll('.wmodal .wchip-sheet')].find(c => c.textContent === 'за час').click()`);
+проба('два срока горят одновременно',
+  (await js(`document.querySelectorAll('.wmodal .wchip-sheet.on').length`)) === 2,
+  `${await js(`document.querySelectorAll('.wmodal .wchip-sheet.on').length`)} горит`);
+await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
+await waitFor('!document.querySelector(".wveil")', 40);
+await wait(1000);
+
+const сроки = await js(`fetch('/api/v1/days/${DAY}/full').then(r=>r.json())
+  .then(d => { const r = d.schedule.find(x => x.title === 'Зал');
+    return { list: r.remind_before_json, first: r.remind_before_min }; })`, true);
+проба('оба срока записаны, первым самый ранний',
+  сроки.list === '[1440,60]' && сроки.first === 1440, JSON.stringify(сроки));
+
+// возвращаем как было
+await js(`(async () => {
+  const day = await (await fetch('/api/v1/days/${DAY}/full')).json();
+  const r = day.schedule.find(x => x.title === 'Зал');
+  await fetch('/api/v1/days/${DAY}/schedule/' + r.id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ remindBefore: [0] }),
+  });
 })()`, true);
 
 console.log('\n── Итог ──');

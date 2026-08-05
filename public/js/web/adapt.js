@@ -30,16 +30,30 @@ function alarmOf(row) {
   return TO_ALARM[row.alarm_mode] ?? 'off';
 }
 
-/** Метка «предупредить»: сервер держит одно число минут, экран — набор. */
+const LEAD_MIN = { at: 0, 5: 5, 15: 15, 30: 30, 60: 60, day: 1440, week: 10080 };
+const MIN_LEAD = Object.fromEntries(Object.entries(LEAD_MIN).map(([k, v]) => [v, k]));
+
+/**
+ * Метки «предупредить». Сроков может быть несколько, и лежат они списком в
+ * `remind_before_json`; прежнее одиночное число остаётся запасным путём —
+ * строки, созданные до списка, и повторы читаются им же.
+ */
 function leadsOf(row) {
+  const list = parseLeads(row.remind_before_json);
+  if (list) return list.map(m => MIN_LEAD[m] ?? String(m));
+
   const m = row.remind_before_min;
-  if (m === null || m === undefined) return ['at'];
-  if (m === 0) return ['at'];
-  if (m >= 1440) return ['day'];
-  return [String(m)];
+  if (m === null || m === undefined || m === 0) return ['at'];
+  return [MIN_LEAD[m] ?? String(m)];
 }
 
-const LEAD_MIN = { at: 0, 5: 5, 15: 15, 30: 30, 60: 60, day: 1440 };
+function parseLeads(raw) {
+  if (!raw) return null;
+  try {
+    const list = JSON.parse(raw);
+    return Array.isArray(list) && list.length ? list : null;
+  } catch { return null; }
+}
 
 /**
  * Строка расписания. `past` и `now` считаются от текущей минуты — но только
@@ -194,13 +208,17 @@ export const notes = (rows, todayKey, openDate = todayKey) => rows.map(n => {
 
 // ── Обратный перевод ─────────────────────────────────────────
 
-/** Что уходит на сервер из редактора строки. */
-export const rowToServer = ({ title, start, end, alarm, lead }) => ({
+/**
+ * Что уходит на сервер из редактора строки. Сроков предупреждения может
+ * быть несколько — уходят списком минут; сервер сам оставит первым самый
+ * ранний.
+ */
+export const rowToServer = ({ title, start, end, alarm, leads }) => ({
   title: String(title ?? '').trim(),
   startMin: start,
   endMin: end ?? null,
   ...FROM_ALARM[alarm ?? 'off'],
-  remindBeforeMin: LEAD_MIN[lead ?? 'at'] ?? 0,
+  remindBefore: (leads?.length ? leads : ['at']).map(k => LEAD_MIN[k] ?? 0),
 });
 
 /**

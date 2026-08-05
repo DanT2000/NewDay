@@ -22,6 +22,31 @@ const DEFAULTS = {
   quietTo: null,
 };
 
+/**
+ * Сроки предупреждения строки. Список хранится в `remind_before_json`;
+ * если его нет — берётся одно прежнее число, а если и его нет — общая
+ * настройка человека.
+ */
+function leadsOf(row, fallback) {
+  if (row.remind_before_json) {
+    try {
+      const list = JSON.parse(row.remind_before_json);
+      if (Array.isArray(list) && list.length) {
+        return [...new Set(list.filter(Number.isFinite))].sort((a, b) => b - a);
+      }
+    } catch { /* испорченное значение — ведём себя как будто его нет */ }
+  }
+  return [row.remind_before_min === null ? fallback : row.remind_before_min];
+}
+
+/** «за день» читается лучше, чем «через 1440 мин». */
+function humanLead(min) {
+  if (min >= 10080) return 'неделю';
+  if (min >= 1440) return `${Math.round(min / 1440)} дн.`;
+  if (min >= 60 && min % 60 === 0) return `${min / 60} ч`;
+  return `${min} мин`;
+}
+
 /** Тихие часы могут пересекать полночь: 23:00–07:00 — это два интервала. */
 function inQuietHours(minutes, from, to) {
   if (from === null || to === null || from === to) return false;
@@ -67,33 +92,44 @@ function notificationService(db, { push, now = () => Date.now() } = {}) {
       if (row.alarm_mode === 'none') continue;
       if (row.done === 1) { skipped += 1; continue; }   // уже сделано — будить незачем
 
-      const before = row.remind_before_min === null
-        ? cfg.notifyDefaultBeforeMin
-        : row.remind_before_min;
-      const fireMinutes = row.start_min - before;
+      /*
+       * Сроков может быть несколько: «за день» и «за час» вместе. Каждый
+       * получает свою запись в очереди и свой ключ — иначе второй затирал
+       * бы первый, и приходило бы только одно напоминание из двух.
+       */
+      const startsAt = zonedTimeToUtc(date, row.start_min, user.timezone);
 
-      // напоминание, уехавшее во вчера, не планируем: это уже прошлое
-      if (fireMinutes < 0) { skipped += 1; continue; }
-      if (inQuietHours(fireMinutes, cfg.quietFrom, cfg.quietTo)) { skipped += 1; continue; }
+      for (const before of leadsOf(row, cfg.notifyDefaultBeforeMin)) {
+        /*
+         * Момент считаем вычитанием из начала, а не из минут дня: «за день»
+         * и «за неделю» приходятся на другую дату, и вычитание в минутах
+         * уводило их в отрицательные числа — такие сроки просто пропадали.
+         */
+        const fireAt = startsAt - before * 60000;
+        if (fireAt <= now()) { skipped += 1; continue; }
 
-      const fireAt = zonedTimeToUtc(date, fireMinutes, user.timezone);
-      if (fireAt <= now()) { skipped += 1; continue; }
+        // тихие часы проверяем по местному времени самого напоминания
+        if (inQuietHours(minutesInZone(fireAt, user.timezone), cfg.quietFrom, cfg.quietTo)) {
+          skipped += 1;
+          continue;
+        }
 
-      const key = `${prefix}${row.id}`;
-      keep.push(key);
-      queue.upsertQueued(user.id, key, fireAt, {
-        kind: row.alarm_mode,              // notify | alarm
-        title: row.alarm_mode === 'alarm' ? '⏰ Будильник' : 'NewDay',
-        body: before > 0
-          ? `${row.title || 'Без названия'} — через ${before} мин, в ${formatMinutes(row.start_min)}`
-          : `${row.title || 'Без названия'} — начинается`,
-        date,
-        itemId: row.id,
-        startMin: row.start_min,
-        profile: row.alarm_profile,
-        // Нажатие на уведомление открывает именно тот день, о котором оно
-        url: `/web.html#${date}`,
-      });
+        const key = `${prefix}${row.id}:${before}`;
+        keep.push(key);
+        queue.upsertQueued(user.id, key, fireAt, {
+          kind: row.alarm_mode,              // notify | alarm
+          title: row.alarm_mode === 'alarm' ? '⏰ Будильник' : 'NewDay',
+          body: before > 0
+            ? `${row.title || 'Без названия'} — через ${humanLead(before)}, в ${formatMinutes(row.start_min)}`
+            : `${row.title || 'Без названия'} — начинается`,
+          date,
+          itemId: row.id,
+          startMin: row.start_min,
+          profile: row.alarm_profile,
+          // Нажатие на уведомление открывает именно тот день, о котором оно
+          url: `/web.html#${date}`,
+        });
+      }
     }
 
     queue.dropQueuedExcept(user.id, prefix, keep);

@@ -4,6 +4,7 @@ const MIGRATIONS = [
   require('./003-meal-calories'),
   require('./004-app-settings'),
   require('./005-ai-usage'),
+  require('./006-remind-many'),
 ];
 
 function currentVersion(db) {

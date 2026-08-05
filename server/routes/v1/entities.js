@@ -13,6 +13,22 @@ const ALARM_PROFILES = ['wakeup', 'gentle'];
 const SLOTS = ['breakfast', 'lunch', 'dinner', 'snack', 'other'];
 const BUCKETS = ['work', 'home'];
 
+/** Неделя в минутах: «за неделю» — самый дальний срок, который есть в макете. */
+const REMIND_MAX = 7 * 24 * 60;
+
+/**
+ * Сроки предупреждения списком. Отсортированы по убыванию — первым идёт
+ * самый ранний: именно его видит всё, что умеет только одно число.
+ */
+function normalizeLeads(raw) {
+  if (raw === null) return [];
+  const arr = Array.isArray(raw) ? raw : [raw];
+  const nums = arr
+    .map(x => v.int(x, { min: 0, max: REMIND_MAX, field: 'напомнить за' }))
+    .filter(x => x !== null && x !== undefined);
+  return [...new Set(nums)].sort((a, b) => b - a).slice(0, 6);
+}
+
 /** Время можно прислать числом (startMin/endMin) или строкой time: «9:30-13». */
 function sanitizeSchedule(body, { partial }) {
   const out = pick(body, {
@@ -22,9 +38,21 @@ function sanitizeSchedule(body, { partial }) {
     kind:            x => v.oneOf(x, KINDS, { field: 'тип', fallback: 'normal' }),
     alarmMode:       x => v.oneOf(x, ALARM_MODES, { field: 'будильник', fallback: 'none' }),
     alarmProfile:    x => v.oneOf(x, ALARM_PROFILES, { field: 'профиль', fallback: 'gentle' }),
-    remindBeforeMin: x => v.int(x, { min: 0, max: 1440, field: 'напомнить за', nullable: true }),
+    remindBeforeMin: x => v.int(x, { min: 0, max: REMIND_MAX, field: 'напомнить за', nullable: true }),
     sortOrder:       x => v.int(x, { min: 0, max: 100000, field: 'порядок', nullable: true }),
   }, partial);
+
+  /*
+   * Сроков предупреждения может быть несколько: «за день» и «за час» вместе —
+   * обычная просьба. Первый (самый ранний) дублируется в remindBeforeMin,
+   * чтобы всё, что знает только про одно число, продолжало работать.
+   */
+  if (body.remindBefore !== undefined) {
+    const list = normalizeLeads(body.remindBefore);
+    // в базе это строка: колонка одна, а разбирают её и клиент, и планировщик
+    out.remindBefore = list.length ? JSON.stringify(list) : null;
+    out.remindBeforeMin = list.length ? list[0] : null;
+  }
 
   // Строку time разбирает сам репозиторий — так это работает и для PUT /days/:date/full
   if (typeof body.time === 'string' && body.time.trim()) {

@@ -183,6 +183,41 @@ test('таймзона пользователя влияет на момент �
  * из `settings`, а после правки зовёт `replan`. Без пересчёта новое «за
  * сколько предупреждать» начало бы действовать только со следующего дня.
  */
+/*
+ * Сроков предупреждения может быть несколько — «за день» и «за час» вместе.
+ * Каждый получает свою запись: с одним ключом второй затирал бы первый, и
+ * из двух напоминаний приходило бы одно.
+ */
+test('несколько сроков дают несколько напоминаний', async () => {
+  const s = await loggedIn(withPush());
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/push/subscribe', { subscription: SUB });
+    const soon = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${soon}/schedule`,
+      { time: '12:00', title: 'Приём у врача', alarmMode: 'notify', remindBefore: [60, 1440] });
+
+    const status = await getJson(s.url, s.cookie, '/api/v1/push/status');
+    const fires = status.pending.map(p => new Date(p.fireAt).toISOString()).sort();
+    assert.strictEqual(fires.length, 2, JSON.stringify(status.pending));
+    // 12:00 по Москве минус час = 08:00 UTC; минус сутки = 09:00 UTC днём раньше
+    assert.ok(fires.some(f => f.endsWith('T09:00:00.000Z')), fires.join(' '));
+    assert.ok(fires.some(f => f.endsWith('T08:00:00.000Z')), fires.join(' '));
+  } finally { await s.close(); }
+});
+
+test('первым сроком остаётся самый ранний', async () => {
+  const s = await loggedIn(withPush());
+  try {
+    const soon = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+    const row = await api(s.url, s.cookie, 'POST', `/api/v1/days/${soon}/schedule`,
+      { time: '12:00', title: 'Приём у врача', alarmMode: 'notify', remindBefore: [15, 1440, 60] });
+    // прежнее одиночное поле остаётся заполненным — им живёт всё, что не
+    // знает про список: выгрузка, приложение, шаблоны
+    assert.strictEqual(row.remind_before_min, 1440);
+    assert.deepStrictEqual(JSON.parse(row.remind_before_json), [1440, 60, 15]);
+  } finally { await s.close(); }
+});
+
 test('уведомление ведёт в тот день, о котором оно', async () => {
   const s = await loggedIn(withPush());
   try {

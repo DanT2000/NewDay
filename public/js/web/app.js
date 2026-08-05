@@ -38,15 +38,15 @@ const state = {
   date: '', view: 'week',
   catFilter: 'all', noteFilter: 'all',
   modal: null, busy: false, notice: null,
-  rowId: null, rowStart: null, rowEnd: null, rowField: 'start', rowTitle: '', rowAlarm: 'off', rowLead: 'at',
+  rowId: null, rowStart: null, rowEnd: null, rowField: 'start', rowTitle: '', rowAlarm: 'off', rowLeads: ['at'],
   taskId: null, taskTitle: '', taskCat: 'work',
   mealId: null, mealTitle: '', mealKcal: '', mealMode: 'none', mealDur: 30, mealSched: false,
   sportId: null, sportTitle: '', sportSets: '', sportReps: '', sportWeight: '',
-  noteId: null, noteText: '', noteDated: true,
-  remId: null, remRepeat: 'Разово', remTitle: '', remDate: '', remTime: '10:00', remLead: 'at',
+  noteId: null, noteTitle: '', noteText: '', noteDated: true,
+  remId: null, remRepeat: 'Разово', remTitle: '', remDate: '', remTime: '10:00', remLeads: ['at'],
   fileKind: 'export', sound: 'Рассвет', notifySound: 'Капля', soundKind: 'Звук будильника',
   tplRows: null, tplEdit: null, tplStart: 420, tplEnd: 480, tplField: 'start',
-  tplTitle: '', tplAlarm: 'off', tplLead: 'at',
+  tplTitle: '', tplAlarm: 'off', tplLeads: ['at'],
   quietFrom: '23:00', quietTo: '07:00',
   habitKind: 'do', habitEmoji: '💧', habitGoal: 30, habitGoalCustom: false,
   habitTitle: '', habitTimes: 5,
@@ -126,6 +126,18 @@ const alarmOf = r => r.alarm ?? 'off';
 const leadsOf = r => (r.leads?.length ? r.leads : ['at']);
 const hasLead = (r, k) => leadsOf(r).includes(k);
 const leadsLabel = r => leadsOf(r).map(k => LEADS.find(l => l.k === k)?.label ?? k).join(', ');
+
+/**
+ * Переключение срока предупреждения. «Вовремя» и «за сколько-то» —
+ * взаимоисключающие: выбрал «вовремя» — остальные снимаются, выбрал срок —
+ * «вовремя» уходит. Пустым набор не остаётся: пусто и есть «вовремя».
+ */
+function toggleLead(list, k) {
+  if (k === 'at') return ['at'];
+  const next = list.filter(x => x !== 'at' && x !== k);
+  if (!list.includes(k)) next.push(k);
+  return next.length ? next : ['at'];
+}
 
 /**
  * Отметка. Уходит на сервер сразу, на экране применяется не дожидаясь
@@ -558,7 +570,7 @@ function dayNotes() {
 
   if (!mine.length) {
     const empty = h('div.wdaynote', {
-      onclick: () => set({ modal: 'note', noteId: state.date, noteText: '', noteDated: true }),
+      onclick: () => openNote(null),
     });
     add(empty,
       h('div.wdaynote-title', { text: 'Заметок нет' }),
@@ -568,7 +580,7 @@ function dayNotes() {
 
   add(wrap, ...mine.map(n => {
     const card = h('div.wdaynote', {
-      onclick: () => set({ modal: 'note', noteId: n.id, noteText: n.text, noteDated: true }),
+      onclick: () => openNote(n),
     });
     add(card,
       h('div.wdaynote-title', { text: n.title }),
@@ -882,7 +894,7 @@ function habitsScreen() {
 function notesScreen() {
   const addBtn = h('button.wbtn', {
     type: 'button',
-    onclick: () => set({ modal: 'note', noteId: state.date, noteText: '', noteDated: true }),
+    onclick: () => openNote(null),
   });
   add(addBtn, ico('plus', '16px'), h('span', { text: 'Новая заметка' }));
 
@@ -900,7 +912,7 @@ function notesScreen() {
   add(grid, ...shown.map(n => {
     const card = h('button.wnote', {
       type: 'button',
-      onclick: () => set({ modal: 'note', noteId: n.id, noteText: n.text, noteDated: true }),
+      onclick: () => openNote(n),
     });
     add(card,
       h('div.wnote-hd',
@@ -1045,7 +1057,7 @@ function openRow(r) {
   set({
     modal: 'row', rowId: r.id, rowDate: state.date,
     rowStart: r.start, rowEnd: r.end ?? r.start + 30, rowField: 'start',
-    rowTitle: r.title, rowAlarm: r.alarm, rowLead: leadsOf(r)[0],
+    rowTitle: r.title, rowAlarm: r.alarm, rowLeads: leadsOf(r),
   });
 }
 
@@ -1054,7 +1066,7 @@ function newRow({ date = state.date, start = 600, end = 660 } = {}) {
   set({
     modal: 'row', rowId: 'new', rowDate: date,
     rowStart: start, rowEnd: end, rowField: 'start',
-    rowTitle: '', rowAlarm: 'off', rowLead: 'at',
+    rowTitle: '', rowAlarm: 'off', rowLeads: ['at'],
   });
 }
 
@@ -1062,7 +1074,7 @@ function newRow({ date = state.date, start = 600, end = 660 } = {}) {
 function saveRow() {
   const body = adapt.rowToServer({
     title: state.rowTitle, start: state.rowStart, end: state.rowEnd,
-    alarm: state.rowAlarm, lead: state.rowLead,
+    alarm: state.rowAlarm, leads: state.rowLeads,
   });
   if (!body.title) { state.notice = 'Впишите, что делаем'; render(); return; }
   const date = state.rowDate ?? state.date;
@@ -1075,6 +1087,22 @@ function saveRow() {
 function deleteRow() {
   if (state.rowId === 'new') { closeModal(); return; }
   busy(data.removeRow(state.rowDate ?? state.date, state.rowId));
+}
+
+/**
+ * Заметка. Заголовок и текст на экране разные поля, а в дне это один
+ * текст: первая строка — заголовок. Разделяем при открытии, склеиваем
+ * при сохранении.
+ */
+function openNote(n) {
+  const [first, ...rest] = String(n?.text ?? '').split('\n');
+  set({
+    modal: 'note',
+    noteId: n?.id ?? state.date,
+    noteTitle: n ? first : '',
+    noteText: n ? rest.join('\n') : '',
+    noteDated: true,
+  });
 }
 
 // ── Напоминание ──────────────────────────────────────────────
@@ -1105,7 +1133,7 @@ function openReminder(row) {
     remTitle: row?.title ?? '',
     remDate: RU_DATE(state.date),
     remTime: hhmm(row?.start_min ?? row?.start ?? 600),
-    remLead: row ? leadsOf(adapt.scheduleRow(row, { isToday: false, minutes: 0 }))[0] : 'at',
+    remLeads: row ? leadsOf(adapt.scheduleRow(row, { isToday: false, minutes: 0 })) : ['at'],
     remRepeat: 'Разово',
   });
 }
@@ -1119,7 +1147,7 @@ function saveReminder() {
   if (startMin === null) { note('Время пишется как 10:00'); return; }
 
   const body = adapt.rowToServer({
-    title, start: startMin, end: null, alarm: 'notify', lead: state.remLead,
+    title, start: startMin, end: null, alarm: 'notify', leads: state.remLeads,
   });
   const freq = FREQ_OF[state.remRepeat];
 
@@ -1142,7 +1170,7 @@ function openTplRow(index) {
     tplEnd: r?.end ?? (r ? r.start + 60 : 480),
     tplTitle: r?.title ?? '',
     tplAlarm: r?.alarm ?? 'off',
-    tplLead: (r?.leads ?? ['at'])[0],
+    tplLeads: r?.leads ?? ['at'],
   });
 }
 
@@ -1152,7 +1180,7 @@ function saveTplRow() {
   const rows = [...(state.tplRows ?? [])];
   const row = {
     start: state.tplStart, end: state.tplEnd, title,
-    alarm: state.tplAlarm, leads: [state.tplLead],
+    alarm: state.tplAlarm, leads: state.tplLeads,
   };
   if (state.tplEdit === 'new') rows.push(row);
   else rows[state.tplEdit] = row;
@@ -1284,7 +1312,7 @@ const BODIES = {
     };
 
     const leads = h('div.wwrap');
-    add(leads, ...LEADS.map(l => sheetChip(l.label, state.rowLead === l.k, () => set({ rowLead: l.k }))));
+    add(leads, ...LEADS.map(l => sheetChip(l.label, state.rowLeads.includes(l.k), () => set({ rowLeads: toggleLead(state.rowLeads, l.k) }))));
 
     const modes = h('div.wgrid2');
     add(modes, ...ALARM.map(a => opt(a.label, a.icon, state.rowAlarm === a.k, () => set({ rowAlarm: a.k }))));
@@ -1302,7 +1330,7 @@ const BODIES = {
         clockGrid(24, 1, target, setHour),
         h('div.wclock-cap', { text: 'минуты', style: { margin: '12px 0 9px' } }),
         clockGrid(12, 5, target, setMin)),
-      h('div', h('div.wfield-label', { text: 'предупредить' }), leads),
+      h('div', h('div.wfield-label', { text: 'предупредить · можно несколько' }), leads),
       h('div', h('div.wfield-label', { text: 'чем предупредить' }), modes),
       h('div.wrow-end',
         h('button.wbtn-quiet', { type: 'button', text: 'Удалить', onclick: deleteRow }),
@@ -1486,12 +1514,23 @@ const BODIES = {
     }
 
     /*
-     * Заметка пока одна на день: сервер держит её полем дня. Заголовок —
-     * первая строка текста, поэтому отдельного поля нет: два поля, из
-     * которых одно — начало другого, только путают.
+     * Заголовок и текст — двумя полями, как на эталоне. Заметка при этом
+     * по-прежнему одна на день: сервер держит её полем дня, и первая
+     * строка и есть заголовок. Здесь их только разделили; склеиваются
+     * они обратно при сохранении.
      */
+    const save = () => {
+      const title = String(state.noteTitle ?? '').trim();
+      const body = String(state.noteText ?? '');
+      busy(data.saveNote(state.noteId ?? state.date,
+        title ? [title, body].filter(Boolean).join('\n') : body));
+    };
+
     return h('div.wstack',
-      h('div.whint', { text: `Заметка дня ${adapt.shortDate(state.noteId ?? state.date)}. Первая строка станет заголовком в списке.` }),
+      h('input.winput', {
+        value: state.noteTitle, placeholder: 'Заголовок',
+        oninput: e => { state.noteTitle = e.target.value; },
+      }),
       kinds,
       h('textarea.wtextarea', {
         value: state.noteText, placeholder: 'О чём не хочется забыть',
@@ -1499,12 +1538,12 @@ const BODIES = {
       }),
       h('div.wrow-end',
         h('button.wbtn-quiet', {
-          type: 'button', text: 'Очистить',
+          type: 'button', text: 'Удалить', disabled: state.busy,
           onclick: () => busy(data.saveNote(state.noteId ?? state.date, '')),
         }),
         h('button.wbtn-wide', {
           type: 'button', text: state.busy ? 'Сохраняю…' : 'Сохранить', disabled: state.busy,
-          onclick: () => busy(data.saveNote(state.noteId ?? state.date, state.noteText)),
+          onclick: save,
         })));
   },
 
@@ -1612,7 +1651,7 @@ const BODIES = {
 
     const leads = h('div.wwrap');
     add(leads, ...[...LEADS, { k: 'week', label: 'за неделю' }].map(l =>
-      sheetChip(l.label, state.remLead === l.k, () => set({ remLead: l.k }))));
+      sheetChip(l.label, state.remLeads.includes(l.k), () => set({ remLeads: toggleLead(state.remLeads, l.k) }))));
 
     return h('div.wstack',
       h('label', h('span.wfield-label', { text: 'о чём напомнить' }),
@@ -1631,7 +1670,7 @@ const BODIES = {
         }),
         h('span.whint', { text: 'дата и время — можно вписать вручную' })),
       h('div', h('div.wfield-label', { text: 'повтор' }), repeats),
-      h('div', h('div.wfield-label', { text: 'предупредить' }), leads),
+      h('div', h('div.wfield-label', { text: 'предупредить · можно несколько' }), leads),
       h('div.wrow-end',
         h('button.wbtn-quiet', {
           type: 'button', text: 'Удалить', disabled: state.busy,
@@ -1799,7 +1838,7 @@ const BODIES = {
     };
 
     const leads = h('div.wwrap');
-    add(leads, ...LEADS.map(l => sheetChip(l.label, state.tplLead === l.k, () => set({ tplLead: l.k }))));
+    add(leads, ...LEADS.map(l => sheetChip(l.label, state.tplLeads.includes(l.k), () => set({ tplLeads: toggleLead(state.tplLeads, l.k) }))));
 
     const modes = h('div.wgrid2');
     add(modes, ...ALARM.map(a => opt(a.label, a.icon, state.tplAlarm === a.k, () => set({ tplAlarm: a.k }))));
@@ -1816,7 +1855,7 @@ const BODIES = {
         clockGrid(24, 1, target, setHour),
         h('div.wclock-cap', { text: 'минуты', style: { margin: '12px 0 9px' } }),
         clockGrid(12, 5, target, setMin)),
-      h('div', h('div.wfield-label', { text: 'предупредить' }), leads),
+      h('div', h('div.wfield-label', { text: 'предупредить · можно несколько' }), leads),
       h('div', h('div.wfield-label', { text: 'чем предупредить' }), modes),
       h('div.wrow-end',
         h('button.wbtn-quiet', {
