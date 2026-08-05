@@ -239,7 +239,7 @@ const HABITS = [
   { title: 'Читать 20 страниц', emoji: '📖', color: 'teal', preset: 'marathon300' },
   { title: 'Зал', emoji: '🏋', color: 'orange', preset: 'simple', scheduleMask: 0b0010101 },
   { title: 'Не курить', emoji: '🚭', color: 'pink', preset: 'quit', challengeTargetDays: 300 },
-  { title: 'Медитация', emoji: '🧘', color: 'violet', preset: 'simple', scheduleMask: 0b1111100 },
+  { title: 'Медитация', emoji: '🧘', color: 'purple', preset: 'simple', timesPerWeek: 3 },
 ];
 
 async function main() {

@@ -3,7 +3,38 @@ const { wrap, badRequest } = require('../../lib/errors');
 const v = require('../../lib/validate');
 const { daysRepo } = require('../../repos/days');
 const { dayService, DAY_SECTIONS } = require('../../services/dayService');
-const { entityRouters } = require('./entities');
+const {
+  entityRouters, sanitizeSchedule, sanitizeTask, sanitizeMeal, sanitizeSport,
+} = require('./entities');
+
+/**
+ * Строки дня в массовой записи проходят те же проверки, что и по одной.
+ *
+ * Раньше `PUT /days/:date/full` отдавал тело репозиторию как есть, и любое
+ * поле, которому в базе нужен другой вид, роняло запрос в «внутреннюю ошибку»:
+ * список сроков предупреждения уходил массивом и упирался в драйвер базы.
+ * Проверка входа — работа роутера, и она должна быть одна для обоих путей.
+ */
+function cleanBody(body) {
+  const rows = (list, sanitize) => (Array.isArray(list) ? list : [])
+    .filter(r => r && typeof r === 'object')
+    .map(r => {
+      const out = sanitize(r, { partial: false });
+      // строка time разбирается репозиторием, поэтому доезжает как есть
+      return out.time === undefined ? out : { ...out, time: String(r.time) };
+    });
+
+  return {
+    ...body,
+    schedule: rows(body.schedule, sanitizeSchedule),
+    tasks: {
+      work: rows(body.tasks?.work, sanitizeTask),
+      home: rows(body.tasks?.home, sanitizeTask),
+    },
+    meals: rows(body.meals, sanitizeMeal),
+    sport: rows(body.sport, sanitizeSport),
+  };
+}
 
 module.exports = function daysRouter({ db }) {
   const router = express.Router();
@@ -38,7 +69,7 @@ module.exports = function daysRouter({ db }) {
   }));
 
   router.put('/:date/full', wrap((req, res) => {
-    const day = svc.replaceFull(req.user, dateOf(req), req.body || {}, req.get('if-match'));
+    const day = svc.replaceFull(req.user, dateOf(req), cleanBody(req.body || {}), req.get('if-match'));
     withEtag(res, day);
   }));
 

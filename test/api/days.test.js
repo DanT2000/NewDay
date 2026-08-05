@@ -193,6 +193,36 @@ test('PUT /full разбирает время во всех строках, а �
   } finally { await s.close(); }
 });
 
+/*
+ * Массовая запись дня проходит те же проверки, что и запись по одной строке.
+ *
+ * Раньше тело уходило в репозиторий как есть, и список сроков предупреждения
+ * ронял запрос в «внутреннюю ошибку»: массив упирался в драйвер базы. Заодно
+ * проверяем цвет, тип «напоминание» и окно у приёма пищи — все они появились
+ * позже самого PUT и легко остались бы необработанными.
+ */
+test('PUT /full принимает список сроков, цвет, напоминание и окно питания', async () => {
+  const s = await loggedIn();
+  try {
+    const cur = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-09/full');
+    const after = await api(s.url, s.cookie, 'PUT', '/api/v1/days/2026-08-09/full', {
+      schedule: [
+        { time: '09:00-13:00', title: 'Работа', alarmMode: 'notify', remindBefore: [15, 0], color: 'green' },
+        { time: '19:00', title: 'Забрать документы', kind: 'reminder', alarmMode: 'notify', remindBefore: [1440] },
+      ],
+      meals: [{ slot: 'lunch', timeMin: 720, endMin: 840, title: 'Обед окном' }],
+    }, { 'If-Match': `"${cur.rev}"` });
+
+    const [work, rem] = after.schedule;
+    assert.strictEqual(work.remind_before_json, '[15,0]', 'список сроков сохранён');
+    assert.strictEqual(work.remind_before_min, 15, 'первым остаётся самый ранний');
+    assert.strictEqual(work.color, 'green');
+    assert.strictEqual(rem.kind, 'reminder');
+    assert.strictEqual(rem.end_min, null, 'у напоминания конца нет');
+    assert.strictEqual(after.meals[0].end_min, 840, 'окно приёма пищи сохранено');
+  } finally { await s.close(); }
+});
+
 test('битое время в PUT /full отвергается, а не молча превращается в полночь', async () => {
   const s = await loggedIn();
   try {
