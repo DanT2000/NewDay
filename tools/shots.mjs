@@ -192,7 +192,7 @@ if (process.env.SHOT_WEB) {
     console.log(`  расписание: ${label}`);
   }
 
-  const MODALS = ['row', 'schedule', 'ai', 'habit', 'note', 'task', 'meal', 'reminder', 'sound', 'file', 'template', 'print'];
+  const MODALS = ['row', 'schedule', 'ai', 'habit', 'note', 'task', 'meal', 'sound', 'file', 'template', 'print'];
   for (const m of MODALS) {
     await rpc(ws, 'Runtime.evaluate', {
       expression: `(() => {

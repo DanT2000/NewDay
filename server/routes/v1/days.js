@@ -1,5 +1,5 @@
 const express = require('express');
-const { wrap } = require('../../lib/errors');
+const { wrap, badRequest } = require('../../lib/errors');
 const v = require('../../lib/validate');
 const { daysRepo } = require('../../repos/days');
 const { dayService, DAY_SECTIONS } = require('../../services/dayService');
@@ -18,6 +18,19 @@ module.exports = function daysRouter({ db }) {
     const from = req.query.from ? v.date(req.query.from, { field: 'from' }) : null;
     const to = req.query.to ? v.date(req.query.to, { field: 'to' }) : null;
     res.json(days.list(req.user.id, from, to));
+  }));
+
+  /**
+   * Расписание за период — для сетки недели и месяца.
+   *
+   * Стоит до `/:date`, иначе «range» было бы разобрано как дата и ушло
+   * в проверку формата. Порядок маршрутов здесь — часть работы, а не вкус.
+   */
+  router.get('/range', wrap((req, res) => {
+    const from = v.date(req.query.from, { field: 'from' });
+    const to = v.date(req.query.to, { field: 'to' });
+    if (to < from) throw badRequest('Конец периода раньше начала');
+    res.json(svc.getRange(req.user, from, to));
   }));
 
   router.get('/:date/full', wrap((req, res) => {

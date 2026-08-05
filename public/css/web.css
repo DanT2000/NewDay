@@ -823,3 +823,19 @@
   .wveil { padding: 0; place-items: end stretch; }
   .wmodal, .wmodal.wide { width: 100%; max-width: 100%; max-height: 92vh; border-radius: 20px 20px 0 0; }
 }
+
+/* ── Служебные сообщения ───────────────────────────────────── */
+
+/* Отказ сервера виден на экране, а не только в консоли */
+.wnotice {
+  margin-bottom: 16px; padding: 12px 14px; border-radius: 12px;
+  background: var(--raise); color: var(--text);
+  font: 400 14px/1.4 var(--ui);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* Пока настройки не загрузились, показывать нечего — кроме причины */
+.wboot {
+  margin: auto; padding: 24px; max-width: 32rem; text-align: center;
+  color: var(--dim); font: 400 15px/1.5 var(--ui);
+}

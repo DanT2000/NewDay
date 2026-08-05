@@ -9,6 +9,14 @@ const { seriesService } = require('./seriesService');
 
 const SECTIONS = ['schedule', 'tasks', 'meals', 'sport'];
 
+/** Сдвиг даты строкой: считать через Date значит поймать переход на зиму. */
+function addDays(date, n) {
+  const [y, m, d] = date.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + n);
+  return dt.toISOString().slice(0, 10);
+}
+
 function dayService(db, opts = {}) {
   const days = daysRepo(db);
   const schedule = scheduleRepo(db);
@@ -46,6 +54,35 @@ function dayService(db, opts = {}) {
       habits: stats.habitsForDate(user, date),
       progress: stats.dayProgress(user, date),
     };
+  }
+
+  /**
+   * Несколько дней сразу — для сетки недели и месяца.
+   *
+   * Отдаём только то, что рисует сетка: расписание и счётчики. Тянуть
+   * тридцать полных дней с задачами, едой, привычками и прогрессом ради
+   * тридцати клеток месяца — это тридцать лишних расчётов статистики.
+   *
+   * Повторы достраиваются по каждому дню, как и при открытии одного дня:
+   * иначе в сетке зияли бы пустые дни, у которых расписание есть.
+   */
+  function getRange(user, from, to, { limit = 62 } = {}) {
+    const days = [];
+    let cur = from;
+    for (let i = 0; i < limit && cur <= to; i++) {
+      series.materializeDay(user.id, cur);
+      const rows = schedule.list(user.id, cur);
+      days.push({
+        date: cur,
+        schedule: rows,
+        counts: {
+          schedule: rows.length,
+          done: rows.filter(r => r.done === 1).length,
+        },
+      });
+      cur = addDays(cur, 1);
+    }
+    return { from, to, days };
   }
 
   function checkIfMatch(ifMatch, user, date) {
@@ -148,7 +185,7 @@ function dayService(db, opts = {}) {
     return getFull(user, targetDate);
   }
 
-  return { getFull, replaceFull, patchDay, copyTo, checkIfMatch, SECTIONS };
+  return { getFull, getRange, replaceFull, patchDay, copyTo, checkIfMatch, SECTIONS };
 }
 
 module.exports = { dayService, DAY_SECTIONS: SECTIONS };
