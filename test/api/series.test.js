@@ -358,3 +358,111 @@ test('чужой повтор недоступен', async () => {
     assert.strictEqual(day.schedule.length, 0, 'чужой повтор не материализуется');
   } finally { await a.close(); }
 });
+
+/*
+ * Ниже — проверки на ошибки, которые нашлись прогоном ботов по логике.
+ * Каждая описывает то, что до правки происходило молча и неверно.
+ */
+
+test('ежемесячный повтор считает интервал, а не приходит каждый месяц', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/series', {
+      freq: 'monthly', interval: 3, startDate: '2026-01-15',
+      rows: [{ time: '10:00', title: 'Квартальный отчёт' }],
+    });
+    const has = async d => (await getJson(s.url, s.cookie, `/api/v1/days/${d}/full`)).schedule.length;
+    assert.strictEqual(await has('2026-01-15'), 1, 'первый месяц');
+    assert.strictEqual(await has('2026-02-15'), 0, 'второй месяц пропускается');
+    assert.strictEqual(await has('2026-04-15'), 1, 'через три месяца');
+  } finally { await s.close(); }
+});
+
+test('«каждое 31-е» приходит в последний день короткого месяца', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/series', {
+      freq: 'monthly', startDate: '2026-01-31',
+      rows: [{ time: '09:00', title: 'Итоги месяца' }],
+    });
+    const has = async d => (await getJson(s.url, s.cookie, `/api/v1/days/${d}/full`)).schedule.length;
+    assert.strictEqual(await has('2026-02-28'), 1, 'февраль — 28-го');
+    assert.strictEqual(await has('2026-02-27'), 0, 'и только в последний день');
+    assert.strictEqual(await has('2026-04-30'), 1, 'апрель — 30-го');
+  } finally { await s.close(); }
+});
+
+test('еженедельный повтор без выбранных дней идёт в тот же день недели', async () => {
+  const s = await loggedIn();
+  try {
+    // 2026-08-05 — среда
+    await api(s.url, s.cookie, 'POST', '/api/v1/series', {
+      freq: 'weekly', startDate: '2026-08-05', byweekday: 1 << 2,
+      rows: [{ time: '19:00', title: 'Английский' }],
+    });
+    const has = async d => (await getJson(s.url, s.cookie, `/api/v1/days/${d}/full`)).schedule.length;
+    assert.strictEqual(await has('2026-08-05'), 1, 'среда');
+    assert.strictEqual(await has('2026-08-06'), 0, 'четверг — не должен');
+    assert.strictEqual(await has('2026-08-12'), 1, 'через неделю снова среда');
+  } finally { await s.close(); }
+});
+
+test('удаление повтора убирает будущие строки, но не прошлые', async () => {
+  const s = await loggedIn();
+  try {
+    const past = dayFromToday(-3);
+    const future = dayFromToday(3);
+    const rule = await api(s.url, s.cookie, 'POST', '/api/v1/series', {
+      freq: 'daily', startDate: past,
+      rows: [{ time: '07:00', title: 'Зарядка' }],
+    });
+    // открываем оба дня — так строки и появляются
+    await getJson(s.url, s.cookie, `/api/v1/days/${past}/full`);
+    await getJson(s.url, s.cookie, `/api/v1/days/${future}/full`);
+
+    await api(s.url, s.cookie, 'DELETE', `/api/v1/series/${rule.id}`);
+
+    const wasPast = await getJson(s.url, s.cookie, `/api/v1/days/${past}/full`);
+    const wasFuture = await getJson(s.url, s.cookie, `/api/v1/days/${future}/full`);
+    assert.strictEqual(wasPast.schedule.length, 1, 'прошлое остаётся: это прожитый день');
+    assert.strictEqual(wasFuture.schedule.length, 0, 'будущее уходит вместе с правилом');
+  } finally { await s.close(); }
+});
+
+test('применение шаблона переносит цвет и список сроков', async () => {
+  const s = await loggedIn();
+  try {
+    const rule = await api(s.url, s.cookie, 'POST', '/api/v1/series', {
+      name: 'Общее расписание', freq: 'daily', startDate: '2026-08-01', forceRows: true,
+      rows: [{
+        time: '09:00-13:00', title: 'Работа', color: 'green',
+        alarmMode: 'notify', remindBefore: [1440, 60],
+      }],
+    });
+    await api(s.url, s.cookie, 'POST', `/api/v1/series/${rule.id}/apply`, { date: '2026-08-20' });
+    const day = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-20/full');
+    assert.strictEqual(day.schedule[0].color, 'green');
+    assert.strictEqual(day.schedule[0].remind_before_json, '[1440,60]');
+  } finally { await s.close(); }
+});
+
+test('повторная запись дня целиком не удваивает строки повтора', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/series', {
+      freq: 'daily', startDate: '2026-08-05',
+      rows: [{ time: '07:00', title: 'Подъём' }],
+    });
+    let day = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-05/full');
+    assert.strictEqual(day.schedule.length, 1);
+
+    // отправляем обратно ровно то, что прочитали
+    day = await api(s.url, s.cookie, 'PUT', '/api/v1/days/2026-08-05/full', {
+      title: day.title, schedule: day.schedule, tasks: day.tasks, meals: day.meals, sport: day.sport,
+    }, { 'If-Match': `"${day.rev}"` });
+    assert.strictEqual(day.schedule.length, 1, 'строка повтора осталась одна');
+
+    const again = await getJson(s.url, s.cookie, '/api/v1/days/2026-08-05/full');
+    assert.strictEqual(again.schedule.length, 1, 'и при следующем чтении тоже');
+  } finally { await s.close(); }
+});

@@ -498,19 +498,53 @@ function scheduleList() {
 function progress() {
   const scored = [...TASKS, ...MEALS, ...HABITS.filter(x => x.active)];
   const done = scored.filter(isDone).length;
-  return { done, total: scored.length, percent: Math.round((done / scored.length) * 100) };
+  // Пустой день — это не ноль процентов и уж точно не NaN: считать нечего
+  const percent = scored.length ? Math.round((done / scored.length) * 100) : 0;
+  return { done, total: scored.length, percent, empty: scored.length === 0 };
 }
 
+/**
+ * Карточка «сейчас»: текущий блок расписания, сколько осталось и доля дня.
+ *
+ * Раньше здесь стояли постоянные значения из макета — «сейчас · 09:00 – 12:30»,
+ * «Работа: первый блок», «1 ч 12 мин до конца блока». Самый заметный блок
+ * экрана сообщал то, чего на сервере нет, и на пустом дне утверждал, что
+ * человек сейчас работает.
+ */
 function nowCard() {
-  const { percent } = progress();
+  const { percent, empty } = progress();
   const C = 2 * Math.PI * 34;
+
+  const now = new Date();
+  const minutes = now.getHours() * 60 + now.getMinutes();
+  const isToday = state.date === todayKey();
+  const cur = isToday ? SCHEDULE.find(r => r.now) : null;
+  const next = isToday
+    ? SCHEDULE.find(r => r.start > minutes)
+    : SCHEDULE.find(r => !r.past);
+
+  const live = cur
+    ? { top: `сейчас · ${hhmm(cur.start)} – ${cur.end === null ? '' : hhmm(cur.end)}`.trim(),
+      title: cur.title,
+      left: cur.end === null ? null : durLabel(Math.max(1, cur.end - minutes)),
+      leftNote: 'до конца блока',
+      share: cur.end === null ? 0 : Math.round(((minutes - cur.start) / (cur.end - cur.start)) * 100) }
+    : next
+      ? { top: isToday ? 'дальше' : 'начало дня', title: next.title,
+        left: isToday ? durLabel(Math.max(1, next.start - minutes)) : hhmm(next.start),
+        leftNote: isToday ? 'до начала' : 'по расписанию', share: 0 }
+      : { top: isToday ? 'сейчас' : 'этот день', title: 'Расписание пустое',
+        left: null, leftNote: '', share: 0 };
+
   return h('div.wnow',
     h('div.wnow-in',
       h('div', { style: { flex: '1', minWidth: '0' } },
-        h('div.wnow-live', h('i'), h('span', { text: 'сейчас · 09:00 – 12:30' })),
-        h('div.wnow-title', { text: 'Работа: первый блок' }),
-        h('div.wnow-left', h('b', { text: '1 ч 12 мин' }), h('span', { text: 'до конца блока' })),
-        h('div.wbar', h('i', { style: { width: '66%' } }))),
+        h('div.wnow-live', cur ? h('i') : null, h('span', { text: live.top })),
+        h('div.wnow-title', { text: live.title }),
+        live.left
+          ? h('div.wnow-left', h('b', { text: live.left }), h('span', { text: live.leftNote }))
+          : null,
+        h('div.wbar', h('i', { style: { width: `${Math.max(0, Math.min(100, live.share))}%` } }))),
       (() => {
         const box = h('div.wring');
         box.innerHTML = `<svg viewBox="0 0 80 80">
@@ -518,19 +552,43 @@ function nowCard() {
           <circle cx="40" cy="40" r="34" fill="none" stroke="${accent()}" stroke-width="6" stroke-linecap="round"
             stroke-dasharray="${(C * percent) / 100} ${C}"></circle>
         </svg>`;
-        add(box, h('span', { text: `${percent}%` }));
+        add(box, h('span', { text: empty ? '—' : `${percent}%` }));
         return box;
       })()));
 }
 
 function statCards() {
-  const { done, total, percent } = progress();
+  const { done, total, percent, empty } = progress();
   const act = HABITS.filter(x => x.active);
   const hd = act.filter(isDone).length;
+
+  /*
+   * Третья плитка — привычки за неделю. Раньше здесь стояли «71%» и «лучшая
+   * серия 12» из макета: числа не менялись никогда, что бы человек ни делал.
+   * Считаем по той же недели истории, которую сервер отдаёт с каждой привычкой.
+   */
+  const week = HABITS.flatMap(hb => hb.week ?? []);
+  const weekDone = week.filter(k => k === 'done').length;
+  const weekAsked = week.filter(k => k !== 'off' && k !== 'skip').length;
+  const weekPct = weekAsked ? Math.round((weekDone / weekAsked) * 100) : 0;
+  const best = HABITS.reduce((m, hb) => Math.max(m, hb.raw?.bestStreak ?? 0), 0);
+
   const cards = [
-    { value: `${percent}%`, label: `дела сегодня · ${done} из ${total}`, p: percent },
-    { value: `${hd}/${act.length}`, label: 'привычки сегодня', p: Math.round((hd / act.length) * 100) },
-    { value: '71%', label: 'привычки за 7 дней · лучшая серия 12', p: 71 },
+    {
+      value: empty ? '—' : `${percent}%`,
+      label: total ? `дела сегодня · ${done} из ${total}` : 'на этот день ничего не запланировано',
+      p: percent,
+    },
+    {
+      value: `${hd}/${act.length}`,
+      label: act.length ? 'привычки сегодня' : 'привычек на сегодня нет',
+      p: act.length ? Math.round((hd / act.length) * 100) : 0,
+    },
+    {
+      value: weekAsked ? `${weekPct}%` : '—',
+      label: `привычки за 7 дней${best ? ` · лучшая серия ${best}` : ''}`,
+      p: weekPct,
+    },
   ];
   const grid = h('div.wstats');
   add(grid, ...cards.map(c => h('div.wstat',
@@ -720,7 +778,13 @@ function todayScreen() {
 /** Что тянут прямо сейчас. Не в state: живёт доли секунды и на вид не влияет. */
 let dragging = null;
 
-const snap = px => FROM_MIN + Math.max(0, Math.min(HOURS * 60, Math.round((px / PX_PER_MIN) / SNAP) * SNAP));
+/*
+ * Минута в сетке по вертикали. Верх ограничен последней минутой суток, а не
+ * их концом: 24:00 в сутках не существует, и протягивание до самого низа
+ * давало 1440 — сервер такое время не принимает, и блок не создавался вовсе.
+ */
+const snap = px => FROM_MIN
+  + Math.max(0, Math.min(HOURS * 60 - SNAP, Math.round((px / PX_PER_MIN) / SNAP) * SNAP));
 
 /**
  * Дорожки для пересечений.
@@ -765,13 +829,21 @@ function lanesFor(rows) {
   return { items, place };
 }
 
-/** Строки нужного дня из выборки за период. */
+/**
+ * Строки нужного дня.
+ *
+ * Берём из выборки за период, а если её нет — из открытого дня. Без второго
+ * пути на «Сейчас» не работало ничего, что спрашивает про строки другого
+ * места: разбор пересечений молча считал, что пересекаться не с чем, и клал
+ * блоки внахлёст без предупреждения.
+ */
 function rowsForDate(date) {
-  const day = (store.range?.days ?? []).find(d => d.date === date);
-  if (!day) return [];
   const now = new Date();
   const minutes = now.getHours() * 60 + now.getMinutes();
-  return day.schedule.map(r => adapt.scheduleRow(r, { isToday: date === todayKey(), minutes }));
+  const day = (store.range?.days ?? []).find(d => d.date === date);
+  const rows = day?.schedule ?? (store.day?.date === date ? store.day.schedule : null);
+  if (!rows) return [];
+  return rows.map(r => adapt.scheduleRow(r, { isToday: date === todayKey(), minutes }));
 }
 
 function planColumn(index, dateKey) {
@@ -868,7 +940,12 @@ function planScreen() {
     h('button', {
       type: 'button', text: label, class: state.view === k ? 'on' : '',
       // Месяцу нужны шесть недель, неделе — семь дней: период меняется вместе с видом
-      onclick: () => { state.view = k; render(); reload(); },
+      onclick: () => {
+        state.view = k;
+        render();
+        reload();
+        data.saveSettings({ planView: k }).catch(fail);
+      },
     })));
 
   const addBtn = h('button.wbtn', { type: 'button', onclick: () => newRow() });
@@ -1357,6 +1434,23 @@ function saveHabit() {
 function openMeal(m) {
   const mode = m?.mode ?? 'none';
   const start = m?.start ?? 12 * 60;
+  const blockId = m?.raw?.schedule_item_id ?? null;
+
+  /*
+   * Длительность берём у самого блока, а не из прошлого состояния.
+   *
+   * Раньше здесь оставалось значение от предыдущей правки, и открыв приём,
+   * занимающий полтора часа, человек видел «30 мин» — а «Готово» молча
+   * сжимало блок до получаса.
+   *
+   * Блока может уже не быть: его удалили прямо в расписании. Тогда и ссылку
+   * не держим, иначе сохранение упиралось бы в «строка не найдена».
+   */
+  const block = blockId
+    ? (store.day?.schedule ?? []).find(r => r.id === blockId)
+    : null;
+  const dur = block && block.end_min !== null ? Math.max(5, block.end_min - block.start_min) : 30;
+
   set({
     modal: 'meal', mealId: m?.id ?? 'new', notice: null,
     mealTitle: m?.title === 'Без названия' ? '' : (m?.title ?? ''),
@@ -1364,10 +1458,10 @@ function openMeal(m) {
     mealMode: mode,
     mealStart: start,
     mealEnd: m?.end ?? start + 120,
-    mealDur: m?.raw?.schedule_item_id && m?.mode === 'exact' ? state.mealDur : 30,
+    mealDur: dur,
     mealLeads: m ? m.leads : ['at'],
-    mealSched: Boolean(m?.scheduled),
-    mealSchedId: m?.raw?.schedule_item_id ?? null,
+    mealSched: Boolean(block),
+    mealSchedId: block ? blockId : null,
     mealConflict: 'overlap',
   });
 }
@@ -1397,9 +1491,15 @@ function saveMeal() {
   const date = state.date;
   const wantBlock = state.mealMode === 'exact' && state.mealSched;
   const end = state.mealStart + state.mealDur;
+  /*
+   * Блок создаём с включённым уведомлением, если сроки заданы. Без `alarmMode`
+   * он получал «без напоминания», и планировщик пропускал его первым же
+   * условием: колокольчик у приёма пищи горел, а уведомление не приходило.
+   */
   const blockBody = {
     title: body.title, startMin: state.mealStart, endMin: end, kind: 'meal',
-    ...(state.mealLeads.length ? { remindBefore: adapt.leadMinutes(state.mealLeads) } : {}),
+    alarmMode: state.mealLeads.length ? 'notify' : 'none',
+    remindBefore: adapt.leadMinutes(state.mealLeads),
   };
 
   const job = (async () => {
@@ -1471,6 +1571,19 @@ function saveNote() {
   const wasDated = typeof state.noteId === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(state.noteId);
   const wasFree = state.noteId !== 'new' && !wasDated;
   const date = state.noteDate ?? state.date;
+
+  /*
+   * Заметка на день одна, поэтому запись в чужой день затирала бы то, что там
+   * уже написано, — молча и без возврата. Пока заметок на день не может быть
+   * несколько, честнее не дать этого сделать и сказать, куда идти.
+   */
+  if (state.noteDated && state.noteId !== date) {
+    const busyDay = NOTES.find(n => n.dateKey === date);
+    if (busyDay) {
+      setIn({ notice: `На ${adapt.shortDate(date)} уже есть заметка «${busyDay.title}» — откройте её и дополните` });
+      return;
+    }
+  }
 
   busy((async () => {
     if (state.noteDated) {
@@ -1551,15 +1664,50 @@ function saveReminder() {
   const freq = FREQ_OF[state.remRepeat];
   const mask = Object.entries(state.remDays)
     .reduce((acc, [i, on]) => (on ? acc | (1 << Number(i)) : acc), 0);
-  // дни недели имеют смысл только у еженедельного: у остальных период задан иначе
-  const byweekday = freq === 'weekly' && mask ? mask : undefined;
+  /*
+   * Дни недели имеют смысл только у еженедельного. И посылать их надо всегда:
+   * без явной маски сервер берёт «все дни» по умолчанию, и еженедельное
+   * напоминание приходило каждый день. Пусто значит «в тот же день недели»,
+   * поэтому считаем его из самой даты.
+   */
+  const byweekday = freq !== 'weekly' ? undefined
+    : (mask || (1 << ((new Date(`${date}T00:00:00`).getDay() + 6) % 7)));
 
-  const job = state.remId === 'new'
-    ? (freq
+  if (state.remId === 'new') {
+    busy(freq
       ? data.createRepeat({ freq, startDate: date, row: body, byweekday })
-      : data.createRow(date, body))
-    : data.updateRow(date, state.remId, body);
-  busy(job);
+      : data.createRow(date, body));
+    return;
+  }
+
+  /*
+   * Правка существующего. Раньше уходила только сама строка, поэтому смена
+   * повтора и даты закрывала шторку без ошибки и не сохранялась ничего:
+   * человек открывал заново и видел прежнее.
+   *
+   * Дату строки нельзя поменять на месте — она часть её адреса; поэтому при
+   * переносе строку пересоздаём в нужном дне.
+   */
+  const wasDate = state.date;
+  busy((async () => {
+    if (date !== wasDate) {
+      await data.removeRow(wasDate, state.remId);
+      await data.createRow(date, body);
+    } else {
+      await data.updateRow(wasDate, state.remId, body);
+    }
+
+    const rule = state.remSeriesId
+      ? (store.series ?? []).find(s => s.id === state.remSeriesId)
+      : null;
+    if (!freq && rule) { await data.removeSeries(rule.id); return; }
+    if (!freq) return;
+    if (rule) {
+      await data.updateSeries(rule.id, { freq, startDate: date, ...(byweekday ? { byweekday } : {}) });
+      return;
+    }
+    await data.createRepeat({ freq, startDate: date, row: body, byweekday });
+  })());
 }
 
 /**
@@ -1587,6 +1735,8 @@ function openTplRow(index) {
     tplTitle: r?.title ?? '',
     tplAlarm: r?.alarm ?? 'off',
     tplLeads: r?.leads ?? ['at'],
+    tplColor: r?.color ?? null,
+    notice: null,
   });
 }
 
@@ -1597,6 +1747,8 @@ function saveTplRow() {
   const row = {
     start: state.tplStart, end: state.tplEnd, title,
     alarm: state.tplAlarm, leads: state.tplLeads,
+    // цвет в шаблоне не выбирают, но и не теряют: правка строки его сохраняет
+    color: state.tplColor ?? null,
   };
   if (state.tplEdit === 'new') rows.push(row);
   else rows[state.tplEdit] = row;
@@ -1632,8 +1784,14 @@ function saveTemplate(rows, okText) {
 function busy(job) {
   state.busy = true;
   render();
-  job.then(() => { state.busy = false; state.modal = null; return reload(); })
-    .catch(e => { state.busy = false; fail(e); });
+  job.then(() => {
+    state.busy = false;
+    state.modal = null;
+    // сообщение о проверке относилось к шторке: после удачного сохранения оно
+    // висело красной плашкой над днём, и человек читал это как «не сохранилось»
+    state.notice = null;
+    return reload();
+  }).catch(e => { state.busy = false; fail(e); });
 }
 
 const closeModal = () => set({ modal: null });
@@ -1694,6 +1852,23 @@ const footer = (quiet, main, onMain = closeModal) =>
 /** Готовые длительности: от четверти часа до четырёх — как в эталоне. */
 const DURS = [15, 30, 45, 60, 90, 120, 180, 240];
 
+/**
+ * Подписи трёх плиток времени правятся на месте.
+ *
+ * Нужно там, где перерисовывать шторку нельзя: пока человек набирает число,
+ * возвращать в поле вычисленное значение — значит мешать ему набирать.
+ */
+function paintRowTiles() {
+  const rs = state.rowStart ?? 600;
+  const re = state.rowEnd ?? rs + 60;
+  const values = { начало: hhmm(rs), длится: durLabel(Math.max(5, re - rs)), конец: hhmm(re) };
+  for (const tile of document.querySelectorAll('.wmodal .wtile')) {
+    const cap = tile.querySelector('.wtile-cap')?.textContent;
+    const field = tile.querySelector('input');
+    if (cap && field && values[cap] !== undefined) field.value = values[cap];
+  }
+}
+
 const durLabel = min => {
   const hrs = Math.floor(min / 60);
   const mins = min % 60;
@@ -1717,13 +1892,24 @@ function durPicker(rs, dur) {
     chips,
     h('div.wrow', { style: { marginTop: '12px' } },
       h('span.wclock-cap', { text: 'своё:', style: { margin: '0' } }),
+      /*
+       * Поле не перерисовывается на каждую цифру: состояние меняется молча, а
+       * подписи плиток правятся на месте.
+       *
+       * Иначе «45» набрать было нельзя. Перерисовка возвращала в поле
+       * вычисленное значение: после первой цифры длительность становилась 4,
+       * поле показывало минимальные «5», и вторая цифра дописывалась к ним —
+       * выходило 55. То же с 15, 20, 30. А применение по уходу из поля роняло
+       * первое нажатие «Готово»: кнопку пересоздавали до того, как отпустили
+       * мышь.
+       */
       h('input.wnum', {
         name: 'rowDur', value: String(dur), inputMode: 'numeric',
         oninput: e => {
           const n = Number(String(e.target.value).replace(/\D+/g, ''));
-          // пустое поле — ещё не значение: человек стирает, чтобы вписать другое
           if (!n) return;
-          setIn({ rowEnd: Math.min(1439, rs + n) });
+          state.rowEnd = Math.min(1439, rs + Math.max(5, n));
+          paintRowTiles();
         },
       }),
       h('span.wclock-cap', { text: 'минут', style: { margin: '0' } })));
@@ -2229,13 +2415,19 @@ const BODIES = {
      * Времена вписываются руками: сетка часов здесь была бы третьей по счёту
      * на одном экране. Разбор мягкий — «19», «1930» и «19:30» одинаково
      * понятны, и это уже умеет parseHhmm.
+     *
+     * Шторка при наборе не перерисовывается. Раньше правка применялась по
+     * уходу из поля, а уход случается на нажатии мыши: кнопку «Готово»
+     * пересоздавали до того, как её отпустили, и первое нажатие пропадало.
      */
     const timeField = (name, value, onDone) => h('input.wtime', {
       name, value: hhmm(value),
-      onchange: e => {
+      oninput: e => {
         const at = parseHhmm(e.target.value);
-        if (at === null) { setIn({ notice: 'Время не понял. Например: 12:30' }); return; }
-        setIn({ notice: null, ...onDone(at) });
+        if (at === null) return;               // человек ещё набирает
+        Object.assign(state, onDone(at));
+        const other = document.querySelector('.wmodal [name="mealTo"]');
+        if (other && name === 'mealFrom') other.value = hhmm(state.mealEnd);
       },
     });
 
@@ -2420,7 +2612,15 @@ const BODIES = {
           h('div.wopt-hint', { text: s.hint })));
       return b;
     }));
-    const own = h('button.wbtn-dashed', { type: 'button' });
+    /*
+     * Свой звук — только в приложении на телефоне: чем звенеть уведомлению,
+     * в браузере решает система, и подсунуть ей файл нельзя. Кнопка была без
+     * обработчика и молчала на нажатие; теперь она это и говорит.
+     */
+    const own = h('button.wbtn-dashed', {
+      type: 'button',
+      onclick: () => setIn({ notice: 'Свой звук можно будет выбрать в приложении на телефоне: в браузере звук уведомления выбирает система' }),
+    });
     add(own, ico('plus', '15px'), h('span', { text: 'Добавить свой звук' }));
     return h('div.wstack', list, own,
       h('button.wbtn-wide', { type: 'button', text: 'Готово', onclick: closeModal }));
@@ -2537,43 +2737,51 @@ const BODIES = {
     const tiles = h('div.wgrid3');
     add(tiles, ...[
       ['start', 'начало', hhmm(rs)],
-      ['dur', 'длится', hhmm(dur)],
+      ['dur', 'длится', durLabel(dur)],
       ['end', 'конец', hhmm(re)],
     ].map(([k, label, value]) => {
-      const tile = h('div.wtile', { class: field === k ? 'on' : '', onclick: () => set({ tplField: k }) });
-      add(tile, h('span.wtile-cap', { text: label }), h('input', { value, readOnly: true }));
+      const tile = h('div.wtile', { class: field === k ? 'on' : '', onclick: () => setIn({ tplField: k }) });
+      add(tile, h('span.wtile-cap', { text: label }), h('input', { value, readOnly: true, tabIndex: -1 }));
       return tile;
     }));
 
-    const setHour = hv => {
-      const mins = target % 60;
-      if (field === 'end') set({ tplEnd: hv * 60 + mins });
-      else set({ tplStart: hv * 60 + mins, tplEnd: hv * 60 + mins + dur });
-    };
-    const setMin = mv => {
-      const hv = Math.floor(target / 60);
-      if (field === 'end') set({ tplEnd: hv * 60 + mv });
-      else set({ tplStart: hv * 60 + mv, tplEnd: hv * 60 + mv + dur });
+    /*
+     * Плитки ведут себя так же, как в редакторе строки дня: «длится» — это
+     * длительность, а не время. Раньше здесь нажатие на час меняло начало, и
+     * длительность в шаблоне задать было нечем.
+     */
+    const setClock = (hv, mv) => {
+      const at = hv * 60 + mv;
+      if (field === 'end') setIn({ tplEnd: Math.max(rs + 5, at) });
+      else setIn({ tplStart: at, tplEnd: Math.min(1439, at + dur) });
     };
 
-    const leads = h('div.wwrap');
-    add(leads, ...LEADS.map(l => sheetChip(l.label, state.tplLeads.includes(l.k), () => set({ tplLeads: toggleLead(state.tplLeads, l.k) }))));
+    const durs = h('div.wwrap');
+    add(durs, ...DURS.map(v => sheetChip(durLabel(v), dur === v,
+      () => setIn({ tplEnd: Math.min(1439, rs + v) }), 'wchip-dur')));
+
+    const picker = field === 'dur'
+      ? h('div.wclock', h('div.wclock-cap', { text: 'конец посчитается сам' }), durs)
+      : h('div.wclock',
+        h('div.wclock-cap', { text: 'можно выбрать час' }),
+        clockGrid(24, 1, target, hv => setClock(hv, target % 60)),
+        h('div.wclock-cap', { text: 'минуты', style: { margin: '12px 0 9px' } }),
+        clockGrid(12, 5, target, mv => setClock(Math.floor(target / 60), mv)));
+
+    const leads = h('div.wwrap.wleads');
+    add(leads, ...LEADS.map(l => sheetChip(l.label, state.tplLeads.includes(l.k), () => setIn({ tplLeads: toggleLead(state.tplLeads, l.k) }))));
 
     const modes = h('div.wgrid2');
-    add(modes, ...ALARM.map(a => opt(a.label, a.icon, state.tplAlarm === a.k, () => set({ tplAlarm: a.k }))));
+    add(modes, ...ALARM.map(a => opt(a.label, a.icon, state.tplAlarm === a.k, () => setIn({ tplAlarm: a.k }))));
 
     return h('div.wstack',
       h('label', h('span.wfield-label', { text: 'что делаем' }),
         h('input.winput', {
-          value: state.tplTitle, placeholder: 'Например, подъём',
+          name: 'tplTitle', value: state.tplTitle, placeholder: 'Например, подъём',
           oninput: e => { state.tplTitle = e.target.value; },
         })),
       tiles,
-      h('div.wclock',
-        h('div.wclock-cap', { text: 'можно выбрать час' }),
-        clockGrid(24, 1, target, setHour),
-        h('div.wclock-cap', { text: 'минуты', style: { margin: '12px 0 9px' } }),
-        clockGrid(12, 5, target, setMin)),
+      picker,
       h('div', h('div.wfield-label', { text: 'предупредить · можно несколько' }), leads),
       h('div', h('div.wfield-label', { text: 'чем предупредить' }), modes),
       h('div.wrow-end',
@@ -2912,8 +3120,9 @@ addEventListener('mouseup', () => {
   dragging.sel.remove();
   dragging = null;
   const a = Math.min(from, to);
-  const b = Math.max(a + SNAP, Math.max(from, to));
-  newRow({ date, start: a, end: b });
+  // конец не выходит за последнюю минуту суток — иначе сервер откажет
+  const b = Math.min(1439, Math.max(a + SNAP, Math.max(from, to)));
+  newRow({ date, start: Math.min(a, b - SNAP), end: b });
 });
 
 /*
@@ -2935,7 +3144,13 @@ async function bootstrap() {
     state.scale = settings.settings?.scale ?? 1;
     state.sound = settings.settings?.sound ?? 'Рассвет';
     state.notifySound = settings.settings?.notifySound ?? 'Капля';
-    if (settings.scheduleView === 'grid') state.view = 'week';
+    /*
+     * Выбранный вид расписания запоминается. Раньше здесь сверялось значение
+     * 'grid', которого сервер не отдаёт вовсе, — условие было мёртвым, и вид
+     * каждый раз возвращался к неделе.
+     */
+    const view = settings.settings?.planView;
+    if (view === 'day' || view === 'week' || view === 'month') state.view = view;
   } catch (e) {
     // Не вошли — обработчик выше уже увёл на страницу входа
     if (e?.status !== 401) {

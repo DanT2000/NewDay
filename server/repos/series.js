@@ -62,9 +62,23 @@ function seriesRepo(db) {
       return db.prepare('SELECT * FROM series WHERE id = ?').get(id);
     },
 
-    remove(userId, id) {
+    /**
+     * Удалить правило.
+     *
+     * Прошлые строки остаются — они часть прожитых дней, и стирать их значит
+     * переписывать прошлое. А будущие уходят: раньше оставались и они, и
+     * «убрать повтор целиком» выглядело как кнопка, которая ничего не делает —
+     * при том что более мягкое «не напоминать с этого дня» работало.
+     *
+     * @param today дата, с которой строки считаются будущими; без неё
+     *              поведение прежнее — только отцепить.
+     */
+    remove(userId, id, { today = null } = {}) {
       own(userId, id);
-      // уже созданные строки остаются: они часть прожитых дней
+      if (today) {
+        db.prepare('DELETE FROM schedule_items WHERE user_id = ? AND series_id = ? AND date >= ?')
+          .run(userId, id, today);
+      }
       db.prepare('UPDATE schedule_items SET series_id = NULL WHERE series_id = ? AND user_id = ?').run(id, userId);
       db.prepare('DELETE FROM series WHERE id = ?').run(id);
     },

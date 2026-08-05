@@ -271,15 +271,29 @@ export function templateRows(rule) {
       // В шаблоне поля camelCase, у строки дня — snake_case; переводим
       // в общий вид, чтобы обе читались одним кодом
       alarm: alarmOf({ alarm_mode: r.alarmMode, alarm_profile: r.alarmProfile }),
-      leads: leadsOf({ remind_before_min: r.remindBeforeMin }),
+      /*
+       * Сроки читаем из списка, а одиночное число — только как запас. Раньше
+       * список не читался вовсе, и заданное «за 30 минут» при следующем
+       * открытии шаблона показывалось как «вовремя».
+       */
+      leads: leadsOf({
+        remind_before_json: Array.isArray(r.remindBefore) ? JSON.stringify(r.remindBefore) : null,
+        remind_before_min: r.remindBeforeMin,
+      }),
+      color: r.color ?? null,
     }))
     .sort((a, b) => a.start - b.start);
 }
 
-/** Обратно: то, что уходит в `POST /series` и `PATCH /series/:id`. */
+/**
+ * Обратно: то, что уходит в `POST /series` и `PATCH /series/:id`.
+ *
+ * Поле называется `leads`, а не `lead`: из-за опечатки сроки не доезжали
+ * никогда, и каждая строка шаблона сохранялась как «вовремя».
+ */
 export const templateToServer = rows => rows.map(r => rowToServer({
   title: r.title, start: r.start, end: r.end,
-  alarm: r.alarm, lead: (r.leads ?? ['at'])[0],
+  alarm: r.alarm, leads: r.leads, color: r.color,
 }));
 
 export const taskToServer = ({ title, cat }) => ({

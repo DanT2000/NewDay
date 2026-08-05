@@ -20,18 +20,33 @@ module.exports = function exportRouter({ db }) {
       exportedAt: new Date().toISOString(),
       user: publicUser(users.findById(userId), users.getSettings(userId)),
       days: q('SELECT date, title, focus, weight, notes FROM days WHERE user_id = ? ORDER BY date'),
-      scheduleItems: q(`SELECT date, start_min, end_min, title, note, done, sort_order, kind,
-                               alarm_mode, alarm_profile, remind_before_min
+      /*
+       * Поля перечислены по одному, а не звёздочкой: так видно, что уходит
+       * человеку. Обратная сторона — новую колонку легко забыть, и однажды
+       * это уже случилось: цвет, список сроков, окно приёма пищи и свободный
+       * график привычки в выгрузку не попадали, а «заменить всё» их стирало.
+       */
+      scheduleItems: q(`SELECT id, date, start_min, end_min, title, note, done, sort_order, kind,
+                               alarm_mode, alarm_profile, remind_before_min, remind_before_json, color
                           FROM schedule_items WHERE user_id = ? ORDER BY date, start_min`),
       tasks: q('SELECT date, bucket, text, done, sort_order, carried_from FROM tasks WHERE user_id = ? ORDER BY date'),
-      meals: q('SELECT date, slot, time_min, title, note, calories, done, sort_order FROM meals WHERE user_id = ? ORDER BY date'),
+      /*
+       * id блока расписания уходит как есть, а при загрузке переводится в новый
+       * по карте: иначе приём пищи после восстановления терял связь со своим
+       * блоком и при первой же правке создавал второй.
+       */
+      meals: q(`SELECT date, slot, time_min, end_min, title, note, calories, done, sort_order,
+                       remind_before_json, schedule_item_id
+                  FROM meals WHERE user_id = ? ORDER BY date`),
       sportSets: q('SELECT date, exercise, sets, reps, weight, done, sort_order FROM sport_sets WHERE user_id = ? ORDER BY date'),
       habits: q(`SELECT id, title, description, emoji, color, type, target_per_day, unit,
-                        schedule_mask, polarity, mode, challenge_target_days, challenge_start_date,
-                        break_policy, allowed_skips_per_week, is_active, sort_order, archived_at, created_at
+                        schedule_mask, times_per_week, polarity, mode, challenge_target_days,
+                        challenge_start_date, break_policy, allowed_skips_per_week, is_active,
+                        sort_order, archived_at, created_at
                    FROM habits WHERE user_id = ? ORDER BY sort_order`),
       habitLogs: q('SELECT habit_id, date, status, value FROM habit_logs WHERE user_id = ? ORDER BY date'),
       series: q('SELECT id, target, freq, interval, byweekday, start_date, end_date, payload_json, name FROM series WHERE user_id = ?'),
+      freeNotes: q('SELECT title, text, created_at, updated_at FROM free_notes WHERE user_id = ? ORDER BY id'),
     };
   };
 
@@ -62,8 +77,10 @@ module.exports = function exportRouter({ db }) {
       `SELECT date, start_min, end_min, title, note, done, sort_order
          FROM schedule_items WHERE user_id = ? AND date BETWEEN ? AND ?
         ORDER BY date, start_min`).all(uid, from, to);
+    // Окно приёма пищи — это тоже отрезок: без end_min обед 12:00–14:00
+    // уезжал в календарь получасовой точкой
     const meals = db.prepare(
-      `SELECT date, time_min, title, note, done, sort_order
+      `SELECT date, time_min, end_min, title, note, done, sort_order
          FROM meals WHERE user_id = ? AND date BETWEEN ? AND ? AND time_min IS NOT NULL
         ORDER BY date, time_min`).all(uid, from, to);
 
@@ -115,15 +132,19 @@ module.exports = function exportRouter({ db }) {
 
       const skip = date => mode === 'merge' && existingDates.has(date);
 
+      // старый id блока → новый: по нему приём пищи находит свой блок
+      const rowIdMap = new Map();
       for (const r of data.scheduleItems || []) {
         if (skip(r.date)) continue;
-        db.prepare(`INSERT INTO schedule_items
+        const info = db.prepare(`INSERT INTO schedule_items
           (user_id, date, start_min, end_min, title, note, done, sort_order, kind,
-           alarm_mode, alarm_profile, remind_before_min)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+           alarm_mode, alarm_profile, remind_before_min, remind_before_json, color)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
           uid, r.date, r.start_min ?? 0, r.end_min ?? null, r.title ?? '', r.note ?? '',
           r.done ?? 0, r.sort_order ?? 0, r.kind ?? 'normal',
-          r.alarm_mode ?? 'none', r.alarm_profile ?? 'gentle', r.remind_before_min ?? null);
+          r.alarm_mode ?? 'none', r.alarm_profile ?? 'gentle', r.remind_before_min ?? null,
+          r.remind_before_json ?? null, r.color ?? null);
+        if (r.id) rowIdMap.set(r.id, info.lastInsertRowid);
       }
       for (const r of data.tasks || []) {
         if (skip(r.date)) continue;
@@ -133,10 +154,12 @@ module.exports = function exportRouter({ db }) {
       }
       for (const r of data.meals || []) {
         if (skip(r.date)) continue;
-        db.prepare(`INSERT INTO meals (user_id, date, slot, time_min, title, note, calories, done, sort_order)
-                    VALUES (?,?,?,?,?,?,?,?,?)`)
-          .run(uid, r.date, r.slot ?? 'other', r.time_min ?? null, r.title ?? '', r.note ?? '',
-               r.calories ?? null, r.done ?? 0, r.sort_order ?? 0);
+        db.prepare(`INSERT INTO meals (user_id, date, slot, time_min, end_min, title, note,
+                                       calories, done, sort_order, remind_before_json, schedule_item_id)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+          .run(uid, r.date, r.slot ?? 'other', r.time_min ?? null, r.end_min ?? null,
+               r.title ?? '', r.note ?? '', r.calories ?? null, r.done ?? 0, r.sort_order ?? 0,
+               r.remind_before_json ?? null, rowIdMap.get(r.schedule_item_id) ?? null);
       }
       for (const r of data.sportSets || []) {
         if (skip(r.date)) continue;
@@ -168,11 +191,12 @@ module.exports = function exportRouter({ db }) {
 
         const info = db.prepare(`INSERT INTO habits
           (user_id, title, description, emoji, color, type, target_per_day, unit, schedule_mask,
-           polarity, mode, challenge_target_days, challenge_start_date, break_policy,
+           times_per_week, polarity, mode, challenge_target_days, challenge_start_date, break_policy,
            allowed_skips_per_week, is_active, sort_order, archived_at, created_at)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
           uid, h.title ?? '', h.description ?? '', h.emoji ?? '', h.color ?? 'blue',
           h.type ?? 'binary', h.target_per_day ?? null, h.unit ?? null, h.schedule_mask ?? 127,
+          h.times_per_week ?? null,
           h.polarity ?? 'do', h.mode ?? 'ongoing', h.challenge_target_days ?? null,
           h.challenge_start_date ?? null, h.break_policy ?? 'reset',
           h.allowed_skips_per_week ?? 0, h.is_active ?? 1, h.sort_order ?? 0,
@@ -186,6 +210,42 @@ module.exports = function exportRouter({ db }) {
         db.prepare(`INSERT OR REPLACE INTO habit_logs (user_id, habit_id, date, status, value)
                     VALUES (?,?,?,?,?)`)
           .run(uid, newId, l.date, l.status ?? 'done', l.value ?? null);
+      }
+
+      /*
+       * Повторы и шаблоны.
+       *
+       * Раньше «заменить всё» их удаляло, а обратно не кладло: восстановление
+       * собственной выгрузки молча стирало и повторяющиеся напоминания, и
+       * общее расписание — то есть ровно то, ради чего копию и делают.
+       *
+       * В режиме «добавить» правило с тем же именем считается тем же самым:
+       * иначе своя же выгрузка удваивала бы шаблон. Безымянные повторы
+       * сравниваем по содержимому — у них имени нет.
+       */
+      const sameRule = new Set();
+      if (mode === 'merge') {
+        for (const row of db.prepare('SELECT name, freq, start_date, payload_json FROM series WHERE user_id = ?').all(uid)) {
+          sameRule.add(row.name ? `name:${row.name}` : `body:${row.freq}|${row.start_date}|${row.payload_json}`);
+        }
+      }
+      for (const s of data.series || []) {
+        const key = s.name ? `name:${s.name}` : `body:${s.freq}|${s.start_date}|${s.payload_json}`;
+        if (sameRule.has(key)) continue;
+        sameRule.add(key);
+        db.prepare(`INSERT INTO series
+          (user_id, target, freq, interval, byweekday, start_date, end_date, payload_json, name)
+          VALUES (?,?,?,?,?,?,?,?,?)`).run(
+          uid, s.target ?? 'schedule', s.freq ?? 'daily', s.interval ?? 1,
+          s.byweekday ?? 127, s.start_date ?? null, s.end_date ?? null,
+          s.payload_json ?? '{}', s.name ?? null);
+      }
+
+      // Заметки без даты: в режиме «заменить всё» их тоже нужно заменить
+      if (mode === 'replace') db.prepare('DELETE FROM free_notes WHERE user_id = ?').run(uid);
+      for (const n of data.freeNotes || []) {
+        db.prepare('INSERT INTO free_notes (user_id, title, text) VALUES (?,?,?)')
+          .run(uid, n.title ?? '', n.text ?? '');
       }
     });
     tx();

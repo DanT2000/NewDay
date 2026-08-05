@@ -12,7 +12,9 @@
 
 const { pushRepo } = require('../repos/push');
 const { scheduleRepo } = require('../repos/schedule');
+const { mealsRepo } = require('../repos/meals');
 const { usersRepo } = require('../repos/users');
+const { seriesService } = require('./seriesService');
 const { todayFor, addDays, zonedTimeToUtc, minutesInZone, formatMinutes } = require('../lib/dates');
 
 const DEFAULTS = {
@@ -28,15 +30,19 @@ const DEFAULTS = {
  * настройка человека.
  */
 function leadsOf(row, fallback) {
-  if (row.remind_before_json) {
-    try {
-      const list = JSON.parse(row.remind_before_json);
-      if (Array.isArray(list) && list.length) {
-        return [...new Set(list.filter(Number.isFinite))].sort((a, b) => b - a);
-      }
-    } catch { /* испорченное значение — ведём себя как будто его нет */ }
-  }
+  const list = parseLeads(row.remind_before_json);
+  if (list) return list;
   return [row.remind_before_min === null ? fallback : row.remind_before_min];
+}
+
+/** Список сроков из колонки; null — списка нет или он испорчен. */
+function parseLeads(raw) {
+  if (!raw) return null;
+  try {
+    const list = JSON.parse(raw);
+    if (!Array.isArray(list) || !list.length) return null;
+    return [...new Set(list.filter(Number.isFinite))].sort((a, b) => b - a);
+  } catch { return null; }
 }
 
 /** «за день» читается лучше, чем «через 1440 мин». */
@@ -69,7 +75,9 @@ function settingsOf(users, user) {
 function notificationService(db, { push, now = () => Date.now() } = {}) {
   const queue = pushRepo(db);
   const schedule = scheduleRepo(db);
+  const meals = mealsRepo(db);
   const users = usersRepo(db);
+  const series = seriesService(db);
 
   /**
    * Пересчитывает напоминания пользователя на указанную дату.
@@ -83,6 +91,16 @@ function notificationService(db, { push, now = () => Date.now() } = {}) {
       queue.dropQueuedExcept(user.id, prefix, []);
       return { planned: 0, skipped: 0, reason: 'NOTIFICATIONS_OFF' };
     }
+
+    /*
+     * Сначала достраиваем день повторами.
+     *
+     * Материализация раньше жила только в чтении дня, а планировщик читал
+     * то, что уже лежит в таблице. Из-за этого ежедневный будильник не звонил
+     * в день, который никто не открывал: в понедельник утром человек ждал
+     * звонка, а строки в базе ещё не было.
+     */
+    series.materializeDay(user.id, date, { today: todayFor(user.timezone, new Date(now())) });
 
     const rows = schedule.list(user.id, date);
     const keep = [];
@@ -127,6 +145,48 @@ function notificationService(db, { push, now = () => Date.now() } = {}) {
           startMin: row.start_min,
           profile: row.alarm_profile,
           // Нажатие на уведомление открывает именно тот день, о котором оно
+          url: `/web.html#${date}`,
+        });
+      }
+    }
+
+    /*
+     * Приёмы пищи со своим сроком напоминания.
+     *
+     * Раньше их не планировал никто: строки расписания читались, а `meals`
+     * нет — и колокольчик у приёма пищи в интерфейсе горел, обещая
+     * напоминание, которого не будет. У окна отсчёт идёт от его начала:
+     * «съесть где-то внутри» — это и значит «начиная с».
+     */
+    for (const meal of meals.list(user.id, date)) {
+      if (meal.time_min === null || meal.time_min === undefined) continue;
+      if (meal.done === 1) { skipped += 1; continue; }
+      // блок в расписании напомнит сам — второе напоминание об одном и том же лишнее
+      if (meal.schedule_item_id) continue;
+
+      const leads = parseLeads(meal.remind_before_json);
+      if (!leads) continue;
+
+      const startsAt = zonedTimeToUtc(date, meal.time_min, user.timezone);
+      for (const before of leads) {
+        const fireAt = startsAt - before * 60000;
+        if (fireAt <= now()) { skipped += 1; continue; }
+        if (inQuietHours(minutesInZone(fireAt, user.timezone), cfg.quietFrom, cfg.quietTo)) {
+          skipped += 1;
+          continue;
+        }
+
+        const key = `${prefix}meal${meal.id}:${before}`;
+        keep.push(key);
+        queue.upsertQueued(user.id, key, fireAt, {
+          kind: 'notify',
+          title: 'NewDay',
+          body: before > 0
+            ? `${meal.title || 'Приём пищи'} — через ${humanLead(before)}, в ${formatMinutes(meal.time_min)}`
+            : `${meal.title || 'Приём пищи'} — пора`,
+          date,
+          itemId: `meal${meal.id}`,
+          startMin: meal.time_min,
           url: `/web.html#${date}`,
         });
       }

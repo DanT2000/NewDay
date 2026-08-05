@@ -71,6 +71,16 @@ function scheduleRepo(db) {
       const before = db.prepare('SELECT series_id, date FROM schedule_items WHERE id = ? AND user_id = ?')
         .get(id, userId);
       const row = base.remove(userId, id);
+      /*
+       * Приём пищи, который занимал этот блок, отпускаем.
+       *
+       * Ссылка двусторонняя, и без этого она оставалась висячей: приём пищи
+       * продолжал показывать «в расписании», а любая его правка и даже
+       * удаление упирались в «строка не найдена» — запись нельзя было ни
+       * сохранить, ни убрать.
+       */
+      db.prepare('UPDATE meals SET schedule_item_id = NULL WHERE user_id = ? AND schedule_item_id = ?')
+        .run(userId, id);
       if (before) markOverride(userId, before.series_id, before.date, 'deleted');
       return row;
     },
@@ -86,9 +96,19 @@ function scheduleRepo(db) {
       if (!from) throw notFound('Строка расписания не найдена');
       if (from.date !== date) throw notFound('Строка не принадлежит этому дню');
 
+      /*
+       * Сдвигаем всё, что начинается не раньше, — включая блок, начинающийся
+       * в ту же минуту. Раньше сравнение было строгим, и два дела, стоящие на
+       * одно время, разъезжались: первое уходило, второе оставалось и
+       * продолжало пересекаться — то есть сдвиг не решал ту задачу, ради
+       * которой его и вызвали.
+       *
+       * Объемлющий блок (работа, внутри которой созвон) не двигается: он
+       * начался раньше, и «сдвинуть следующие» его не касается.
+       */
       const all = base.list(userId, date);
       const targets = cascade
-        ? all.filter(r => r.start_min > from.start_min || r.id === from.id)
+        ? all.filter(r => r.start_min >= from.start_min)
         : [from];
 
       for (const r of targets) {

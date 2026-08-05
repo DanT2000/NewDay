@@ -78,8 +78,28 @@ const waitFor = async (expr, n = 60) => {
   return false;
 };
 
-/** День, который засеян на стенде. */
-const DAY = '2026-08-05';
+/*
+ * День, который засеян на стенде, — сегодняшний в часовом поясе стенда.
+ *
+ * Считаем, а не пишем числом: раньше здесь стояла дата, и в первую же
+ * полночь весь прогон становился красным — не потому что что-то сломалось,
+ * а потому что проверка смотрела в прошлое.
+ */
+const TZ = 'Europe/Moscow';
+const dayIn = (offset = 0) => new Intl.DateTimeFormat('en-CA', {
+  timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+}).format(new Date(Date.now() + offset * 86400000));
+
+const DAY = dayIn(0);
+/** «6 августа» — как это подписано в шапке. */
+const MONTHS_RU = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+  'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+const DAY_LABEL = (() => {
+  const [, m, d] = DAY.split('-').map(Number);
+  return `${d} ${MONTHS_RU[m - 1]}`;
+})();
+/** Тот же день через год: им проверяется ежегодный повтор. */
+const NEXT_YEAR = `${Number(DAY.slice(0, 4)) + 1}${DAY.slice(4)}`;
 
 const пробы = [];
 const проба = (что, ok, деталь = '') => { пробы.push([что, ok]); console.log(`  ${ok ? '✔' : '✖'} ${что}${деталь ? ' — ' + деталь : ''}`); };
@@ -97,7 +117,7 @@ await wait(700);
 const rows = await js(`[...document.querySelectorAll('.wsched-title')].map(e => e.textContent)`);
 проба('расписание пришло с сервера', rows.length > 0, `${rows.length} строк: ${rows.slice(0, 3).join(', ')}`);
 проба('дата из профиля, а не из браузера',
-  (await js(`document.querySelector('.wtop-num').textContent`)) === '5 августа',
+  (await js(`document.querySelector('.wtop-num').textContent`)) === DAY_LABEL,
   await js(`document.querySelector('.wtop-num').textContent`));
 
 /*
@@ -113,11 +133,19 @@ const after = await doneCount();
 
 // ── Создание блока протягиванием ──
 await nav("Расписание");
+await wait(500);
+// вид запоминается между входами, поэтому нужный выбираем явно
+await js(`[...document.querySelectorAll('.wseg button')].find(b => b.textContent === 'Неделя')?.click()`);
 проба('сетка недели загрузилась', await waitFor('document.querySelectorAll(".wplan-col").length === 7'));
 await wait(600);
 
+/*
+ * Тянем по колонке открытого дня, а не по третьей по счёту: номер колонки
+ * зависит от того, какой сегодня день недели, и в четверг третья колонка —
+ * это среда. Прогон тогда создавал блок в другом дне и не находил его.
+ */
 const geom = await js(`(() => {
-  const col = document.querySelectorAll('.wplan-col')[2];
+  const col = document.querySelector('.wplan-col.on') ?? document.querySelectorAll('.wplan-col')[0];
   const b = col.getBoundingClientRect();
   return { x: Math.round(b.left + b.width / 2), top: Math.round(b.top) };
 })()`);
@@ -337,7 +365,7 @@ await wait(1000);
 проба('ежегодный повтор создан правилом', (await правил()) === былоПравил + 1,
   `${былоПравил} → ${await правил()}`);
 проба('через год напоминание на месте',
-  (await js(`fetch('/api/v1/days/2027-08-05/full').then(r=>r.json())
+  (await js(`fetch('/api/v1/days/${NEXT_YEAR}/full').then(r=>r.json())
     .then(d => d.schedule.some(r => r.title === 'День рождения Ани'))`, true)) === true);
 
 /*
@@ -345,17 +373,28 @@ await wait(1000);
  * от него только отвязываются и остаются в дне — за пять прогонов в
  * расписании набралось пять «Дней рождения Ани».
  */
-await js(`(async () => {
-  const list = await (await fetch('/api/v1/series?templates=0')).json();
+/*
+ * Удаление правила забирает и будущие строки — это проверяем заодно: если
+ * после него что-то осталось, значит «убрать повтор целиком» опять ничего
+ * не делает, а именно так оно себя когда-то и вело.
+ */
+const убрано = await js(`(async () => {
+  const list = await (await fetch('/api/v1/series')).json();
   for (const r of list) await fetch('/api/v1/series/' + r.id, { method: 'DELETE' });
   const day = await (await fetch('/api/v1/days/${DAY}/full')).json();
-  for (const r of day.schedule.filter(x => x.title === 'День рождения Ани')) {
-    await fetch('/api/v1/days/${DAY}/schedule/' + r.id, { method: 'DELETE' });
-  }
+  return day.schedule.filter(x => x.title === 'День рождения Ани').length;
 })()`, true);
-проба('прогон убрал за собой напоминание',
-  (await js(`fetch('/api/v1/days/${DAY}/full').then(r=>r.json())
-    .then(d => d.schedule.filter(x => x.title === 'День рождения Ани').length)`, true)) === 0);
+проба('удаление правила забирает созданную им строку', убрано === 0, `осталось ${убрано}`);
+/*
+ * Пауза перед проверкой не для красоты: после каждой правки сервер
+ * пересчитывает уведомления, и пересчёт достраивает день повторами уже после
+ * ответа. Без паузы можно прочитать состояние на середине этой работы.
+ */
+await wait(900);
+const осталосьНапоминаний = await js(`fetch('/api/v1/days/${DAY}/full').then(r=>r.json())
+  .then(d => d.schedule.filter(x => x.title === 'День рождения Ани').length)`, true);
+проба('прогон убрал за собой напоминание', осталосьНапоминаний === 0,
+  `осталось ${осталосьНапоминаний}`);
 
 // ── Заметка: заголовок и текст ──
 /*
@@ -365,12 +404,39 @@ await js(`(async () => {
 await nav('Заметки');
 await waitFor('Boolean(document.querySelector(".wnotes"))', 40);
 await wait(600);
+/*
+ * Заметка на день одна, поэтому вторая на тот же день отклоняется с
+ * объяснением, а не затирает первую молча. Проверяем сначала это, потом правку
+ * существующей — так выглядит настоящий путь.
+ */
 await js(`[...document.querySelectorAll('.wbtn')].find(b => b.textContent.includes('Новая заметка')).click()`);
 проба('шторка заметки открылась',
   await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Заметка'`));
 проба('в шторке два поля: заголовок и текст',
   (await js(`Boolean(document.querySelector('.wmodal .winput')) && Boolean(document.querySelector('.wmodal .wtextarea'))`)) === true);
 
+await js(`(() => {
+  const t = document.querySelector('.wmodal .winput');
+  t.value = 'Вторая на тот же день';
+  t.dispatchEvent(new Event('input', { bubbles: true }));
+})()`);
+await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
+await wait(900);
+проба('вторая заметка на занятый день отклонена с объяснением',
+  (await js(`document.querySelector('.wmodal .wnotice')?.textContent ?? ''`)).includes('уже есть заметка'),
+  await js(`document.querySelector('.wmodal .wnotice')?.textContent ?? 'нет сообщения'`));
+await js(`document.querySelector('.wmodal-x').click()`);
+await waitFor('!document.querySelector(".wveil")', 40);
+
+// правим заметку этого дня — она уже есть в списке
+await wait(700);
+// без учёта регистра: заголовок правится прогонами, и «Сервис» бывает с большой
+await js(`([...document.querySelectorAll('.wnote')]
+  .find(n => n.textContent.toLowerCase().includes('сервис'))
+  ?? document.querySelector('.wnote'))?.click()`);
+проба('заметка дня открывается из списка',
+  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Заметка'`),
+  await js(`[...document.querySelectorAll('.wnote-title')].map(e => e.textContent).join('|') || 'список пуст'`));
 await js(`(() => {
   const t = document.querySelector('.wmodal .winput');
   t.value = 'Сервис ноутбука';
@@ -545,7 +611,7 @@ await wait(900);
 await js(`[...document.querySelectorAll('.wseg button')].find(b => b.textContent === 'День').click()`);
 await wait(700);
 проба('«Сегодня» возвращает на сегодняшний день',
-  (await js(`document.querySelector('.wtop-num').textContent`)) === '5 августа',
+  (await js(`document.querySelector('.wtop-num').textContent`)) === DAY_LABEL,
   await js(`document.querySelector('.wtop-num').textContent`));
 
 /*

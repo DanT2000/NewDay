@@ -87,7 +87,13 @@ function buildIcs({ schedule = [], meals = [] }, opts = {}) {
   }
   for (const row of meals) {
     if (row.time_min === null || row.time_min === undefined) continue;
-    push({ ...row, title: row.title || 'Приём пищи' }, 'meal', row.time_min, row.time_min + 30);
+    /*
+     * У окна конец задан («обед с 12:00 до 14:00»), у точного времени — нет,
+     * и тогда полчаса это разумная догадка. Без учёта конца окно уезжало в
+     * календарь получасовой точкой.
+     */
+    const end = row.end_min === null || row.end_min === undefined ? row.time_min + 30 : row.end_min;
+    push({ ...row, title: row.title || 'Приём пищи' }, 'meal', row.time_min, end);
   }
 
   const lines = [

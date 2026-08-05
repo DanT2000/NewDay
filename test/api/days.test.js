@@ -265,3 +265,70 @@ test('битая дата отвергается', async () => {
     assert.strictEqual(res.status, 400);
   } finally { await s.close(); }
 });
+
+/*
+ * Удаление блока расписания отпускает приём пищи, который его занимал.
+ *
+ * Ссылка двусторонняя, и без этого она оставалась висячей: приём пищи
+ * продолжал показывать «в расписании», а правка и даже удаление упирались
+ * в «запись не найдена» — из интерфейса он не лечился вовсе.
+ */
+test('удаление блока расписания снимает ссылку с приёма пищи', async () => {
+  const s = await loggedIn();
+  const date = '2026-08-11';
+  try {
+    const block = await api(s.url, s.cookie, 'POST', `/api/v1/days/${date}/schedule`, {
+      time: '13:00-13:30', title: 'Обед', kind: 'meal',
+    });
+    const meal = await api(s.url, s.cookie, 'POST', `/api/v1/days/${date}/meals`, {
+      title: 'Обед', timeMin: 780, scheduleItemId: block.id,
+    });
+    assert.strictEqual(meal.schedule_item_id, block.id);
+
+    await api(s.url, s.cookie, 'DELETE', `/api/v1/days/${date}/schedule/${block.id}`);
+
+    const day = await getJson(s.url, s.cookie, `/api/v1/days/${date}/full`);
+    assert.strictEqual(day.schedule.length, 0, 'блока больше нет');
+    assert.strictEqual(day.meals[0].schedule_item_id, null, 'и ссылки на него тоже');
+  } finally { await s.close(); }
+});
+
+/*
+ * Сдвиг двигает и то, что начинается в ту же минуту. Раньше сравнение было
+ * строгим: два дела на одно время разъезжались, первое уходило, второе
+ * оставалось — и пересечение, ради которого сдвиг вызвали, никуда не девалось.
+ */
+test('сдвиг двигает блок, начинающийся в ту же минуту', async () => {
+  const s = await loggedIn();
+  const date = '2026-08-12';
+  try {
+    const a = await api(s.url, s.cookie, 'POST', `/api/v1/days/${date}/schedule`,
+      { time: '12:00-14:00', title: 'Обед A' });
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${date}/schedule`,
+      { time: '12:00-13:30', title: 'Обед B' });
+
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${date}/schedule/shift`,
+      { fromId: a.id, minutes: 60, cascade: true });
+
+    const day = await getJson(s.url, s.cookie, `/api/v1/days/${date}/full`);
+    const byTitle = Object.fromEntries(day.schedule.map(r => [r.title, r.start_min]));
+    assert.strictEqual(byTitle['Обед A'], 780, 'первый уехал на час');
+    assert.strictEqual(byTitle['Обед B'], 780, 'и второй вместе с ним');
+  } finally { await s.close(); }
+});
+
+/*
+ * Период длиннее предела отдаётся урезанным — и говорит об этом. Раньше в
+ * ответе подтверждался запрошенный конец, и снаружи это выглядело как
+ * «в ноябре ничего не запланировано».
+ */
+test('слишком длинный период честно сообщает, что урезан', async () => {
+  const s = await loggedIn();
+  try {
+    const range = await getJson(s.url, s.cookie, '/api/v1/days/range?from=2026-08-05&to=2026-11-13');
+    assert.ok(range.days.length <= 62, 'предел соблюдён');
+    assert.strictEqual(range.truncated, true, 'урезание не скрыто');
+    assert.strictEqual(range.requestedTo, '2026-11-13', 'запрошенный конец виден');
+    assert.strictEqual(range.to, range.days[range.days.length - 1].date, 'to — конец отданного');
+  } finally { await s.close(); }
+});

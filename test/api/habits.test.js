@@ -162,3 +162,90 @@ test('/api/v1/stats отдаёт сводку по дням и привычка�
     assert.ok(overview.summary);
   } finally { await s.close(); }
 });
+
+/*
+ * Свободный график: «три раза в неделю». Отличается от графика по дням тем,
+ * что неотмеченный день ничего не нарушает — обещание считается за неделю.
+ * До правки половина расчётов про это не знала, и числа противоречили друг
+ * другу: текущая серия больше «лучшей за всё время», срывы при нулевых
+ * пропусках, челлендж «пять дней подряд», закрытый пятью отметками за месяц.
+ */
+test('у свободного графика неотмеченный день не пропуск и не срыв', async () => {
+  const s = await loggedIn();
+  try {
+    const h = await api(s.url, s.cookie, 'POST', '/api/v1/habits',
+      { title: 'Медитация', emoji: '🧘', timesPerWeek: 3 });
+    // одна отметка три дня назад, остальные дни пустые
+    await api(s.url, s.cookie, 'PUT', `/api/v1/habits/${h.id}/log/${dayFromToday(-3)}`, { status: 'done' });
+
+    const stats = await getJson(s.url, s.cookie, `/api/v1/habits/${h.id}/stats`);
+    assert.strictEqual(stats.missed, 0, 'пропусков нет: дни никто не обещал');
+    assert.strictEqual(stats.currentStreak, 0, 'серии у свободного графика нет');
+    assert.strictEqual(stats.bestStreak, 0, 'и лучшей серии тоже');
+    assert.strictEqual(stats.timesPerWeek, 3);
+    assert.strictEqual(stats.week.target, 3, 'норма недели');
+    assert.strictEqual(stats.week.done, 1, 'сделано за неделю');
+  } finally { await s.close(); }
+});
+
+test('свободная привычка не тянет прогресс дня, пока её не отметили', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/habits',
+      { title: 'Медитация', emoji: '🧘', timesPerWeek: 3 });
+    const day = await getJson(s.url, s.cookie, `/api/v1/days/${today()}/full`);
+    assert.strictEqual(day.progress.habits.possible, 0,
+      'в дне, на который ничего не обещано, привычки в знаменатель не идут');
+  } finally { await s.close(); }
+});
+
+test('челлендж у свободного графика копит выполненные дни, а не серию', async () => {
+  const s = await loggedIn();
+  try {
+    const h = await api(s.url, s.cookie, 'POST', '/api/v1/habits', {
+      title: 'Бассейн', emoji: '🏊', timesPerWeek: 2,
+      mode: 'challenge', challengeTargetDays: 5, breakPolicy: 'reset',
+    });
+    /*
+     * Привычку заводим «месяц назад»: до создания её не было, и прошлые
+     * отметки не считаются вовсе — это правильно. А проверить нужно то, что
+     * раньше давало ложное «челлендж закрыт»: пять отметок раз в неделю при
+     * цели «пять дней подряд».
+     */
+    s.db.prepare('UPDATE habits SET created_at = ?, challenge_start_date = ? WHERE id = ?')
+      .run(`${dayFromToday(-35)} 00:00:00`, dayFromToday(-35), h.id);
+    for (const back of [28, 21, 14, 7, 1]) {
+      await api(s.url, s.cookie, 'PUT', `/api/v1/habits/${h.id}/log/${dayFromToday(-back)}`, { status: 'done' });
+    }
+
+    const stats = await getJson(s.url, s.cookie, `/api/v1/habits/${h.id}/stats`);
+    assert.strictEqual(stats.missed, 0, 'неотмеченные дни не пропуски');
+    assert.strictEqual(stats.challenge.breaks, 0, 'и не срывы');
+    assert.strictEqual(stats.challenge.day, 5, 'пять отметок — пять дней челленджа');
+    assert.strictEqual(stats.challenge.complete, true,
+      'цель достигнута накоплением, а не серией подряд');
+  } finally { await s.close(); }
+});
+
+/*
+ * Дата создания сравнивается в поясе человека, а не в UTC.
+ *
+ * Поймалось само: в те часы, когда даты не совпадают (в Москве уже шестое, по
+ * UTC ещё пятое), привычка, созданная минуту назад, выглядела существовавшей
+ * вчера — и вчерашний день считал её пропущенной.
+ */
+test('привычка, созданная в UTC-вчера, не появляется во вчерашнем дне человека', async () => {
+  const s = await loggedIn();
+  try {
+    const h = await api(s.url, s.cookie, 'POST', '/api/v1/habits', { title: 'Вода' });
+    // момент создания — вчерашний по UTC, а сегодняшний по московскому времени
+    s.db.prepare('UPDATE habits SET created_at = ? WHERE id = ?')
+      .run(`${dayFromToday(-1)} 22:30:00`, h.id);
+
+    const yesterday = await getJson(s.url, s.cookie, `/api/v1/days/${dayFromToday(-1)}/full`);
+    assert.deepStrictEqual(yesterday.habits, [],
+      'по московскому времени привычки вчера ещё не было');
+    const now = await getJson(s.url, s.cookie, `/api/v1/days/${today()}/full`);
+    assert.strictEqual(now.habits.length, 1, 'а сегодня есть');
+  } finally { await s.close(); }
+});

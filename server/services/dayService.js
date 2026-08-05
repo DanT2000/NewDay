@@ -84,7 +84,14 @@ function dayService(db, opts = {}) {
       });
       cur = addDays(cur, 1);
     }
-    return { from, to, days };
+    /*
+     * `to` в ответе — конец того, что действительно посчитано, а не то, что
+     * попросили. Раньше при периоде длиннее предела возвращались первые 62 дня,
+     * но подтверждался запрошенный конец: снаружи это выглядело как «в ноябре
+     * ничего не запланировано», хотя данные просто не доехали.
+     */
+    const last = days.length ? days[days.length - 1].date : to;
+    return { from, to: last, requestedTo: to, truncated: last < to, days };
   }
 
   function checkIfMatch(ifMatch, user, date) {
@@ -118,13 +125,35 @@ function dayService(db, opts = {}) {
         notes: String(body.notes ?? ''),
       });
 
-      (body.schedule || []).forEach((row, i) => schedule.create(user.id, date, { ...row, sortOrder: i }));
+      /*
+       * Строки пересоздаются, а значит получают новые номера. Прежние номера
+       * запоминаем: по ним приём пищи находит свой блок. Без этого связь
+       * рвалась при каждой полной записи дня, и в расписании оставался блок,
+       * которому больше нечего означать.
+       */
+      const newIdOf = new Map();
+      (body.schedule || []).forEach((row, i) => {
+        const { wasId, ...rest } = row;
+        const created = schedule.create(user.id, date, { ...rest, sortOrder: i });
+        if (wasId) newIdOf.set(wasId, created.id);
+      });
+
       const work = body.tasks?.work || [];
       const home = body.tasks?.home || [];
       work.forEach((row, i) => tasks.create(user.id, date, { ...row, bucket: 'work', sortOrder: i }));
       home.forEach((row, i) => tasks.create(user.id, date, { ...row, bucket: 'home', sortOrder: i }));
-      (body.meals || []).forEach((row, i) => meals.create(user.id, date, { ...row, sortOrder: i }));
-      (body.sport || []).forEach((row, i) => sport.create(user.id, date, { ...row, sortOrder: i }));
+
+      (body.meals || []).forEach((row, i) => {
+        const { wasScheduleItemId, wasId, ...rest } = row;
+        meals.create(user.id, date, {
+          ...rest, sortOrder: i,
+          ...(wasScheduleItemId ? { scheduleItemId: newIdOf.get(wasScheduleItemId) ?? null } : {}),
+        });
+      });
+      (body.sport || []).forEach((row, i) => {
+        const { wasId, ...rest } = row;
+        sport.create(user.id, date, { ...rest, sortOrder: i });
+      });
     });
     tx();
 
@@ -158,7 +187,10 @@ function dayService(db, opts = {}) {
         src.schedule.forEach((r, i) => schedule.create(user.id, targetDate, {
           startMin: r.start_min, endMin: r.end_min, title: r.title, note: r.note,
           kind: r.kind, alarmMode: r.alarm_mode, alarmProfile: r.alarm_profile,
-          remindBeforeMin: r.remind_before_min, done: 0, sortOrder: i,
+          // список сроков и цвет — часть плана; без них копия дня выходила
+          // блёкло-сиреневой и с одним напоминанием вместо трёх
+          remindBeforeMin: r.remind_before_min, remindBefore: r.remind_before_json,
+          color: r.color, done: 0, sortOrder: i,
         }));
       }
       if (want.has('tasks')) {
@@ -170,8 +202,10 @@ function dayService(db, opts = {}) {
       if (want.has('meals')) {
         meals.removeAllForDate(user.id, targetDate);
         src.meals.forEach((r, i) => meals.create(user.id, targetDate, {
-          slot: r.slot, timeMin: r.time_min, title: r.title, note: r.note,
-          calories: r.calories, done: 0, sortOrder: i,
+          slot: r.slot, timeMin: r.time_min, endMin: r.end_min, title: r.title, note: r.note,
+          calories: r.calories, remindBefore: r.remind_before_json, done: 0, sortOrder: i,
+          // связь с блоком не копируем: блок в новом дне свой, и ссылка на
+          // чужой означала бы правку чужого дня
         }));
       }
       if (want.has('sport')) {

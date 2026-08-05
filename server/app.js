@@ -97,6 +97,20 @@ function createApp({ db, config, fetchImpl, env = process.env }) {
   app.use('/api', legacyRouter({ db, auth }));
   app.use('/api', auth.requireAuth, exportRouter({ db }));   // /api/export/all — алиас внутри роутера
 
+  /*
+   * Данные не кешируются браузером.
+   *
+   * У дня есть ETag, и без явного запрета браузер считает себя вправе отдать
+   * сохранённый ответ, не спрашивая сервер. Это ловилось руками: сразу после
+   * удаления строки чтение дня возвращало день со строкой, а попытка удалить
+   * её ещё раз давала «не найдено». Показать вчерашний день как сегодняшний
+   * хуже, чем сходить за ним в сеть.
+   */
+  app.use('/api', (_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
+
   // Всё остальное под /api/v1 требует аутентификации; пишущие методы — ещё и scope=write.
   app.use('/api/v1', auth.requireAuth);
   app.use('/api/v1', (req, res, next) =>

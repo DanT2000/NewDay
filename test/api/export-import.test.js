@@ -157,3 +157,103 @@ test('чужую выгрузку не отдаём и в чужой аккау�
     assert.deepStrictEqual(await habitTitles(s), ['Вода — 2 литра']);
   } finally { await s.close(); }
 });
+
+/*
+ * Ниже — то, что нашлось прогоном ботов: выгрузка молчала о половине полей,
+ * а «заменить всё» стирало повторы и не кладло их обратно. Резервная копия,
+ * которая теряет данные, хуже отсутствия копии: узнаёшь при восстановлении.
+ */
+
+test('выгрузка содержит повторы и шаблоны, а загрузка их возвращает', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/series', {
+      freq: 'daily', startDate: '2026-08-01',
+      rows: [{ time: '07:00', title: 'Подъём' }],
+    });
+    await api(s.url, s.cookie, 'POST', '/api/v1/series', {
+      name: 'Общее расписание', freq: 'daily', startDate: '2026-08-01', forceRows: true,
+      rows: [{ time: '09:00-13:00', title: 'Работа' }],
+    });
+
+    const dump = await getJson(s.url, s.cookie, '/api/v1/export');
+    assert.strictEqual(dump.series.length, 2, 'оба правила в выгрузке');
+
+    await api(s.url, s.cookie, 'POST', '/api/v1/import', { data: dump, mode: 'replace' });
+    const rules = await getJson(s.url, s.cookie, '/api/v1/series');
+    assert.strictEqual(rules.length, 2, 'оба правила восстановлены');
+    assert.ok(rules.some(r => r.name === 'Общее расписание'), 'шаблон на месте');
+  } finally { await s.close(); }
+});
+
+test('своя же выгрузка не удваивает повторы и шаблоны', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/series', {
+      name: 'Общее расписание', freq: 'daily', startDate: '2026-08-01', forceRows: true,
+      rows: [{ time: '09:00-13:00', title: 'Работа' }],
+    });
+    const dump = await getJson(s.url, s.cookie, '/api/v1/export');
+    await api(s.url, s.cookie, 'POST', '/api/v1/import', { data: dump, mode: 'merge' });
+    const rules = await getJson(s.url, s.cookie, '/api/v1/series');
+    assert.strictEqual(rules.length, 1, 'шаблон остался один');
+  } finally { await s.close(); }
+});
+
+test('выгрузка и загрузка держат цвет, список сроков, окно питания и свободный график', async () => {
+  const s = await loggedIn();
+  const date = '2026-08-05';
+  try {
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${date}/schedule`, {
+      time: '09:00-13:00', title: 'Работа', color: 'green',
+      alarmMode: 'notify', remindBefore: [1440, 60],
+    });
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${date}/meals`, {
+      title: 'Обед окном', timeMin: 720, endMin: 840, remindBefore: [15],
+    });
+    await api(s.url, s.cookie, 'POST', '/api/v1/habits',
+      { title: 'Медитация', emoji: '🧘', timesPerWeek: 3 });
+    await api(s.url, s.cookie, 'POST', '/api/v1/notes', { title: 'Книги на осень', text: 'без даты' });
+
+    const dump = await getJson(s.url, s.cookie, '/api/v1/export');
+    await api(s.url, s.cookie, 'POST', '/api/v1/import', { data: dump, mode: 'replace' });
+
+    const day = await getJson(s.url, s.cookie, `/api/v1/days/${date}/full`);
+    const row = day.schedule.find(r => r.title === 'Работа');
+    assert.strictEqual(row.color, 'green', 'цвет блока');
+    assert.strictEqual(row.remind_before_json, '[1440,60]', 'список сроков');
+
+    const meal = day.meals.find(m => m.title === 'Обед окном');
+    assert.strictEqual(meal.end_min, 840, 'окно приёма пищи');
+    assert.strictEqual(meal.remind_before_json, '[15]', 'напоминание о еде');
+
+    const habits = await getJson(s.url, s.cookie, '/api/v1/habits');
+    const free = habits.find(h => h.title === 'Медитация');
+    assert.strictEqual(free.timesPerWeek ?? free.times_per_week, 3, 'свободный график');
+
+    const notes = await getJson(s.url, s.cookie, '/api/v1/notes');
+    assert.strictEqual(notes.filter(n => !n.date).length, 1, 'заметка без даты одна');
+  } finally { await s.close(); }
+});
+
+test('связь приёма пищи с блоком расписания переживает выгрузку', async () => {
+  const s = await loggedIn();
+  const date = '2026-08-06';
+  try {
+    const block = await api(s.url, s.cookie, 'POST', `/api/v1/days/${date}/schedule`, {
+      time: '13:00-13:30', title: 'Обед', kind: 'meal',
+    });
+    const meal = await api(s.url, s.cookie, 'POST', `/api/v1/days/${date}/meals`, {
+      title: 'Обед', timeMin: 780, scheduleItemId: block.id,
+    });
+    assert.strictEqual(meal.schedule_item_id, block.id);
+
+    const dump = await getJson(s.url, s.cookie, '/api/v1/export');
+    await api(s.url, s.cookie, 'POST', '/api/v1/import', { data: dump, mode: 'replace' });
+
+    const day = await getJson(s.url, s.cookie, `/api/v1/days/${date}/full`);
+    const sameBlock = day.schedule.find(r => r.title === 'Обед');
+    const sameMeal = day.meals.find(m => m.title === 'Обед');
+    assert.strictEqual(sameMeal.schedule_item_id, sameBlock.id, 'ссылка переведена на новый номер');
+  } finally { await s.close(); }
+});

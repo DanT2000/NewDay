@@ -46,6 +46,22 @@ function todayFor(timeZone, now = new Date()) {
   }
 }
 
+/**
+ * Дата записи в базе, прочитанная в поясе человека.
+ *
+ * В базе моменты хранятся как «YYYY-MM-DD HH:MM:SS» по UTC, а дни человека
+ * считаются в его поясе. Прямое сравнение первых десяти знаков врёт в те
+ * часы, когда даты не совпадают: в Москве уже шестое, а по UTC ещё пятое —
+ * и привычка, созданная минуту назад, выглядела существовавшей вчера.
+ */
+function localDateOf(stamp, timeZone) {
+  const raw = String(stamp || '');
+  if (!raw) return '';
+  const at = new Date(`${raw.replace(' ', 'T')}${/[Zz]|[+-]\d\d:?\d\d$/.test(raw) ? '' : 'Z'}`);
+  if (Number.isNaN(at.getTime())) return raw.slice(0, 10);
+  return todayFor(timeZone, at);
+}
+
 /** Арифметика ведётся в UTC-полдень: переход на летнее время не может сдвинуть дату. */
 function addDays(dateStr, n) {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -177,7 +193,7 @@ function minutesInZone(instantMs, timeZone) {
 
 module.exports = {
   MASK_ALL,
-  isValidDate, isValidTimezone, todayFor, addDays, diffDays, rangeDates,
+  isValidDate, isValidTimezone, todayFor, localDateOf, addDays, diffDays, rangeDates,
   weekdayOf, weekdayInMask, parseTimeToMinutes, formatMinutes, parseTimeRange,
   zonedTimeToUtc, zoneOffsetMs, minutesInZone,
 };

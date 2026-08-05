@@ -15,23 +15,52 @@ const {
  * список сроков предупреждения уходил массивом и упирался в драйвер базы.
  * Проверка входа — работа роутера, и она должна быть одна для обоих путей.
  */
-function cleanBody(body) {
-  const rows = (list, sanitize) => (Array.isArray(list) ? list : [])
+function cleanBody(body, ownSeries) {
+  const rows = (list, sanitize, keep) => (Array.isArray(list) ? list : [])
     .filter(r => r && typeof r === 'object')
     .map(r => {
       const out = sanitize(r, { partial: false });
       // строка time разбирается репозиторием, поэтому доезжает как есть
-      return out.time === undefined ? out : { ...out, time: String(r.time) };
+      const withTime = out.time === undefined ? out : { ...out, time: String(r.time) };
+      const extra = keep ? keep(r) : {};
+      // прежний номер строки нужен, чтобы перевести на него ссылки после пересоздания
+      const wasId = Number(r.id);
+      return { ...withTime, ...extra, ...(Number.isInteger(wasId) && wasId > 0 ? { wasId } : {}) };
     });
+
+  /*
+   * Принадлежность строки повтору и связь приёма пищи с блоком проходят
+   * насквозь, хотя правки не принимают.
+   *
+   * Иначе получалась ловушка: клиент отправлял обратно то, что только что
+   * прочитал, `series_id` терялся, а следующий же `getFull` видел, что серии
+   * в дне нет, и материализовал её заново — в ответе того же запроса
+   * появлялась вторая копия строки, при следующей записи третья.
+   */
+  const seriesOf = r => {
+    const id = Number(r.series_id ?? r.seriesId);
+    // только свои правила: id серии приходит от клиента, и чужой означал бы
+    // строку, привязанную к чужому повтору
+    return Number.isInteger(id) && ownSeries.has(id) ? { seriesId: id } : {};
+  };
+  /*
+   * Связь приёма пищи с блоком приходит прежним номером — тем, который клиент
+   * прочитал. Полная замена дня пересоздаёт строки заново, поэтому здесь мы
+   * только запоминаем прежний номер, а на новый его переводит `replaceFull`.
+   */
+  const blockOf = r => {
+    const id = Number(r.schedule_item_id ?? r.scheduleItemId);
+    return Number.isInteger(id) && id > 0 ? { wasScheduleItemId: id } : {};
+  };
 
   return {
     ...body,
-    schedule: rows(body.schedule, sanitizeSchedule),
+    schedule: rows(body.schedule, sanitizeSchedule, seriesOf),
     tasks: {
       work: rows(body.tasks?.work, sanitizeTask),
       home: rows(body.tasks?.home, sanitizeTask),
     },
-    meals: rows(body.meals, sanitizeMeal),
+    meals: rows(body.meals, sanitizeMeal, blockOf),
     sport: rows(body.sport, sanitizeSport),
   };
 }
@@ -69,7 +98,10 @@ module.exports = function daysRouter({ db }) {
   }));
 
   router.put('/:date/full', wrap((req, res) => {
-    const day = svc.replaceFull(req.user, dateOf(req), cleanBody(req.body || {}), req.get('if-match'));
+    const own = new Set(
+      db.prepare('SELECT id FROM series WHERE user_id = ?').all(req.user.id).map(r => r.id),
+    );
+    const day = svc.replaceFull(req.user, dateOf(req), cleanBody(req.body || {}, own), req.get('if-match'));
     withEtag(res, day);
   }));
 

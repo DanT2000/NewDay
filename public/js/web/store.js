@@ -142,6 +142,11 @@ export async function loadSeries() {
   return store.series;
 }
 
+export const updateSeries = (id, body) => api.series.update(id, body);
+/*
+ * «Убрать повтор целиком»: правило уходит вместе с будущими строками, прошлые
+ * остаются — они часть прожитых дней. Разбирается с этим сервер.
+ */
 export const removeSeries = id => api.series.remove(id);
 /*
  * «Не напоминать с этого дня» — это конец правила, а не удаление: прошлые дни

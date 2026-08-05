@@ -29,15 +29,44 @@ function matchesDate(rule, date) {
     const weeks = Math.floor(diffDays(startOfWeek(rule.start_date), date) / 7);
     return weeks >= 0 && weeks % interval === 0;
   }
+  /*
+   * Ежемесячно и ежегодно — то же число, но с двумя оговорками.
+   *
+   * Интервал. Раньше он тут не участвовал вовсе, и «раз в квартал»
+   * молча превращалось в «каждый месяц».
+   *
+   * Короткий месяц. «Каждое 31-е» существует только в семи месяцах из
+   * двенадцати, а годовщина 29 февраля — раз в четыре года. Молча пропускать
+   * такие месяцы нельзя: человек поставил напоминание на последний день
+   * месяца, и он его ждёт. Поэтому число прижимаем к длине месяца —
+   * в феврале «31-е» приходит 28-го (или 29-го в високосный год).
+   */
   if (rule.freq === 'monthly') {
-    return date.slice(8, 10) === rule.start_date.slice(8, 10);
+    const months = monthsBetween(rule.start_date, date);
+    if (months < 0 || months % interval !== 0) return false;
+    return Number(date.slice(8, 10)) === clampDay(date, Number(rule.start_date.slice(8, 10)));
   }
-  // Ежегодно — то же число того же месяца. Без него не выразить ни день
-  // рождения, ни годовщину, а в напоминаниях это половина случаев
   if (rule.freq === 'yearly') {
-    return date.slice(5) === rule.start_date.slice(5);
+    const years = Number(date.slice(0, 4)) - Number(rule.start_date.slice(0, 4));
+    if (years < 0 || years % interval !== 0) return false;
+    if (date.slice(5, 7) !== rule.start_date.slice(5, 7)) return false;
+    return Number(date.slice(8, 10)) === clampDay(date, Number(rule.start_date.slice(8, 10)));
   }
   return false;
+}
+
+/** Сколько целых месяцев между датами — знак сохраняется. */
+function monthsBetween(from, to) {
+  const [fy, fm] = from.split('-').map(Number);
+  const [ty, tm] = to.split('-').map(Number);
+  return (ty - fy) * 12 + (tm - fm);
+}
+
+/** Число, прижатое к длине месяца этой даты: 31 в феврале станет 28 или 29. */
+function clampDay(date, day) {
+  const [y, m] = date.split('-').map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return Math.min(day, last);
 }
 
 function startOfWeek(dateStr) {
@@ -135,6 +164,15 @@ function seriesService(db) {
         kind: r.kind ?? 'normal', alarmMode: r.alarmMode ?? 'none',
         alarmProfile: r.alarmProfile ?? 'gentle',
         remindBeforeMin: r.remindBeforeMin ?? null,
+        /*
+         * Список сроков и цвет — как у обычного повтора. Без них шаблон
+         * приезжал в день обесцвеченным и с одним напоминанием вместо трёх,
+         * хотя в самом правиле они сохранены; а именно так шаблон и попадает
+         * в день чаще всего — автозаполнением пустого дня.
+         */
+        remindBefore: Array.isArray(r.remindBefore) && r.remindBefore.length
+          ? JSON.stringify(r.remindBefore) : null,
+        color: r.color ?? null,
         sortOrder: i, done: 0,
       }));
     });

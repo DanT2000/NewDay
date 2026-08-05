@@ -3,7 +3,7 @@ const { scheduleRepo } = require('../repos/schedule');
 const { tasksRepo } = require('../repos/tasks');
 const { mealsRepo } = require('../repos/meals');
 const { sportRepo } = require('../repos/sport');
-const { todayFor, addDays, rangeDates, weekdayInMask } = require('../lib/dates');
+const { todayFor, localDateOf, addDays, rangeDates, weekdayInMask } = require('../lib/dates');
 
 /**
  * Привычка «активна» в дату, если она не в архиве, дата не раньше создания,
@@ -55,6 +55,21 @@ function pct(done, possible) {
  */
 function statsService(db, opts = {}) {
   const nowOf = () => opts.now ?? new Date();
+
+  /**
+   * Даты жизни привычки — в поясе человека, а не в UTC.
+   *
+   * В базе они лежат моментами по UTC, а дни человека считаются в его поясе.
+   * Пока даты совпадают, разницы не видно; в те часы, когда не совпадают,
+   * привычка, созданная минуту назад, выглядела существовавшей вчера — и
+   * вчерашний день считал её пропущенной.
+   */
+  const localized = (habit, timeZone) => ({
+    ...habit,
+    created_at: localDateOf(habit.created_at, timeZone),
+    archived_at: habit.archived_at ? localDateOf(habit.archived_at, timeZone) : null,
+  });
+
   const habits = habitsRepo(db);
   const schedule = scheduleRepo(db);
   const tasks = tasksRepo(db);
@@ -64,8 +79,13 @@ function statsService(db, opts = {}) {
   /**
    * Текущий стрик: идём назад от `to`, пропуская неактивные дни и заморозки.
    * Отсутствие записи за сегодня стрик не рвёт — день ещё не закончился.
+   *
+   * У свободного графика серии нет вовсе: «три раза в неделю» не про дни
+   * подряд, и число «подряд 15 дней» для такой привычки означало бы просто
+   * количество отметок. Считаем её норму недели, а серию не считаем.
    */
   function currentStreak(habit, logsMap, to, today) {
+    if (freeSchedule(habit)) return 0;
     let streak = 0;
     let cursor = to;
     const floor = habit.challenge_start_date
@@ -88,6 +108,8 @@ function statsService(db, opts = {}) {
   }
 
   function bestStreak(habit, logsMap, from, to) {
+    // у свободного графика серии нет — см. currentStreak
+    if (freeSchedule(habit)) return 0;
     let best = 0, run = 0;
     for (const d of rangeDates(from, to)) {
       if (!habitActiveOn(habit, d)) continue;
@@ -100,7 +122,7 @@ function statsService(db, opts = {}) {
   }
 
   function habitStats(user, habitId, from, to) {
-    const habit = habits.get(user.id, habitId);
+    const habit = localized(habits.get(user.id, habitId), user.timezone);
     const today = todayFor(user.timezone, nowOf());
     const rangeTo = to || today;
     const rangeFrom = from
@@ -128,14 +150,21 @@ function statsService(db, opts = {}) {
     let challenge = null;
     if (habit.mode === 'challenge' && habit.challenge_target_days) {
       const start = habit.challenge_start_date || rangeFrom;
-      if (habit.break_policy === 'keep') {
+      /*
+       * У свободного графика челлендж всегда накопительный, даже если у
+       * привычки стоит «при срыве обнулять»: обнулять нечего — дней подряд
+       * она не обещает. Иначе цель «пять дней» закрывалась пятью отметками
+       * раз в неделю, потому что считалась через серию.
+       */
+      if (habit.break_policy === 'keep' || freeSchedule(habit)) {
         // накопительно: считаем выполненные дни от старта, срывы показываем отдельно
         let cDone = 0, cBreaks = 0;
         for (const d of rangeDates(start, rangeTo)) {
           if (!habitActiveOn(habit, d)) continue;
           const status = logsMap[d];
           if (status === 'done') cDone += 1;
-          else if (status === 'missed' || (status === undefined && d < today)) cBreaks += 1;
+          // неотмеченный день у свободного графика срывом не считается
+          else if (status === 'missed' || (status === undefined && d < today && !freeSchedule(habit))) cBreaks += 1;
         }
         challenge = {
           day: Math.min(cDone, habit.challenge_target_days),
@@ -196,6 +225,7 @@ function statsService(db, opts = {}) {
   /** Привычки на конкретный день — то, что показывается в блоке «Привычки сегодня». */
   function habitsForDate(user, date) {
     const list = habits.list(user.id, { includeArchived: true })
+      .map(h => localized(h, user.timezone))
       .filter(h => habitExistsOn(h, date));
     const logs = habits.logsForDate(user.id, date);
     const byId = {};
@@ -259,8 +289,15 @@ function statsService(db, opts = {}) {
     };
 
     const allTasks = tasks.list(user.id, date);
+    /*
+     * Привычка со свободным графиком попадает в прогресс дня только если её
+     * в этот день отметили. Иначе «три раза в неделю» висела бы в знаменателе
+     * каждый день и портила процент в дни, на которые человек ничего и не
+     * обещал.
+     */
     const habitRows = habitsForDate(user, date)
-      .filter(h => h.activeToday && h.status !== 'skipped');
+      .filter(h => h.activeToday && h.status !== 'skipped')
+      .filter(h => !h.timesPerWeek || h.status === 'done');
 
     /*
      * Прогресс — это ответ на вопрос «что я сделал», и в него входит только

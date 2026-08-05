@@ -3,7 +3,7 @@ const { wrap, badRequest } = require('../../lib/errors');
 const v = require('../../lib/validate');
 const { seriesRepo } = require('../../repos/series');
 const { seriesService } = require('../../services/seriesService');
-const { parseTimeRange } = require('../../lib/dates');
+const { parseTimeRange, todayFor } = require('../../lib/dates');
 
 const TARGETS = ['schedule'];          // задачи и питание получат повторы на следующем этапе
 const FREQS = ['daily', 'weekly', 'monthly', 'yearly'];
@@ -96,7 +96,7 @@ module.exports = function seriesRouter({ db }) {
     if (req.query.from) {
       return res.json(repo.endFrom(req.user.id, idOf(req), v.date(req.query.from, { field: 'from' })));
     }
-    repo.remove(req.user.id, idOf(req));
+    repo.remove(req.user.id, idOf(req), { today: todayFor(req.user.timezone) });
     res.status(204).end();
   }));
 
