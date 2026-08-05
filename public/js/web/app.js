@@ -23,6 +23,7 @@ import * as adapt from './adapt.js';
 import * as data from './store.js';
 import { store } from './store.js';
 import * as api from '../api.js';
+import { printSheet } from './sheet.js';
 
 /** Часовая сетка: 18 часов с 06:00, строка часа — 44 px. */
 const HOUR_H = 44;
@@ -40,6 +41,7 @@ const state = {
   rowId: null, rowStart: null, rowEnd: null, rowField: 'start', rowTitle: '', rowAlarm: 'off', rowLead: 'at',
   taskId: null, taskTitle: '', taskCat: 'work',
   mealId: null, mealTitle: '', mealKcal: '', mealMode: 'none', mealDur: 30, mealSched: false,
+  sportId: null, sportTitle: '', sportSets: '', sportReps: '', sportWeight: '',
   noteId: null, noteText: '', noteDated: true,
   remId: null, remRepeat: 'Ежегодно',
   sound: 'Рассвет', soundKind: 'Звук будильника', fileKind: 'export',
@@ -59,6 +61,7 @@ let SCHEDULE = [];
 let TASKS = [];
 let MEALS = [];
 let HABITS = [];
+let SPORT = [];
 let NOTES = [];
 let REMINDERS = [];
 
@@ -109,7 +112,8 @@ function toggle(r, kind) {
   const send = kind === 'task' ? data.toggleTask
     : kind === 'meal' ? data.toggleMeal
       : kind === 'habit' ? data.toggleHabit
-        : data.toggleScheduleRow;
+        : kind === 'sport' ? data.toggleSport
+          : data.toggleScheduleRow;
   r.done = next;
   if (kind === 'habit') r.status = next ? 'done' : null;
   render();
@@ -163,6 +167,7 @@ function fill() {
   TASKS = adapt.tasks(store.day);
   MEALS = adapt.meals(store.day);
   HABITS = adapt.habits(store.day);
+  SPORT = adapt.sport(store.day);
   REMINDERS = adapt.reminders(SCHEDULE);
   NOTES = adapt.notes(store.notes, todayKey());
 }
@@ -452,6 +457,51 @@ function foodBlock() {
       inner));
 }
 
+/**
+ * Спорт таблицей. Подходы, повторы и вес — числа, и в колонках они
+ * сравниваются глазом: «стало ли больше, чем в прошлый раз» видно сразу,
+ * а в строке «4×12, 60 кг» приходится вычитывать.
+ */
+function sportBlock() {
+  const shades = shadeSet();
+  const done = SPORT.filter(isDone).length;
+
+  const table = h('div.wsport');
+  add(table, h('div.wsport-head',
+    h('span'), h('span', { text: 'упражнение' }),
+    h('span', { text: 'подх.' }), h('span', { text: 'повт.' }), h('span', { text: 'вес' })));
+
+  add(table, ...SPORT.map(x => {
+    const d = isDone(x);
+    const row = h('button.wsport-row', {
+      type: 'button',
+      onclick: () => set({
+        modal: 'sport', sportId: x.id, sportTitle: x.title,
+        sportSets: x.sets ?? '', sportReps: x.reps ?? '', sportWeight: x.weight ?? '',
+      }),
+    });
+    const mark = box(d);
+    mark.onclick = e => { e.stopPropagation(); toggle(x, 'sport'); };
+    add(row, mark,
+      h('span.wstrike', { text: x.title, class: d ? 'done' : '' }),
+      h('span.wsport-num', { text: x.sets ?? '—' }),
+      h('span.wsport-num', { text: x.reps ?? '—' }),
+      h('span.wsport-num', { text: x.weight === null ? '—' : `${x.weight}` }));
+    return row;
+  }));
+
+  const addBtn = h('button.wadd', {
+    type: 'button',
+    onclick: () => set({ modal: 'sport', sportId: 'new', sportTitle: '', sportSets: '', sportReps: '', sportWeight: '' }),
+  });
+  add(addBtn, ico('plus', '15px'), h('span', { text: 'Добавить упражнение' }));
+
+  return h('div',
+    sectHd('спорт', h('span.wcount', { text: `${done}/${SPORT.length}` }), shades[2]),
+    SPORT.length ? table : null,
+    h('div.wlist', { style: SPORT.length ? { marginTop: '8px' } : {} }, addBtn));
+}
+
 /** Четыре оттенка акцента для точек-маркеров разделов. */
 function shadeSet() {
   const a = accent();
@@ -501,7 +551,7 @@ function todayScreen() {
       })()),
       scheduleList()));
 
-  const mid = h('div.wcol', statCards(), tasksBlock(), foodBlock());
+  const mid = h('div.wcol', statCards(), tasksBlock(), foodBlock(), sportBlock());
 
   const remList = h('div.wlist');
   add(remList, ...REMINDERS.map(r => {
@@ -811,11 +861,17 @@ function notesScreen() {
   });
   add(addBtn, ico('plus', '16px'), h('span', { text: 'Новая заметка' }));
 
+  /*
+   * Фильтра «без даты» нет: заметка в этой модели живёт полем дня, и
+   * заметок без даты не бывает вовсе. Кнопка, которая всегда даёт пустоту,
+   * говорит человеку, что у него ничего не нашлось, — а не нашлось потому,
+   * что искать нечего.
+   */
   const filters = h('div.wwrap', { style: { marginBottom: '14px' } });
-  add(filters, ...[['all', 'Все заметки'], ['day', 'На этот день'], ['free', 'Без даты']].map(([k, label]) =>
+  add(filters, ...[['all', 'Все заметки'], ['day', 'На этот день']].map(([k, label]) =>
     chip(label, state.noteFilter === k, () => set({ noteFilter: k }))));
 
-  const shown = NOTES.filter(n => state.noteFilter === 'all' || (state.noteFilter === 'day' ? n.on : !n.on));
+  const shown = NOTES.filter(n => state.noteFilter === 'all' || n.id === state.date);
   const grid = h('div.wnotes');
   add(grid, ...shown.map(n => {
     const card = h('button.wnote', {
@@ -831,16 +887,17 @@ function notesScreen() {
   }));
   const newCard = h('button.wnote-new', {
     type: 'button',
-    onclick: () => set({ modal: 'note', noteId: state.date, noteText: '', noteDated: true }),
+    onclick: () => set({ modal: 'note', noteId: state.date, noteText: store.day?.notes ?? '', noteDated: true }),
   });
-  add(newCard, ico('plus', '17px'), h('span', { text: 'Новая заметка' }));
+  add(newCard, ico('plus', '17px'),
+    h('span', { text: shown.some(n => n.id === state.date) ? 'Заметка этого дня' : 'Заметка на этот день' }));
   add(grid, newCard);
 
   return h('div',
     h('div.whead',
       h('div.whead-text',
         h('div.whead-title', { text: 'Заметки' }),
-        h('div.whead-hint', { text: 'С датой попадают в дела нужного дня, без даты — живут только здесь' })),
+        h('div.whead-hint', { text: 'Одна заметка на день. Она же видна в делах этого дня.' })),
       addBtn),
     filters, grid);
 }
@@ -1005,6 +1062,7 @@ const TITLES = {
   note: () => 'Заметка',
   task: () => 'Задача',
   meal: () => 'Приём пищи',
+  sport: () => 'Упражнение',
   sound: () => state.soundKind,
   template: () => 'Общее расписание',
   file: () => (state.fileKind === 'import' ? 'Импорт данных' : 'Экспорт данных'),
@@ -1271,6 +1329,50 @@ const BODIES = {
         })));
   },
 
+  // ── Упражнение ──
+  sport() {
+    const num = (key, label, hint) => h('div',
+      h('span.wfield-label', { text: label }),
+      h('input.wnum', {
+        value: String(state[key] ?? ''), placeholder: '—', inputMode: 'numeric',
+        oninput: e => { state[key] = e.target.value; },
+      }),
+      hint ? h('div.whint', { text: hint, style: { marginTop: '6px' } }) : null);
+
+    const save = () => {
+      const body = adapt.sportToServer({
+        title: state.sportTitle,
+        sets: Number.parseInt(state.sportSets, 10),
+        reps: Number.parseInt(state.sportReps, 10),
+        weight: Number.parseFloat(String(state.sportWeight).replace(',', '.')),
+      });
+      if (!body.exercise) { state.notice = 'Впишите упражнение'; render(); return; }
+      busy(state.sportId === 'new'
+        ? data.createSport(state.date, body)
+        : data.updateSport(state.date, state.sportId, body));
+    };
+
+    return h('div.wstack',
+      h('label', h('span.wfield-label', { text: 'упражнение' }),
+        h('input.winput', {
+          value: state.sportTitle, placeholder: 'Например, жим лёжа',
+          oninput: e => { state.sportTitle = e.target.value; },
+        })),
+      h('div.wgrid3',
+        num('sportSets', 'подходы'),
+        num('sportReps', 'повторы'),
+        num('sportWeight', 'вес, кг', 'можно с запятой')),
+      h('div.wrow-end',
+        h('button.wbtn-quiet', {
+          type: 'button', text: 'Удалить',
+          onclick: () => (state.sportId === 'new' ? closeModal() : busy(data.removeSport(state.date, state.sportId))),
+        }),
+        h('button.wbtn-wide', {
+          type: 'button', text: state.busy ? 'Сохраняю…' : 'Готово',
+          disabled: state.busy, onclick: save,
+        })));
+  },
+
   // ── Заметка ──
   note() {
     const kinds = h('div.wrow');
@@ -1423,23 +1525,52 @@ const BODIES = {
   // ── Экспорт и импорт ──
   file() {
     const imp = state.fileKind === 'import';
+
+    /*
+     * Виды выгрузки — те, что сервер действительно умеет: весь JSON и
+     * расписание календарём. «Этот день / этот месяц» на эталоне были, но
+     * за ними ничего нет, а кнопка, которая выгружает не то, что обещает,
+     * хуже отсутствующей.
+     */
     const scopes = h('div.wwrap');
-    add(scopes, ...(imp ? ['Добавить к текущим', 'Заменить всё'] : ['Этот день', 'Этот месяц', 'Все данные'])
-      .map((s, i) => sheetChip(s, state.printScope === i, () => set({ printScope: i }))));
+    add(scopes, ...(imp
+      ? [['merge', 'Добавить к текущим'], ['replace', 'Заменить всё']]
+      : [['json', 'Все данные · JSON'], ['ics', 'Расписание · календарь']]
+    ).map(([k, label]) => sheetChip(label, (state.fileScope ?? (imp ? 'merge' : 'json')) === k, () => set({ fileScope: k }))));
+
+    const scope = state.fileScope ?? (imp ? 'merge' : 'json');
+    const picker = h('input', {
+      type: 'file', accept: 'application/json,.json',
+      style: { display: 'none' },
+      onchange: e => importFile(e.target.files?.[0], scope),
+    });
 
     return h('div.wstack',
       h('div.whint', {
         text: imp
-          ? 'Возьмём JSON из экспорта. Ничего не удаляется без вашего выбора.'
-          : 'Выгрузим всё в один JSON-файл — его можно сохранить или перенести на телефон.',
+          ? 'Возьмём JSON из выгрузки. «Заменить всё» сотрёт то, что есть сейчас.'
+          : 'JSON понимает только NewDay и переносит всё. Календарь понимают все, но в нём только расписание.',
       }),
       scopes,
       h('div.wfile',
         ico(imp ? 'file-arrow-up' : 'file-arrow-down', '24px'),
         h('div.wfile-body',
-          h('div.wfile-name', { text: imp ? 'newday-backup.json' : 'newday-2026-08-05.json' }),
-          h('div.wfile-meta', { text: imp ? '2,4 МБ · 184 дня · 12 привычек' : 'сохранится в «Загрузки» · около 240 КБ' }))),
-      h('button.wbtn-wide', { type: 'button', text: imp ? 'Выбрать файл и импортировать' : 'Сохранить файл', onclick: closeModal }));
+          h('div.wfile-name', { text: imp ? 'Файл с вашего компьютера' : scope === 'ics' ? 'newday.ics' : 'newday-export.json' }),
+          h('div.wfile-meta', {
+            text: imp
+              ? 'выгрузка из NewDay, формат JSON'
+              : scope === 'ics'
+                ? 'откроется в Google Календаре, Apple Календаре, Outlook'
+                : 'дни, задачи, питание, спорт, привычки, повторы',
+          }))),
+      state.notice ? h('div.whint', { text: state.notice, style: { color: 'var(--accent)' } }) : null,
+      picker,
+      h('button.wbtn-wide', {
+        type: 'button',
+        text: state.busy ? 'Работаю…' : imp ? 'Выбрать файл и импортировать' : 'Сохранить файл',
+        disabled: state.busy,
+        onclick: () => (imp ? picker.click() : downloadExport(scope)),
+      }));
   },
 
   // ── Общее расписание ──
@@ -1463,24 +1594,108 @@ const BODIES = {
 
   // ── Печать ──
   print() {
+    const SCOPES = ['day', 'week', 'month'];
     const scopes = h('div.wwrap');
-    add(scopes, ...['Этот день', 'Неделя', 'Месяц'].map((s, i) =>
-      sheetChip(s, state.printScope === i, () => set({ printScope: i }))));
+    add(scopes, ...['Этот день', 'Неделя', 'Месяц'].map((label, i) =>
+      sheetChip(label, state.printScope === i, () => set({ printScope: i }))));
 
     const parts = h('div.wgrid2');
-    add(parts, ...PRINT_PARTS.map(p => {
-      const on = !state.printOff[p];
-      const row = h('button.wplan-item', { type: 'button', onclick: () => set(s => ({ printOff: { ...s.printOff, [p]: on } })) });
-      add(row, box(on), h('span', { text: p, style: { flex: '1', font: '400 14px/1.3 var(--ui)' } }));
+    add(parts, ...PRINT_PARTS.map(name => {
+      const on = !state.printOff[name];
+      const row = h('button.wplan-item', {
+        type: 'button',
+        onclick: () => set(x => ({ printOff: { ...x.printOff, [name]: on } })),
+      });
+      add(row, box(on), h('span', { text: name, style: { flex: '1', font: '400 14px/1.3 var(--ui)' } }));
       return row;
     }));
+
+    const chosen = PRINT_PARTS.filter(name => !state.printOff[name]);
 
     return h('div.wstack',
       h('div.whint', { text: 'Соберём лист и отдадим в диалог печати браузера — оттуда можно сохранить в PDF.' }),
       scopes, parts,
-      h('button.wbtn-wide', { type: 'button', text: 'Отправить на печать', onclick: closeModal }));
+      h('button.wbtn-wide', {
+        type: 'button',
+        text: state.busy ? 'Собираю…' : 'Отправить на печать',
+        disabled: state.busy || !chosen.length,
+        onclick: async () => {
+          const scope = SCOPES[state.printScope] ?? 'day';
+          state.busy = true; render();
+          try {
+            // День всегда нужен целиком: в выборке за период есть только
+            // расписание, а на листе печатают и задачи, и еду
+            const day = store.day?.date === state.date ? store.day : await data.loadDay(state.date);
+            const range = scope === 'day' ? null : await data.loadRange(state.date, scope);
+            state.busy = false;
+            state.modal = null;
+            render();
+            // Даём кадр на закрытие шторки: печатать поверх затемнения незачем
+            requestAnimationFrame(() => printSheet(day, { parts: chosen, scope, range }));
+          } catch (e) {
+            state.busy = false;
+            fail(e);
+          }
+        },
+      }));
   },
 };
+
+// ── Выгрузка и загрузка ──────────────────────────────────────
+
+/**
+ * Выгрузка. Скачиваем через ссылку с blob, а не переходом по адресу:
+ * переход по адресу с сессией открыл бы файл во вкладке, а имя файла
+ * пришлось бы вычитывать из заголовка.
+ */
+async function downloadExport(kind) {
+  state.busy = true; state.notice = null; render();
+  try {
+    const path = kind === 'ics' ? '/export.ics' : '/export';
+    const res = await fetch(api.apiBase() + path, { headers: authHeader() });
+    if (!res.ok) throw new Error(`Сервер ответил ${res.status}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = h('a', { href: url, download: kind === 'ics' ? 'newday.ics' : 'newday-export.json' });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    state.busy = false;
+    state.modal = null;
+    render();
+  } catch (e) {
+    state.busy = false;
+    fail(e);
+  }
+}
+
+const authHeader = () => {
+  const token = api.deviceToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
+
+/** Загрузка. Читаем файл в браузере: проверить формат надо до отправки. */
+async function importFile(file, mode) {
+  if (!file) return;
+  state.busy = true; state.notice = null; render();
+  try {
+    const text = await file.text();
+    let parsed;
+    try { parsed = JSON.parse(text); }
+    catch { throw new Error('Это не JSON — выберите файл из выгрузки NewDay'); }
+
+    await api.POST('/import', { data: parsed, mode });
+    state.busy = false;
+    state.modal = null;
+    state.notice = mode === 'replace' ? 'Данные заменены' : 'Данные добавлены';
+    render();
+    await reload();
+  } catch (e) {
+    state.busy = false;
+    fail(e);
+  }
+}
 
 // ── Помощник ─────────────────────────────────────────────────
 

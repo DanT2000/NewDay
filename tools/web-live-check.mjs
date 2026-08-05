@@ -205,6 +205,75 @@ const flag = await js(`fetch('/api/v1/settings').then(r=>r.json()).then(s => Boo
 проба('переключатель дня сохранён', flag === !flagBefore, `${flagBefore} → ${flag}`);
 await shot('web-live-settings');
 
+// ── Спорт ──
+await js(`document.querySelectorAll('.wnav-item')[0].click()`);
+await waitFor('Boolean(document.querySelector(".wsport"))');
+await wait(400);
+проба('спорт показан таблицей',
+  (await js(`document.querySelectorAll('.wsport-head span').length`)) === 5,
+  `${await js('document.querySelectorAll(".wsport-row").length')} упражнений`);
+
+const sportCount = () => js(`fetch('/api/v1/days/${DAY}/full').then(r=>r.json()).then(d => d.sport.length)`, true);
+const sportBefore = await sportCount();
+await js(`document.querySelectorAll('.wsport-row')[0].click()`);
+проба('шторка упражнения открылась',
+  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Упражнение'`));
+
+await js(`(() => {
+  const nums = document.querySelectorAll('.wmodal .wnum');
+  nums[2].value = '62,5';
+  nums[2].dispatchEvent(new Event('input', { bubbles: true }));
+})()`);
+await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
+await waitFor('!document.querySelector(".wveil")');
+await wait(900);
+
+const weight = await js(`fetch('/api/v1/days/${DAY}/full').then(r=>r.json()).then(d => d.sport[0].weight)`, true);
+проба('вес с запятой сохранился числом', weight === 62.5, String(weight));
+const sportAfter = await sportCount();
+проба('правка не создала лишнюю строку', sportAfter === sportBefore, `${sportBefore} → ${sportAfter}`);
+
+// ── Печать ──
+await js('window.__wopen("print")');
+await waitFor('Boolean(document.querySelector(".wveil"))');
+await wait(300);
+await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
+проба('лист на печать собран', await waitFor('Boolean(document.querySelector(".psheet"))', 40));
+
+const sheet = await js(`(() => {
+  const s = document.querySelector('.psheet');
+  if (!s) return null;
+  return {
+    boxes: s.querySelectorAll('.pbox').length,
+    rows: s.querySelectorAll('.prow').length,
+    squares: s.querySelectorAll('.psq').length,
+    head: s.querySelector('.phead h1')?.textContent,
+  };
+})()`);
+проба('на листе есть разделы и строки', sheet?.boxes >= 3 && sheet?.rows > 5, JSON.stringify(sheet));
+проба('у каждой строки квадрат под галочку', sheet?.squares === sheet?.rows);
+проба('на листе стоит дата дня', String(sheet?.head).includes('августа'), sheet?.head);
+await js(`document.querySelector('.psheet')?.remove()`);
+
+// ── Выгрузка и загрузка ──
+const exportOk = await js(`fetch('/api/v1/export').then(r => r.ok && r.headers.get('content-type').includes('json'))`, true);
+проба('выгрузка отвечает JSON', exportOk === true);
+
+const icsOk = await js(`fetch('/api/v1/export.ics').then(r => r.ok && r.headers.get('content-type').includes('calendar'))`, true);
+проба('календарь отвечает .ics', icsOk === true);
+
+// Своя же выгрузка должна вливаться обратно: если формат разошёлся,
+// человек узнает об этом при восстановлении, когда уже поздно
+const roundtrip = await js(`(async () => {
+  const dump = await (await fetch('/api/v1/export')).json();
+  const r = await fetch('/api/v1/import', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: dump, mode: 'merge' }),
+  });
+  return r.ok;
+})()`, true);
+проба('загрузка своей же выгрузки проходит', roundtrip === true);
+
 console.log('\n── Итог ──');
 const плохо = пробы.filter(([, ok]) => !ok).length;
 console.log(`${пробы.length - плохо} из ${пробы.length}`);

@@ -79,8 +79,16 @@ module.exports = function exportRouter({ db }) {
 
   router.post('/import', wrap((req, res) => {
     const raw = req.body?.data;
-    const data = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    if (!data || typeof data !== 'object') throw badRequest('Не переданы данные для импорта');
+    let data = raw;
+    if (typeof raw === 'string') {
+      // Разбор в try: испорченный файл — обычное дело, и человек должен
+      // прочитать «это не похоже на выгрузку», а не «внутренняя ошибка»
+      try { data = JSON.parse(raw); }
+      catch { throw badRequest('Файл не похож на выгрузку NewDay: это не JSON'); }
+    }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      throw badRequest('Не переданы данные для импорта');
+    }
     if (data.formatVersion !== FORMAT_VERSION) {
       throw badRequest(`Неподдерживаемая версия формата: ${data.formatVersion}`);
     }
@@ -137,9 +145,27 @@ module.exports = function exportRouter({ db }) {
           .run(uid, r.date, r.exercise ?? '', r.sets ?? null, r.reps ?? null, r.weight ?? null, r.done ?? 0, r.sort_order ?? 0);
       }
 
-      // Привычки переносим с новыми id, логи привязываем по карте старый→новый.
+      /*
+       * Привычки переносим с новыми id, логи привязываем по карте
+       * старый→новый.
+       *
+       * В режиме «добавить» привычка с тем же названием считается той же
+       * самой: иначе восстановление собственной выгрузки удваивало каждую
+       * привычку, а её журнал уезжал в копию. Название — это то, чем
+       * человек их и различает.
+       */
+      const byTitle = new Map();
+      if (mode === 'merge') {
+        for (const row of db.prepare('SELECT id, title FROM habits WHERE user_id = ?').all(uid)) {
+          byTitle.set(String(row.title).trim().toLowerCase(), row.id);
+        }
+      }
+
       const habitIdMap = new Map();
       for (const h of data.habits || []) {
+        const same = byTitle.get(String(h.title ?? '').trim().toLowerCase());
+        if (same) { habitIdMap.set(h.id, same); continue; }
+
         const info = db.prepare(`INSERT INTO habits
           (user_id, title, description, emoji, color, type, target_per_day, unit, schedule_mask,
            polarity, mode, challenge_target_days, challenge_start_date, break_policy,
@@ -152,6 +178,7 @@ module.exports = function exportRouter({ db }) {
           h.allowed_skips_per_week ?? 0, h.is_active ?? 1, h.sort_order ?? 0,
           h.archived_at ?? null, h.created_at ?? new Date().toISOString().slice(0, 19).replace('T', ' '));
         habitIdMap.set(h.id, info.lastInsertRowid);
+        byTitle.set(String(h.title ?? '').trim().toLowerCase(), info.lastInsertRowid);
       }
       for (const l of data.habitLogs || []) {
         const newId = habitIdMap.get(l.habit_id);

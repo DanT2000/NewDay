@@ -839,3 +839,74 @@
   margin: auto; padding: 24px; max-width: 32rem; text-align: center;
   color: var(--dim); font: 400 15px/1.5 var(--ui);
 }
+
+/* ── Спорт таблицей ────────────────────────────────────────── */
+
+/*
+ * Колонки, а не строка «4×12, 60 кг»: числа сравниваются глазом только
+ * когда стоят друг под другом. Ширины фиксированные, чтобы столбцы не
+ * плясали от количества знаков.
+ */
+.wsport { border-radius: 16px; background: var(--surface); padding: 6px 4px; }
+.wsport-head, .wsport-row {
+  display: grid; grid-template-columns: 22px minmax(0, 1fr) 46px 46px 52px;
+  align-items: center; gap: 12px; padding: 8px 12px;
+}
+.wsport-head {
+  padding-bottom: 4px;
+  font: 500 10px/1 var(--ui); letter-spacing: .1em;
+  text-transform: uppercase; color: var(--faint);
+}
+.wsport-head span:nth-child(n+3) { text-align: right; }
+.wsport-row {
+  border: 0; background: transparent; color: inherit;
+  text-align: left; cursor: pointer; border-radius: 10px; width: 100%;
+}
+.wsport-row:hover { background: var(--raise); }
+.wsport-num { font: 500 13px/1 var(--mono); color: var(--dim); text-align: right; }
+.wsport-row .wstrike { font: 400 15px/1.3 var(--ui); }
+
+/* ── Лист на печать ────────────────────────────────────────── */
+
+/*
+ * На экране листа нет вовсе, на бумаге нет всего остального. Собирается
+ * он отдельной разметкой: отменять десяток экранных правил дольше, чем
+ * написать нужные.
+ */
+.psheet { display: none; }
+
+@media print {
+  .wroot { display: none !important; }
+  .psheet {
+    display: block; padding: 0; margin: 0;
+    color: #000; background: #fff;
+    font: 400 12pt/1.45 var(--ui, sans-serif);
+  }
+  .phead { margin-bottom: 14pt; border-bottom: 1pt solid #000; padding-bottom: 6pt; }
+  .phead h1 { margin: 0; font: 600 18pt/1.2 var(--ui, sans-serif); }
+  .phead span { font-size: 10pt; color: #444; }
+
+  .pbox { margin-bottom: 12pt; break-inside: avoid; }
+  .pbox h2 {
+    margin: 0 0 5pt; font: 600 9pt/1 var(--ui, sans-serif);
+    letter-spacing: .1em; text-transform: uppercase; color: #444;
+  }
+
+  .prow {
+    display: flex; align-items: baseline; gap: 8pt;
+    padding: 3pt 0; border-bottom: .5pt dotted #bbb;
+  }
+  /* Квадрат под галочку: лист печатают, чтобы отмечать ручкой */
+  .psq {
+    width: 10pt; height: 10pt; flex: none;
+    border: 1pt solid #000; border-radius: 2pt; align-self: center;
+  }
+  .ptime { width: 62pt; flex: none; font-variant-numeric: tabular-nums; color: #333; }
+  .ptext { flex: 1; }
+  .pmeta { color: #555; font-size: 10pt; white-space: nowrap; }
+
+  .pnote { margin: 0; white-space: pre-wrap; }
+  .pline { height: 16pt; border-bottom: .5pt solid #bbb; }
+
+  @page { margin: 14mm; }
+}

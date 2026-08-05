@@ -108,6 +108,27 @@ function mealMeta(m) {
 const SLOT_LABEL = { breakfast: 'завтрак', lunch: 'обед', dinner: 'ужин', snack: 'перекус' };
 
 /**
+ * Спорт. Показывается таблицей: подходы, повторы и вес — числа, и в
+ * колонках они сравниваются глазом, а в строке «4×12, 60 кг» нет.
+ */
+export const sport = day => (day?.sport ?? []).map(x => ({
+  id: x.id,
+  title: x.exercise || 'Без названия',
+  sets: x.sets ?? null,
+  reps: x.reps ?? null,
+  weight: x.weight ?? null,
+  done: x.done === 1,
+  raw: x,
+}));
+
+export const sportToServer = ({ title, sets, reps, weight }) => ({
+  exercise: String(title ?? '').trim(),
+  sets: Number.isFinite(sets) ? sets : null,
+  reps: Number.isFinite(reps) ? reps : null,
+  weight: Number.isFinite(weight) ? weight : null,
+});
+
+/**
  * Привычки. Неделя приходит списком дней со статусом — переводим в те же
  * четыре состояния, которыми рисуются полоски: сделано, пропущено,
  * отложено, выходной.
