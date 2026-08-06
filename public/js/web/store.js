@@ -46,6 +46,7 @@ export const store = {
   habits: [],
   notes: [],
   devices: [],
+  tokens: [],         // токены интеграций: список без секретов
   template: null,     // именованное правило-шаблон, применяется вручную
   series: [],         // правила повторов без имени: ими живут повторяющиеся напоминания
   ai: { ready: false, voice: false },
@@ -96,6 +97,19 @@ export async function loadAccount() {
   store.devices = await api.devices.list().catch(() => []);
   return store.devices;
 }
+
+/**
+ * Токены для интеграций. Список приходит без секретов — только имя, префикс и
+ * когда им пользовались в последний раз. Сам секрет сервер хранит хешем и
+ * показывает единственный раз, в ответе на выпуск.
+ */
+export async function loadTokens() {
+  store.tokens = await api.tokens.list().catch(() => []);
+  return store.tokens;
+}
+
+export const createToken = (name = 'Интеграция') => api.tokens.create(name, 'write');
+export const revokeToken = id => api.tokens.revoke(id);
 
 export async function loadNotes() {
   const rows = await api.GET('/notes');

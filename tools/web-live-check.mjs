@@ -1124,6 +1124,64 @@ await wait(1200);
 await js(`fetch('/api/v1/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ displayName: '' }) })`, true);
 
+/*
+ * Токен для интеграций живёт в той же шторке, внизу. Секрет показывается один
+ * раз: сервер хранит только хеш, и «показать ещё раз» невозможно даже ему.
+ */
+await js(`(async () => { const list = await (await fetch('/api/v1/tokens')).json();
+  for (const t of list) await fetch('/api/v1/tokens/' + t.id, { method: 'DELETE' }); })()`, true);
+await js(`document.querySelector('.wmodal-x')?.click()`);
+await waitFor('!document.querySelector(".wveil")');
+await js(`[...document.querySelectorAll('.wrow-link')][0].click()`);
+await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Аккаунт'`);
+await wait(900);
+
+проба('без токена шторка предлагает его выпустить',
+  await js(`[...document.querySelectorAll('.wmodal .wtoken button')].some(b => b.textContent.includes('Выпустить'))`),
+  await js(`[...document.querySelectorAll('.wmodal .wtoken button')].map(b => b.textContent).join(' | ') || 'блока нет'`));
+
+await js(`[...document.querySelectorAll('.wmodal .wtoken button')].find(b => b.textContent.includes('Выпустить')).click()`);
+await waitFor(`Boolean(document.querySelector('.wmodal [name=tokenValue]'))`, 40);
+const секрет = await js(`document.querySelector('.wmodal [name=tokenValue]')?.value ?? ''`);
+проба('секрет показан целиком и один раз', /^nd_[a-z0-9]+_.+/.test(секрет),
+  секрет ? `${секрет.slice(0, 12)}…` : 'пусто');
+проба('рядом сказано, что второй раз он не покажется',
+  await js(`Boolean(document.querySelector('.wmodal .wtoken-warn'))`));
+проба('токен появился в списке аккаунта',
+  (await js(`fetch('/api/v1/tokens').then(r=>r.json()).then(l => l.length)`, true)) === 1);
+
+/*
+ * Токен должен работать как ключ: тем же запросом, но без cookie. Проверяем
+ * из отдельного контекста, чтобы браузерная сессия не подменяла собой доступ.
+ */
+const поТокену = await js(`fetch('/api/v1/days/${DAY}/full', {
+  headers: { Authorization: 'Bearer ${секрет}' }, credentials: 'omit',
+}).then(r => r.status)`, true);
+проба('по токену день читается', поТокену === 200, `ответ ${поТокену}`);
+
+// Перевыпуск: старый перестаёт действовать, новый приходит другим
+await js(`[...document.querySelectorAll('.wmodal .wtoken button')].find(b => b.textContent.includes('Перевыпустить')).click()`);
+await wait(1600);
+const второй = await js(`document.querySelector('.wmodal [name=tokenValue]')?.value ?? ''`);
+проба('перевыпуск даёт другой токен', второй && второй !== секрет, `${второй.slice(0, 12)}…`);
+проба('токен остаётся один', (await js(`fetch('/api/v1/tokens').then(r=>r.json()).then(l => l.length)`, true)) === 1);
+const старый = await js(`fetch('/api/v1/days/${DAY}/full', {
+  headers: { Authorization: 'Bearer ${секрет}' }, credentials: 'omit',
+}).then(r => r.status)`, true);
+проба('старый токен больше не действует', старый === 401, `ответ ${старый}`);
+
+await js(`[...document.querySelectorAll('.wmodal .wtoken button')].find(b => b.textContent === 'Удалить').click()`);
+await wait(1400);
+проба('удаление убирает токен', (await js(`fetch('/api/v1/tokens').then(r=>r.json()).then(l => l.length)`, true)) === 0);
+
+/* Машинное описание API отдаётся и покрывает все настоящие пути. */
+const спека = await js(`fetch('/api/v1/openapi.json').then(r=>r.json())`, true);
+проба('openapi.json отдаётся и назван', спека?.info?.title === 'NewDay API');
+проба('в описании есть путь токенов и путь привязки к повтору',
+  Boolean(спека?.paths?.['/tokens']) && Boolean(спека?.paths?.['/days/{date}/schedule/{id}/series']));
+проба('в описании больше шестидесяти путей',
+  Object.keys(спека?.paths ?? {}).length >= 60, `${Object.keys(спека?.paths ?? {}).length}`);
+
 console.log('\n── Итог ──');
 const плохо = пробы.filter(([, ok]) => !ok).length;
 console.log(`${пробы.length - плохо} из ${пробы.length}`);

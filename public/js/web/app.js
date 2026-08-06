@@ -62,6 +62,8 @@ const state = {
   printScope: 0, printOff: {},
   statsDays: 30,
   accName: '', passOld: '', passNew: '', passNew2: '',
+  // секрет токена живёт только пока открыта шторка: сервер его не помнит
+  tokenShown: null,
   pairCode: null,
   tokenName: '', tokenScope: 'read', tokenSecret: null,
   aiDraft: null,
@@ -1683,7 +1685,64 @@ function openAccount() {
     modal: 'account', notice: null,
     accName: store.settings?.displayName ?? '',
     passOld: '', passNew: '', passNew2: '',
+    // сам секрет показывается один раз, сразу после выпуска
+    tokenShown: null,
   });
+  data.loadTokens().then(() => setIn({})).catch(fail);
+}
+
+/**
+ * Токен для интеграций.
+ *
+ * Секрет виден один раз — в ответе на выпуск. Сервер хранит только хеш, и
+ * «показать ещё раз» невозможно даже ему: если человек не сохранил, остаётся
+ * перевыпустить. Поэтому свежий токен держим в состоянии шторки, а не в
+ * общем хранилище: перерисовка экрана его не потеряет, а закрытие — потеряет,
+ * и это правильно.
+ */
+function issueToken() {
+  /*
+   * `act`, а не `busy`: `busy` закрывает шторку, а закрыть её сразу после
+   * выпуска — значит унести секрет вместе с ней. Скопировать его человек
+   * должен успеть.
+   */
+  act(data.createToken('Интеграция').then(t => {
+    state.tokenShown = t.token;
+    return data.loadTokens();
+  }), 'Токен выпущен — скопируйте его сейчас');
+}
+
+/** Перевыпуск — это отзыв старого и выпуск нового: сам секрет не восстановить. */
+function reissueToken(id) {
+  act((async () => {
+    await data.revokeToken(id);
+    const t = await data.createToken('Интеграция');
+    state.tokenShown = t.token;
+    await data.loadTokens();
+  })(), 'Токен перевыпущен — старый больше не действует');
+}
+
+function revokeToken(id) {
+  act(data.revokeToken(id).then(() => {
+    state.tokenShown = null;
+    return data.loadTokens();
+  }), 'Токен удалён');
+}
+
+/**
+ * Копирование в буфер. `navigator.clipboard` работает только на https и на
+ * localhost, поэтому запас — выделить текст и дать скопировать руками; молча
+ * ничего не делать нельзя.
+ */
+async function copyText(text, okText = 'Скопировано') {
+  try {
+    await navigator.clipboard.writeText(text);
+    note(okText);
+  } catch {
+    const field = document.querySelector('.wmodal [name="tokenValue"]');
+    if (field) { field.focus(); field.select(); }
+    note('Скопируйте вручную: Ctrl+C');
+  }
 }
 
 function saveName() {
@@ -3174,6 +3233,77 @@ const BODIES = {
 
   // ── Аккаунт ──
   account() {
+    /*
+     * Токен для интеграций живёт здесь же, внизу шторки аккаунта: это про
+     * доступ к своим данным, и искать его в другом месте незачем.
+     *
+     * Токен один. Их может быть сколько угодно, но человеку нужен «ключ от
+     * своего NewDay», а не список ключей: список — это уже задача, которую он
+     * не просил решать. Есть — показываем, нет — предлагаем выпустить.
+     */
+    const tokenBlock = () => {
+      const list = store.tokens ?? [];
+      const cur = list[0] ?? null;
+      const fresh = state.tokenShown;
+
+      const head = h('div.wclock-cap', { text: 'токен для интеграций', style: { marginTop: '4px' } });
+
+      if (!cur) {
+        return h('div.wtoken',
+          head,
+          h('div.wtoken-hint', {
+            text: 'Ключ, которым сторонняя программа читает и пишет ваш день по API. '
+              + 'Вставляется в неё как «Authorization: Bearer nd_…».',
+          }),
+          h('button.wbtn-wide', {
+            type: 'button', text: state.busy ? 'Выпускаю…' : 'Выпустить токен',
+            disabled: state.busy, onclick: issueToken,
+          }));
+      }
+
+      /*
+       * Секрет показывается один раз — сервер хранит только хеш. Пока он на
+       * экране, поле с ним и кнопка «Скопировать»; потом остаётся строка с
+       * префиксом, по которой видно, что токен есть, и когда им пользовались.
+       */
+      const shown = fresh
+        ? h('div',
+          h('div.wtoken-warn', { text: 'Скопируйте сейчас — второй раз он не покажется.' }),
+          h('div.wrow',
+            h('input.winput.wtoken-value', {
+              name: 'tokenValue', value: fresh, readOnly: true,
+              onclick: e => e.target.select(),
+            }),
+            h('button.wbtn-line', {
+              type: 'button', text: 'Скопировать',
+              onclick: () => copyText(fresh, 'Токен скопирован'),
+            })))
+        : h('div.wtoken-row',
+          ico('key', '17px'),
+          h('div.wtoken-body',
+            h('div.wtoken-name', { text: `${cur.prefix}…` }),
+            h('div.wtoken-meta', {
+              text: cur.last_used_at
+                ? `последний раз использован ${String(cur.last_used_at).slice(0, 16).replace('T', ' ')}`
+                : 'ещё не использовался',
+            })));
+
+      return h('div.wtoken',
+        head, shown,
+        h('div.wrow-end', { style: { marginTop: '10px' } },
+          h('button.wbtn-quiet', {
+            type: 'button', text: 'Удалить', disabled: state.busy,
+            onclick: () => revokeToken(cur.id),
+          }),
+          h('button.wbtn-line', {
+            type: 'button', text: state.busy ? 'Работаю…' : 'Перевыпустить',
+            disabled: state.busy, onclick: () => reissueToken(cur.id),
+          })),
+        h('div.wtoken-hint', {
+          text: 'Что можно делать этим токеном — в описании API: ',
+        }, h('a', { href: '/api/v1/openapi.json', target: '_blank', text: 'openapi.json' })));
+    };
+
     const field = (label, key, type = 'text') => h('label',
       h('span.wfield-label', { text: label }),
       h('input.winput', {
@@ -3207,7 +3337,8 @@ const BODIES = {
         h('button.wbtn-wide', {
           type: 'button', text: state.busy ? 'Меняю…' : 'Сменить пароль',
           disabled: state.busy, onclick: savePassword,
-        })));
+        })),
+      tokenBlock());
   },
 
   // ── Звук ──
