@@ -119,6 +119,20 @@ function needField(name, text) {
   field.focus();
 }
 
+/**
+ * Перерисовать один блок на месте.
+ *
+ * Фильтр меняет только свой список, а `set` перестраивает весь экран: боковое
+ * меню, шапку, сетку дня. На глаз это выглядит как перезагрузка — экран
+ * моргает, прокрутка прыгает наверх. Здесь заменяется ровно то поддерево,
+ * которое изменилось.
+ */
+function repaint(selector, build) {
+  const el = document.querySelector(selector);
+  if (!el) { render(); return; }
+  el.replaceWith(build());
+}
+
 const setIn = patch => {
   Object.assign(state, typeof patch === 'function' ? patch(state) : patch);
   const body = $('.wmodal-body');
@@ -648,7 +662,10 @@ function tasksBlock() {
 
   const chips = h('div.wwrap.wchips', { style: { paddingBottom: '10px' } });
   add(chips, ...[{ k: 'all', label: 'Все' }, ...CATS].map(c =>
-    chip(c.label, state.catFilter === c.k, () => set({ catFilter: c.k }))));
+    chip(c.label, state.catFilter === c.k, () => {
+      state.catFilter = c.k;
+      repaint('.wtasks', tasksBlock);
+    })));
 
   const list = h('div.wlist');
   add(list, ...filtered.map(t => {
@@ -672,7 +689,7 @@ function tasksBlock() {
   add(addBtn, ico('plus', '15px'), h('span', { text: 'Добавить задачу' }));
   add(list, addBtn);
 
-  return h('div',
+  return h('div.wtasks',
     sectHd('задачи', h('span.wcount', { text: `${TASKS.filter(isDone).length}/${TASKS.length}` }), shades[0]),
     chips, list);
 }
@@ -1218,6 +1235,33 @@ function planColumn(index, dateKey) {
     add(col, block);
   }
 
+  /*
+   * Моменты — напоминания и строки без конца — стоят в сетке на своей минуте.
+   *
+   * Раньше их тут не было вовсе: дорожки считаются по отрезкам, а у момента
+   * конца нет, и он молча выпадал. Но напоминание на 12:00 — это часть
+   * расписания: человек смотрит на день и должен видеть, что в полдень что-то
+   * есть. Рисуем не блоком, а меткой на времени — оно ничего не занимает.
+   */
+  for (const r of rowsForDate(dateKey)) {
+    if (r.end !== null || r.start < FROM_MIN || r.start > FROM_MIN + HOURS * 60) continue;
+    const mark = h('button.wmoment', {
+      type: 'button',
+      title: `${hhmm(r.start)} · ${r.title}${r.note ? `\n${r.note}` : ''}`,
+      style: {
+        top: `${(r.start - FROM_MIN) * PX_PER_MIN}px`,
+        ...(r.color ? { '--pin': PALETTE[r.color][dark() ? 'dark' : 'light'] } : {}),
+      },
+      onclick: e => { e.stopPropagation(); openRow(r, dateKey); },
+      onmousedown: e => e.stopPropagation(),
+    });
+    add(mark,
+      h('i.wmoment-dot'),
+      h('span.wmoment-time', { text: hhmm(r.start) }),
+      h('span.wmoment-title', { text: r.title }));
+    add(col, mark);
+  }
+
   if (dateKey === todayKey()) {
     const now = new Date();
     const minutes = now.getHours() * 60 + now.getMinutes();
@@ -1421,7 +1465,10 @@ function notesScreen() {
    */
   const filters = h('div.wwrap', { style: { marginBottom: '14px' } });
   add(filters, ...[['all', 'Все заметки'], ['day', 'На этот день'], ['free', 'Без даты']].map(([k, label]) =>
-    chip(label, state.noteFilter === k, () => set({ noteFilter: k }))));
+    chip(label, state.noteFilter === k, () => {
+      state.noteFilter = k;
+      repaint('.wnotes-box', notesScreen);
+    })));
 
   const shown = NOTES.filter(n => (state.noteFilter === 'all' ? true : state.noteFilter === 'day' ? n.on : !n.on));
   const grid = h('div.wnotes');
@@ -1438,7 +1485,7 @@ function notesScreen() {
     return card;
   }));
 
-  return h('div',
+  return h('div.wnotes-box',
     h('div.whead',
       h('div.whead-text',
         h('div.whead-title', { text: 'Заметки' }),
@@ -2513,7 +2560,7 @@ const BODIES = {
         const on = !state.aiOff[i];
         const row = h('button.wplan-item', {
           type: 'button', class: on ? '' : 'off',
-          onclick: () => set(x => ({ aiOff: { ...x.aiOff, [i]: on } })),
+          onclick: () => setIn(x => ({ aiOff: { ...x.aiOff, [i]: on } })),
         });
         add(row, box(on),
           h('div.wplan-item-body',
@@ -2529,7 +2576,7 @@ const BODIES = {
           h('div.wbubble-text', { text: 'Вот что добавлю. Снимите галочку, если что-то лишнее.' })),
         grid,
         h('div.wrow-end',
-          h('button.wbtn-quiet', { type: 'button', text: 'Исправить', onclick: () => set({ aiStep: 'input' }) }),
+          h('button.wbtn-quiet', { type: 'button', text: 'Исправить', onclick: () => setIn({ aiStep: 'input' }) }),
           h('button.wbtn-wide', {
             type: 'button', text: state.busy ? 'Добавляю…' : `Добавить ${chosen.length}`,
             disabled: state.busy || !chosen.length,
@@ -2549,7 +2596,7 @@ const BODIES = {
           placeholder: 'или свой ответ',
           onkeydown: e => { if (e.key === 'Enter' && e.target.value.trim()) aiSend(e.target.value.trim()); },
         }),
-        h('button.wbtn-quiet', { type: 'button', text: 'Назад к тексту', onclick: () => set({ aiStep: 'input' }) }));
+        h('button.wbtn-quiet', { type: 'button', text: 'Назад к тексту', onclick: () => setIn({ aiStep: 'input' }) }));
     }
 
     const listening = state.aiStep === 'listening';
@@ -2904,6 +2951,25 @@ const BODIES = {
      * кнопками, иначе «Удалить» тихо решает за человека: то ли один день, то
      * ли весь повтор — а вернуть уже нечем.
      */
+    const remAt = parseHhmm(state.remTime) ?? 600;
+    const remDay = fromRuDate(state.remDate) ?? state.date;
+    const [ry, rm, rd] = remDay.split('-').map(Number);
+
+    const remTiles = h('div.wgrid2');
+    add(remTiles,
+      (() => {
+        const tile = h('div.wtile', { onclick: () => openCalendar('reminder') });
+        add(tile, h('span.wtile-cap', { text: 'когда' }),
+          h('input', { value: `${rd} ${MONTHS[rm - 1]} ${ry}`, readOnly: true, tabIndex: -1 }));
+        return tile;
+      })(),
+      (() => {
+        const tile = h('div.wtile', { class: 'on' });
+        add(tile, h('span.wtile-cap', { text: 'во сколько' }),
+          h('input', { value: hhmm(remAt), readOnly: true, tabIndex: -1 }));
+        return tile;
+      })());
+
     const repeating = Boolean(state.remSeriesId);
     const removes = h('div.wstack-tight',
       h('button.wbtn-quiet', {
@@ -2925,20 +2991,17 @@ const BODIES = {
           name: 'remTitle', value: state.remTitle, placeholder: 'Например, забрать документы',
           oninput: e => { state.remTitle = e.target.value; },
         })),
-      h('div.wrow',
-        h('input.wtime', {
-          name: 'remDate', value: state.remDate, 'aria-label': 'Дата',
-          oninput: e => { state.remDate = e.target.value; },
-        }),
-        h('input.wtime', {
-          name: 'remTime', value: state.remTime, 'aria-label': 'Время',
-          oninput: e => { state.remTime = e.target.value; },
-        }),
-        (() => {
-          const b = h('button.wbtn-ghost', { type: 'button', onclick: () => openCalendar('reminder') });
-          add(b, ico('calendar-blank', '15px'), h('span', { text: 'Выбрать' }));
-          return b;
-        })()),
+      /*
+       * Дата и время — теми же плитками, что у строки расписания, и с той же
+       * сеткой часов. Раньше здесь было голое поле: время в нём приходилось
+       * набирать вслепую, и оно не читалось как то, что вообще можно менять.
+       */
+      remTiles,
+      h('div.wclock',
+        h('div.wclock-cap', { text: 'выберите час' }),
+        clockGrid(24, 1, remAt, hv => setIn({ remTime: hhmm(hv * 60 + (remAt % 60)) })),
+        h('div.wclock-cap', { text: 'минуты', style: { margin: '12px 0 9px' } }),
+        clockGrid(12, 5, remAt, mv => setIn({ remTime: hhmm(Math.floor(remAt / 60) * 60 + mv) }))),
       h('div', h('div.wfield-label', { text: 'повтор' }), repeats,
         state.remRepeat === 'Еженедельно'
           ? h('div', { style: { marginTop: '10px' } }, days,
@@ -3044,7 +3107,7 @@ const BODIES = {
     add(scopes, ...(imp
       ? [['merge', 'Добавить к текущим'], ['replace', 'Заменить всё']]
       : [['day', 'Этот день'], ['month', 'Этот месяц'], ['all', 'Все данные']]
-    ).map(([k, label]) => sheetChip(label, scope === k, () => set({ fileScope: k }))));
+    ).map(([k, label]) => sheetChip(label, scope === k, () => setIn({ fileScope: k }))));
 
     const picker = h('input', {
       type: 'file', accept: 'application/json,.json',
@@ -3203,14 +3266,14 @@ const BODIES = {
     const SCOPES = ['day', 'week', 'month'];
     const scopes = h('div.wwrap');
     add(scopes, ...['Этот день', 'Неделя', 'Месяц'].map((label, i) =>
-      sheetChip(label, state.printScope === i, () => set({ printScope: i }))));
+      sheetChip(label, state.printScope === i, () => setIn({ printScope: i }))));
 
     const parts = h('div.wgrid2');
     add(parts, ...PRINT_PARTS.map(name => {
       const on = !state.printOff[name];
       const row = h('button.wplan-item', {
         type: 'button',
-        onclick: () => set(x => ({ printOff: { ...x.printOff, [name]: on } })),
+        onclick: () => setIn(x => ({ printOff: { ...x.printOff, [name]: on } })),
       });
       add(row, box(on), h('span', { text: name, style: { flex: '1', font: '400 14px/1.3 var(--ui)' } }));
       return row;

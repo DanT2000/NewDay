@@ -131,6 +131,31 @@ await wait(900);
 const after = await doneCount();
 проба('галочка задачи сохранилась на сервере', Math.abs(after - before) === 1, `было ${before}, стало ${after}`);
 
+/*
+ * Фильтр категорий меняет только свой список.
+ *
+ * Раньше он шёл через полную перерисовку: экран моргал, прокрутка прыгала
+ * наверх — на глаз это выглядело как перезагрузка страницы. Проверяем по
+ * живучести соседнего узла: если экран перестроили целиком, прежний узел
+ * выбрасывается из документа.
+ */
+await js(`window.__side = document.querySelector('.wside');
+  window.__tasks = document.querySelector('.wtasks');
+  document.querySelector('.wbody').scrollTop = 120;`);
+await js(`[...document.querySelectorAll('.wchips .wchip')].find(c => c.textContent === 'Дом').click()`);
+await wait(500);
+проба('фильтр не перерисовывает весь экран',
+  await js(`document.body.contains(window.__side) && !document.body.contains(window.__tasks)`),
+  await js(`'меню живо: ' + document.body.contains(window.__side)
+    + ', задачи заменены: ' + !document.body.contains(window.__tasks)`));
+проба('прокрутка на месте после фильтра',
+  (await js(`document.querySelector('.wbody').scrollTop`)) === 120,
+  `${await js(`document.querySelector('.wbody').scrollTop`)}`);
+проба('фильтр действительно отфильтровал',
+  await js(`[...document.querySelectorAll('.wtasks .wtag')].every(t => t.textContent === 'Дом')`));
+await js(`[...document.querySelectorAll('.wchips .wchip')].find(c => c.textContent === 'Все').click()`);
+await wait(300);
+
 // ── Создание блока протягиванием ──
 await nav("Расписание");
 await wait(500);
