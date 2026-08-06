@@ -20,6 +20,8 @@ const arg = (name, def) => {
 };
 const BASE = arg('base', 'http://127.0.0.1:4010');
 const SCALES = arg('scale', '1,1.25').split(',').map(Number);
+const MAIL = arg('mail', 'demo@newday.local');
+const PASS = arg('pass', 'demo1234');
 const PORT = 9401;
 const OUT = 'd:/Project/NewDay/tools/.shots';
 const BROWSERS = [
@@ -148,6 +150,19 @@ let всего = 0;
 const найдено = [];
 
 const обход = async (подпись, шаги) => {
+  /*
+   * Сначала убеждаемся, что перед нами приложение, а не пустая страница.
+   *
+   * Без этой проверки прогон по чужому стенду, где нет тестового аккаунта,
+   * честно сообщал «переполнений не нашлось» — потому что искать было негде.
+   * Проверка, которая проходит на пустоте, хуже отсутствующей.
+   */
+  const узлов = await js(`document.querySelectorAll('.wroot *').length`);
+  if (!узлов || узлов < 20) {
+    console.error(`  ✖ ${подпись}: интерфейс не собрался (узлов ${узлов}) — проверять нечего`);
+    process.exitCode = 2;
+    return;
+  }
   for (const [имя, действие] of шаги) {
     if (действие) { await js(действие); await wait(900); }
     const bad = await js(FINDER);
@@ -169,7 +184,15 @@ await rpc('Page.enable'); await rpc('Runtime.enable');
 await size(1440, 900, false);
 await rpc('Page.navigate', { url: `${BASE}/login.html` });
 await wait(1500);
-await js(`fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({emailOrUsername:'demo@newday.local',password:'demo1234'})}).then(r=>r.status)`, true);
+const вошли = await js(`fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({emailOrUsername:${JSON.stringify(MAIL)},password:${JSON.stringify(PASS)}})}).then(r=>r.status)`, true);
+if (вошли !== 200) {
+  console.error(`Не удалось войти как ${MAIL}: ответ ${вошли}`);
+  console.error('Проверка без входа прошла бы по пустой странице и соврала бы «переполнений нет».');
+  console.error('Задайте --mail и --pass для этого стенда.');
+  proc.kill();
+  process.exit(2);
+}
 
 const nav = name => `[...document.querySelectorAll('.wnav-item, .wpnav-item')].find(b => b.textContent.includes(${JSON.stringify(name)}))?.click()`;
 const closeSheet = `document.querySelector('.wmodal-x')?.click()`;

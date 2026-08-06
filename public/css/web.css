@@ -696,8 +696,15 @@ select.winput { appearance: auto; cursor: pointer; }
 }
 
 /* Колонка дня: часовая сетка нарисована фоном, блоки лежат поверх */
+/*
+ * Колонка обрезает, а не растягивается.
+ *
+ * В день с пятью вложенными делами дорожка становится уже одной буквы, буква
+ * шире дорожки — и колонка раздвигала всю сетку, ломая раскладку недели.
+ * Обрезать по краю правильнее: место в колонке задаёт время, а не текст.
+ */
 .wplan-col {
-  position: relative; height: 798px; margin-top: 6px;
+  position: relative; height: 798px; margin-top: 6px; overflow: hidden;
   background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 44px);
   box-shadow: inset 1px 0 0 var(--line);
   cursor: crosshair;
@@ -780,8 +787,9 @@ select.winput { appearance: auto; cursor: pointer; }
 }
 
 .wnowline { position: absolute; left: 0; right: 0; height: 2px; background: var(--accent); z-index: 3; }
+/* Точка сидит на самом краю, а не за ним: колонка теперь обрезает по краю */
 .wnowline i {
-  position: absolute; left: -4px; top: -3px; width: 8px; height: 8px;
+  position: absolute; left: 0; top: -3px; width: 8px; height: 8px;
   border-radius: 50%; background: var(--accent); display: block;
 }
 
