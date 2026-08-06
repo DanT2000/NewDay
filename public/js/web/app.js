@@ -1323,7 +1323,8 @@ function planScreen() {
 
     const dayBtn = h('button.wplan-day', {
       type: 'button', class: key === state.date ? 'on' : '',
-      onclick: () => set({ date: key }),
+      // через go: иначе открытый день менялся, а содержимое оставалось от прежнего
+      onclick: () => go(key),
     });
     add(dayBtn,
       h('span.wplan-day-dow', { text: DOW_SHORT[i] }),
@@ -2607,11 +2608,24 @@ const BODIES = {
     });
     const mic = h('button.wmic', {
       type: 'button', class: listening ? 'listening' : '',
-      title: 'Продиктовать', 'aria-label': 'Продиктовать',
-      disabled: !store.ai.voice,
+      title: listening ? 'Остановить запись' : 'Продиктовать',
+      'aria-label': listening ? 'Остановить запись' : 'Продиктовать',
+      // запись всегда можно остановить: запертая кнопка оставила бы микрофон включённым
+      disabled: !store.ai.voice && !listening,
       onclick: dictate,
     });
     add(mic, ico(listening ? 'waveform-fill' : 'microphone-fill', '22px'));
+
+    /*
+     * Пока идёт запись — живые полоски по громкости.
+     *
+     * Без них непонятно, слышит ли микрофон вообще: кнопка просто мигала, и
+     * человек мог говорить в выключенный вход, а узнать об этом только по
+     * пустому распознаванию. Полоски двигает настоящий звук; тишина — это
+     * маленькие полоски, а не их отсутствие.
+     */
+    const meter = listening ? h('div.wlevel', { 'aria-hidden': 'true' }) : null;
+    if (meter) add(meter, ...Array.from({ length: 28 }, () => h('i')));
 
     return h('div.wstack',
       h('div.whint', {
@@ -2620,6 +2634,10 @@ const BODIES = {
           : 'Помощник не подключён. Владелец задаёт подключение в настройках.',
       }),
       h('div.wai-row', area, mic),
+      listening
+        ? h('div.wlevel-row', meter,
+          h('span.wlevel-hint', { text: 'слушаю — нажмите микрофон, чтобы закончить' }))
+        : null,
       state.notice ? h('div.whint', { text: state.notice, style: { color: 'var(--accent)' } }) : null,
       h('button.wbtn-wide', {
         type: 'button', text: state.busy ? 'Разбираю…' : 'Разобрать',
@@ -2770,7 +2788,7 @@ const BODIES = {
   task() {
     const cats = h('div.wrow');
     add(cats, ...CATS.map(c =>
-      sheetChip(c.label, state.taskCat === c.k, () => set({ taskCat: c.k }), 'wchip-flex')));
+      sheetChip(c.label, state.taskCat === c.k, () => setIn({ taskCat: c.k }), 'wchip-flex')));
 
     const save = () => {
       const body = adapt.taskToServer({ title: state.taskTitle, cat: state.taskCat });
@@ -3494,6 +3512,66 @@ const toMin = t => {
 };
 
 /** Диктовка: пишем с микрофона и отправляем на распознавание. */
+/**
+ * Живые полоски громкости, пока идёт запись.
+ *
+ * Полоски двигаются от настоящего звука, а не по таймеру: смысл в том, чтобы
+ * человек видел, слышит ли его микрофон. Тишина — это ряд маленьких полосок:
+ * так видно, что запись идёт, но в неё ничего не попадает.
+ *
+ * Рисуем прямо в DOM, минуя перерисовку: шестьдесят кадров в секунду через
+ * состояние экрана — это шестьдесят перестроений разметки в секунду.
+ */
+function levelMeter(stream) {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return () => {};
+
+  const ctx = new Ctx();
+  /*
+   * Разбудить контекст. Браузер создаёт его приостановленным, если не увидел
+   * жеста человека, — а тогда анализатор молчит и полоски стоят на месте,
+   * хотя звук в микрофон идёт. Нажатие на микрофон жестом считается, но
+   * страховка ничего не стоит.
+   */
+  if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+  const source = ctx.createMediaStreamSource(stream);
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 1024;
+  source.connect(analyser);
+
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  const trail = [];
+  let alive = true;
+
+  const tick = () => {
+    if (!alive) return;
+    analyser.getByteTimeDomainData(data);
+    // громкость как среднее отклонение от тишины: пики ловятся, шум не мельтешит
+    let sum = 0;
+    for (const v of data) sum += Math.abs(v - 128);
+    const level = Math.min(1, (sum / data.length) / 40);
+
+    trail.push(level);
+    const bars = document.querySelectorAll('.wlevel > i');
+    if (bars.length) {
+      while (trail.length > bars.length) trail.shift();
+      bars.forEach((bar, i) => {
+        // хвост показывает недавнее прошлое: слева старое, справа только что
+        const v = trail[trail.length - bars.length + i] ?? 0;
+        bar.style.height = `${Math.round(3 + v * 25)}px`;
+        bar.style.opacity = String(0.35 + v * 0.65);
+      });
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+
+  return () => {
+    alive = false;
+    ctx.close().catch(() => {});
+  };
+}
+
 async function dictate() {
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
     state.notice = 'Этот браузер не умеет записывать звук'; render(); return;
@@ -3508,10 +3586,13 @@ async function dictate() {
   const rec = new MediaRecorder(stream);
   state.recorder = rec;
   state.aiStep = 'listening';
+  state.notice = null;
   render();
+  const stopMeter = levelMeter(stream);
 
   rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
   rec.onstop = async () => {
+    stopMeter();
     stream.getTracks().forEach(t => t.stop());
     state.recorder = null;
     state.aiStep = 'input';
