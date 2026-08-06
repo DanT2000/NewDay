@@ -63,6 +63,30 @@
 .wroot button { font-family: inherit; }
 
 /*
+ * Длинное слово переносится, а не выезжает за край.
+ *
+ * Название дела человек пишет сам, и там бывает «Собеседование-переаттестация»
+ * или ссылка в одну строку без пробелов. Такое слово не переносится по общим
+ * правилам и просто вылезало из карточки, ломая раскладку.
+ *
+ * Порядок такой: сперва `hyphens` пробует перенести по правилам языка — с
+ * дефисом, как в книге; если слово не поддаётся (латиница, адрес, набор цифр),
+ * `overflow-wrap: anywhere` рвёт его в любом месте. Рвать сразу нельзя: тогда
+ * обычные русские слова ломались бы посреди слога без дефиса.
+ */
+.wroot { hyphens: auto; overflow-wrap: anywhere; }
+/*
+ * Кроме того, что рвать нельзя по смыслу: время, цифры и моноширинные подписи
+ * должны читаться целиком — «13:30 – 17:00», разорванное после двоеточия,
+ * читается как другое время.
+ */
+.wroot .wsched-time, .wroot .wblock-time, .wroot .wcell-time, .wroot .wtime,
+.wroot .wtile input, .wroot .wstat-val, .wroot .wpday-num, .wroot .wday-num,
+.wroot .wtoken-name, .wroot .wtoken-value, .wroot .wnow-live {
+  hyphens: manual; overflow-wrap: normal;
+}
+
+/*
  * Ссылки без подчёркивания и в цвете акцента — как на эталоне. Свой лист
  * ничего не наследует от прежних стилей, поэтому браузерное подчёркивание
  * иначе остаётся и вылезает при наведении.
@@ -188,11 +212,33 @@
 }
 .wsq:hover { color: var(--text); }
 
+/*
+ * Полоска недели показывается, только если ей хватает места целиком.
+ *
+ * Семи дням нужно около 270 пикселей. При увеличении 125 % шапке остаётся
+ * около 170 — и полоска вылезала за край, обрезаясь на середине вторника.
+ * Сжимать дни дальше некуда: «пн» и «03» перестают читаться.
+ *
+ * Поэтому она просто уходит, как уже уходит на узком экране: рядом стрелки и
+ * «Календарь», так что перейти в нужный день по-прежнему есть чем. Условие по
+ * ширине самой шапки, а не экрана: `zoom` для медиазапроса невидим, а вот
+ * места в шапке от него честно становится меньше.
+ */
+.wtop { container-type: inline-size; }
+
 .wdays { flex: 1; min-width: 0; display: flex; gap: 4px; justify-content: center; }
 .wday {
   display: flex; flex-direction: column; align-items: center;
-  width: 48px; padding: 8px 0 7px; border-radius: 11px;
+  flex: 0 0 48px; padding: 8px 0 7px; border-radius: 11px;
   border: 0; cursor: pointer; background: transparent; color: var(--dim);
+}
+
+/*
+ * Условие стоит после самих правил нарочно: `@container` не добавляет
+ * весомости селектору, и запись выше перебивалась бы обычным `.wdays` ниже.
+ */
+@container (max-width: 980px) {
+  .wdays { display: none; }
 }
 .wday.on { background: var(--accent); color: #fff; }
 .wday-dow { font: 400 11px/1 var(--ui); opacity: .8; }
@@ -239,8 +285,16 @@
   box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
+/*
+ * Тихая кнопка сжимается, если пара не влезает.
+ *
+ * `flex: none` держал её во всю длину надписи, и «Выйти из аккаунта» рядом со
+ * «Сменить пароль» на телефоне при увеличении 125 % выпихивали друг друга за
+ * край шторки. Теперь она отдаёт своё место первой — как более второстепенная.
+ */
 .wbtn-quiet {
-  height: 56px; padding: 0 22px; border-radius: 13px; cursor: pointer; flex: none;
+  height: 56px; padding: 0 18px; border-radius: 13px; cursor: pointer;
+  flex: 0 1 auto; min-width: 0;
   border: 1px solid var(--line); background: transparent;
   color: var(--dim); font: 500 16px/1 var(--ui);
 }
@@ -453,8 +507,15 @@ select.winput { appearance: auto; cursor: pointer; }
   background: radial-gradient(120% 90% at 10% 0%, var(--accent-soft), transparent 62%);
 }
 .wnow-in { position: relative; display: flex; align-items: flex-end; gap: 20px; }
+/*
+ * «СЕЙЧАС · 13:30 – 17:00» переносится по разделителю, а не выезжает за край.
+ *
+ * Раньше здесь стоял `nowrap`, и при увеличении 125 % подпись вылезала из
+ * карточки на четыре десятка пикселей. Сам промежуток остаётся целым — он
+ * склеен неразрывными пробелами в `app.js`, — а переносится строка по «·».
+ */
 .wnow-live {
-  display: flex; align-items: center; gap: 7px; white-space: nowrap;
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-width: 0;
   font: 500 11px/1.4 var(--ui); letter-spacing: .12em;
   text-transform: uppercase; color: var(--accent);
 }
@@ -474,9 +535,16 @@ select.winput { appearance: auto; cursor: pointer; }
 
 /* Список расписания на «Сейчас» */
 .wsched { border-radius: 16px; background: var(--surface); padding: 8px 4px; }
+/*
+ * Первая колонка по содержимому, а не в твёрдые 90 пикселей.
+ *
+ * «13:30–17:00» моноширинным при увеличении 125 % в 90 не влезает: колонка
+ * сжимала время, а название рядом вылезало из строки. `auto` даёт времени
+ * ровно столько, сколько ему нужно, при любом масштабе.
+ */
 .wsched-row {
   --pin: var(--accent);
-  display: grid; grid-template-columns: 90px 20px minmax(0, 1fr) auto;
+  display: grid; grid-template-columns: auto 20px minmax(0, 1fr) auto;
   align-items: center; gap: 6px; padding: 2px 12px; cursor: pointer;
   border: 0; background: transparent; color: inherit; width: 100%; text-align: left;
 }
@@ -505,7 +573,12 @@ select.winput { appearance: auto; cursor: pointer; }
   padding: 9px 12px 10px 18px; margin: 0 0 6px;
   box-shadow: inset 12px 0 0 -10px var(--accent);
 }
-.wsched-title { font: 400 15px/1.3 var(--ui); color: var(--text); display: flex; align-items: center; gap: 7px; }
+.wsched-title {
+  font: 400 15px/1.3 var(--ui); color: var(--text);
+  display: flex; align-items: center; gap: 7px; min-width: 0;
+}
+/* название сжимается, колокольчик — нет: он метка, а не текст */
+.wsched-title > span { min-width: 0; }
 /* Колокольчик перед названием: строка та же, а времени она не занимает */
 .wsched-kind { color: var(--warn); flex: none; }
 .wsched-row.moment .wsched-dot { background: transparent; border: 1px solid var(--warn); }
@@ -516,7 +589,15 @@ select.winput { appearance: auto; cursor: pointer; }
 .wbell { font-size: 16px; flex: none; color: var(--accent); }
 
 /* Три плитки прогресса */
-.wstats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+/*
+ * Три плитки, пока они влезают.
+ *
+ * Твёрдые три колонки при увеличении 125 % давали каждой плитке меньше места,
+ * чем нужно числу «55 %» и подписи под ним, и содержимое вылезало за скругление.
+ * `auto-fit` с нижней границей переносит третью плитку на вторую строку — это
+ * читается, а обрезанное число нет.
+ */
+.wstats { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 10px; }
 .wstat {
   border-radius: 14px; background: var(--surface); padding: 14px 12px 13px;
   display: flex; flex-direction: column; min-height: 112px;
@@ -569,9 +650,15 @@ select.winput { appearance: auto; cursor: pointer; }
 .wcard { border-radius: 14px; padding: 14px; background: var(--surface); }
 .wcard.dim { opacity: .6; }
 .whabit-in { display: flex; align-items: flex-start; gap: 11px; }
-.whabit-name { display: flex; align-items: center; gap: 7px; }
-.whabit-name span:first-child { font-size: 15px; }
-.whabit-title { font: 500 15px/1.3 var(--ui); }
+/*
+ * `min-width: 0` обязателен: без него флекс-элемент не даёт себя сжать меньше
+ * содержимого, и длинное название вместе с подписью «подряд 3 дня · лучшая
+ * серия 6» вылезало из карточки, а не переносилось.
+ */
+.whabit-body { flex: 1; min-width: 0; }
+.whabit-name { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.whabit-name span:first-child { font-size: 15px; flex: none; }
+.whabit-title { font: 500 15px/1.3 var(--ui); min-width: 0; }
 .whabit-title.done { color: var(--faint); }
 .whabit-meta { font: 400 12px/1.4 var(--ui); color: var(--faint); margin-top: 6px; }
 .whabit-week { display: flex; gap: 4px; margin-top: 10px; }
@@ -767,11 +854,34 @@ select.winput { appearance: auto; cursor: pointer; }
 
 .wnarrow { max-width: 900px; }
 
-.whabit-wide { display: flex; align-items: center; gap: 14px; }
+/*
+ * Строка привычки. На широком экране всё в одну линию, а когда места мало —
+ * полоска недели уходит под текст, во всю ширину.
+ *
+ * Раньше неделя имела твёрдые 180 пикселей и никогда не сжималась: при
+ * увеличении 125 % «Вода 2 литра · подряд 3 дня · лучшая серия 6» и полоска
+ * вместе занимали шире карточки, и наружу вылезали и полоска, и меню. Теперь
+ * порядок такой: значок и название, под ними подписи, а полоска — последней
+ * строкой, где ей хватает места целиком.
+ */
+.whabit-wide { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; row-gap: 12px; }
 .whabit-wide .whabit-emoji { font-size: 18px; flex: none; }
-.whabit-wide .whabit-body { flex: 1; min-width: 0; }
+.whabit-wide .whabit-body { flex: 1 1 190px; min-width: 0; }
 .whabit-wide .whabit-week { width: 180px; flex: none; margin-top: 0; }
 .whabit-more { color: var(--faint); font-size: 16px; cursor: pointer; flex: none; background: none; border: 0; }
+
+/*
+ * Тесно — неделя во всю ширину под текстом.
+ *
+ * Ширина контейнера, а не экрана: та же строка стоит и в узкой колонке
+ * «Сейчас», и на весь экран в «Привычках», и решать должно место, которое ей
+ * досталось, а не размер телефона.
+ */
+.whabits { container-type: inline-size; }
+@container (max-width: 420px) {
+  .whabit-wide .whabit-week { width: 100%; flex: 1 0 100%; order: 3; }
+  .whabit-wide .whabit-week i { flex: 1; }
+}
 
 .wnotes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .wnote {
@@ -896,7 +1006,9 @@ select.winput { appearance: auto; cursor: pointer; }
 .wstack { display: flex; flex-direction: column; gap: 14px; }
 .wstack-tight { display: flex; flex-direction: column; gap: 8px; }
 .wrow { display: flex; align-items: center; gap: 10px; }
-.wrow-end { display: flex; gap: 10px; margin-top: 2px; }
+/* Пара кнопок внизу шторки: если рядом не влезают, вторая уходит под первую */
+.wrow-end { display: flex; gap: 10px; margin-top: 2px; flex-wrap: wrap; }
+.wrow-end > * { min-width: 0; }
 .wgrid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .wgrid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .wwrap { display: flex; gap: 6px; flex-wrap: wrap; }

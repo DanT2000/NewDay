@@ -13,12 +13,17 @@ sealed interface DismissTask {
     val prompt: String
     fun check(answer: String): Boolean
 
-    /** Арифметика с вариантами ответа. */
+    /**
+     * Арифметика. Ответ вводится, а не выбирается из вариантов.
+     *
+     * Выбор из четырёх чисел просыпаться не заставляет: спросонья попадаешь
+     * пальцем наугад и с четверти попыток угадываешь. Ввод требует посчитать.
+     */
     data class Math(
-        val a: Int, val b: Int, val op: Char, val answer: Int, val options: List<Int>,
+        val a: Int, val b: Int, val op: Char, val answer: Int,
     ) : DismissTask {
-        override val prompt get() = "$a $op $b = ?"
-        override fun check(value: String) = value.toIntOrNull() == answer
+        override val prompt get() = "$a $op $b"
+        override fun check(value: String) = value.trim().toIntOrNull() == answer
     }
 
     /** Ввести показанную последовательность цифр. */
@@ -43,31 +48,33 @@ object TaskFactory {
         else -> math(difficulty, rnd)
     }
 
-    /** Сложность: 1 — двузначные, 2 — с умножением, 3 — трёхзначные и умножение. */
+    /**
+     * Три уровня, и они отличаются тем, сколько на это нужно головы:
+     *
+     *  1 — однозначные на сложение: разлепить глаза и не более;
+     *  2 — двузначные на сложение: уже нужно считать в столбик в голове;
+     *  3 — двузначные со сложением и вычитанием: тут точно не уснёшь.
+     *
+     * Ответ всегда положительный. Отрицательный в полусне — это не «сложнее»,
+     * а «непонятно»: человек вводит 12 вместо −12, задача не принимается, и
+     * будильник выглядит сломанным. Поэтому при вычитании большее число
+     * ставится первым.
+     */
     fun math(difficulty: Int, rnd: Random = Random.Default): DismissTask.Math {
-        val (a, b, op) = when (difficulty.coerceIn(1, 3)) {
-            1 -> Triple(rnd.nextInt(10, 60), rnd.nextInt(10, 40), if (rnd.nextBoolean()) '+' else '−')
-            2 -> if (rnd.nextBoolean()) Triple(rnd.nextInt(3, 13), rnd.nextInt(3, 10), '×')
-                 else Triple(rnd.nextInt(40, 160), rnd.nextInt(10, 60), '+')
-            else -> if (rnd.nextBoolean()) Triple(rnd.nextInt(11, 30), rnd.nextInt(6, 19), '×')
-                    else Triple(rnd.nextInt(200, 900), rnd.nextInt(50, 300), '−')
-        }
-        val answer = when (op) {
-            '+' -> a + b
-            '−' -> a - b
-            else -> a * b
-        }
+        val level = difficulty.coerceIn(1, 3)
+        val minus = level == 3 && rnd.nextBoolean()
+        val range = if (level == 1) 2..9 else 10..99
 
-        // Неправильные варианты держим рядом с ответом: далёкие числа
-        // видно не думая, и задача перестаёт будить.
-        val wrong = LinkedHashSet<Int>()
-        while (wrong.size < 3) {
-            val delta = rnd.nextInt(1, 12) * (if (rnd.nextBoolean()) 1 else -1)
-            val candidate = answer + delta
-            if (candidate != answer) wrong.add(candidate)
+        var a = rnd.nextInt(range.first, range.last + 1)
+        var b = rnd.nextInt(range.first, range.last + 1)
+
+        if (minus) {
+            if (b > a) { val t = a; a = b; b = t }
+            // равные числа дают ноль — ответ, который вводят не считая
+            if (a == b) a = (a + rnd.nextInt(1, 10)).coerceAtMost(99)
+            return DismissTask.Math(a, b, '−', a - b)
         }
-        val options = (wrong + answer).shuffled(rnd)
-        return DismissTask.Math(a, b, op, answer, options)
+        return DismissTask.Math(a, b, '+', a + b)
     }
 
     fun code(difficulty: Int, rnd: Random = Random.Default): DismissTask.Code {

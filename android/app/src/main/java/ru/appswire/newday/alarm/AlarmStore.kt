@@ -16,6 +16,7 @@ object AlarmStore {
     private const val KEY_ALARMS = "alarms"
     private const val KEY_CONFIG = "dismiss_config"
     private const val KEY_ENABLED = "enabled"
+    private const val KEY_ACCENT = "accent"
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -46,6 +47,17 @@ object AlarmStore {
     fun setEnabled(ctx: Context, enabled: Boolean) {
         prefs(ctx).edit().putBoolean(KEY_ENABLED, enabled).apply()
     }
+
+    /**
+     * Цвет оформления. Экран будильника рисуется нативно, до вебвью в шесть
+     * утра дело не доходит, — поэтому выбранный человеком цвет приходится
+     * хранить и здесь, иначе будильник выглядел бы чужим приложением.
+     */
+    fun setAccent(ctx: Context, accent: String) {
+        prefs(ctx).edit().putString(KEY_ACCENT, accent).apply()
+    }
+
+    fun accent(ctx: Context): String = prefs(ctx).getString(KEY_ACCENT, "violet") ?: "violet"
 
     fun isEnabled(ctx: Context) = prefs(ctx).getBoolean(KEY_ENABLED, true)
 

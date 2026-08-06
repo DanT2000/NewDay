@@ -5,20 +5,16 @@ import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
-import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.os.CountDownTimer
-import android.text.InputType
 import android.util.Log
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
-import android.widget.Button
-import android.widget.EditText
 import android.widget.GridLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -31,8 +27,12 @@ import java.util.Locale
  * кнопка «назад» игнорируется, а таймер на задачу заменяет её новой, если
  * человек завис. Смысл именно в этом — выключить не глядя должно быть нельзя.
  *
- * Вёрстка кодом, без XML: экран один, а лишний слой ресурсов только
- * усложнил бы чтение.
+ * Оформление — как в самом NewDay (`Style`), а не системными кнопками на
+ * тёмном фоне: экран будильника — единственное, что человек видит нативным, и
+ * выглядеть чужим приложением ему нельзя.
+ *
+ * Вёрстка кодом, без XML: экран один, а лишний слой ресурсов только усложнил
+ * бы чтение.
  */
 class AlarmActivity : Activity() {
 
@@ -41,18 +41,20 @@ class AlarmActivity : Activity() {
     private var tasks: List<DismissTask> = emptyList()
     private var index = 0
     private var timer: CountDownTimer? = null
+    private var accent = Style.accent("violet")
 
+    private lateinit var ui: Ui
     private lateinit var root: LinearLayout
-    private lateinit var clockView: TextView
-    private lateinit var titleView: TextView
-    private lateinit var progressView: TextView
-    private lateinit var promptView: TextView
-    private lateinit var answerArea: LinearLayout
-    private lateinit var timerView: TextView
+    private lateinit var stage: LinearLayout          // меняющаяся часть: окно или задача
+    private lateinit var capView: TextView
+    private lateinit var footView: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         showOverLockScreen()
+
+        ui = Ui(this)
+        accent = Style.accent(AlarmStore.accent(this))
 
         val id = intent.getLongExtra("alarmId", AlarmService.currentAlarmId)
         alarm = AlarmStore.find(this, id)
@@ -88,80 +90,89 @@ class AlarmActivity : Activity() {
             )
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window.statusBarColor = Style.BG
+        window.navigationBarColor = Style.BG
     }
 
     // ── Разметка ─────────────────────────────────────────────
 
-    private fun dp(v: Int) = TypedValue.applyDimension(
-        TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics,
-    ).toInt()
-
+    /**
+     * Шапка: день недели, время, зачем разбудили.
+     *
+     * Порядок тот же, что на телефонном экране дня: сверху день мелким капсом,
+     * под ним большое число. Так будильник читается как продолжение приложения,
+     * а не как отдельная штука.
+     */
     private fun buildUi() {
-        root = LinearLayout(this).apply {
+        val now = Date()
+        val dow = SimpleDateFormat("EEEE", Locale("ru")).format(now).uppercase()
+
+        val head = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setBackgroundColor(Color.parseColor("#0E1116"))
-            setPadding(dp(24), dp(48), dp(24), dp(32))
         }
+        head.addView(ui.cap(dow))
+        head.addView(ui.spacer(10))
+        head.addView(
+            ui.mono(SimpleDateFormat("HH:mm", Locale.getDefault()).format(now), 64f).apply {
+                letterSpacing = -0.02f
+            },
+        )
+        head.addView(ui.spacer(8))
+        head.addView(
+            ui.title(alarm?.body?.ifBlank { alarm?.title } ?: "Пора вставать", 17f, Style.DIM),
+        )
 
-        clockView = TextView(this).apply {
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 56f)
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-            text = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-        }
-
-        titleView = TextView(this).apply {
-            setTextColor(Color.parseColor("#AAB3C2"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-            gravity = Gravity.CENTER
-            text = alarm?.body?.ifBlank { alarm?.title } ?: "Пора вставать"
-            setPadding(0, dp(4), 0, dp(28))
-        }
-
-        progressView = TextView(this).apply {
-            setTextColor(Color.parseColor("#5B9DFF"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            letterSpacing = 0.08f
-        }
-
-        promptView = TextView(this).apply {
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f)
-            gravity = Gravity.CENTER
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-            setPadding(0, dp(12), 0, dp(20))
-        }
-
-        answerArea = LinearLayout(this).apply {
+        capView = ui.cap("", accent)
+        stage = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
         }
+        footView = ui.body("", 13f, Style.FAINT)
 
-        timerView = TextView(this).apply {
-            setTextColor(Color.parseColor("#7D8798"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setPadding(0, dp(20), 0, 0)
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(ui.dp(20), ui.dp(44), ui.dp(20), ui.dp(24))
         }
+        column.addView(head)
+        column.addView(ui.spacer(30))
+        column.addView(capView)
+        column.addView(ui.spacer(12))
+        column.addView(stage)
+        column.addView(ui.spacer(16))
+        column.addView(footView)
 
-        root.addView(clockView)
-        root.addView(titleView)
-        root.addView(progressView)
-        root.addView(promptView)
-        root.addView(answerArea)
-        root.addView(timerView)
-
+        /*
+         * «Отложить» — внизу и тихой кнопкой: это не то, к чему надо тянуться в
+         * первую очередь. У подъёма её нет вовсе — иначе будильник, который
+         * можно отложить, не будильник.
+         */
         if (config.snoozeAllowed && alarm?.isWakeup != true) {
-            root.addView(
-                Button(this).apply {
-                    text = "Отложить на " + config.snoozeMinutes + " мин"
-                    setOnClickListener { snooze() }
-                    layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(24) }
+            column.addView(ui.spacer(20))
+            column.addView(
+                ui.quiet("Отложить на " + config.snoozeMinutes + " мин") { snooze() }.apply {
+                    layoutParams = LinearLayout.LayoutParams(MATCH, ui.dp(46))
                 },
             )
         }
 
+        /*
+         * Прокрутка: на маленьком экране с включённым увеличением шрифта
+         * клавиатура вместе с шапкой не влезает, а обрезанная нижняя кнопка —
+         * это будильник, который нельзя выключить.
+         */
+        root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Style.BG)
+        }
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            addView(column)
+            layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
+        }
+        root.addView(scroll)
         setContentView(root)
     }
 
@@ -175,29 +186,31 @@ class AlarmActivity : Activity() {
      * задачи — это ровно тот момент, когда стало ясно, что человек спит.
      */
     private fun showGrace(leftMs: Long) {
-        progressView.text = "МОЖНО ПРОСТО ВЫКЛЮЧИТЬ"
-        promptView.text = ""
-        answerArea.removeAllViews()
-        answerArea.addView(
-            Button(this).apply {
-                text = "Выключить"
-                isAllCaps = false      // «ВЫКЛЮЧИТЬ» капсом читается как крик
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
-                setOnClickListener { dismiss() }
-                layoutParams = LinearLayout.LayoutParams(MATCH, dp(76))
+        capView.text = "МОЖНО ПРОСТО ВЫКЛЮЧИТЬ"
+        stage.removeAllViews()
+
+        val card = ui.card()
+        card.addView(
+            ui.body("Вы уже встали — гасим будильник одним нажатием, без задач.", 14f, Style.DIM),
+        )
+        card.addView(ui.spacer(16))
+        card.addView(
+            ui.primary("Выключить", accent) { dismiss() }.apply {
+                layoutParams = LinearLayout.LayoutParams(MATCH, ui.dp(60))
             },
         )
+        stage.addView(card.apply { layoutParams = LinearLayout.LayoutParams(MATCH, WRAP) })
 
         timer?.cancel()
         timer = object : CountDownTimer(leftMs, 1000) {
             override fun onTick(msLeft: Long) {
                 val s = msLeft / 1000
-                timerView.text = "через " + (s / 60) + ":" + String.format(Locale.US, "%02d", s % 60) +
+                footView.text = "через " + (s / 60) + ":" + String.format(Locale.US, "%02d", s % 60) +
                     " придётся решать задачу"
             }
             override fun onFinish() {
                 Log.i("NewDayAlarm", "GRACE_EXPIRED окно простого выключения истекло")
-                timerView.text = ""
+                footView.text = ""
                 showTask()
             }
         }.start()
@@ -211,9 +224,8 @@ class AlarmActivity : Activity() {
 
         val task = tasks[index]
         Log.i("NewDayAlarm", "TASK_SHOWN задача " + (index + 1) + " из " + tasks.size)
-        progressView.text = "ЗАДАЧА " + (index + 1) + " ИЗ " + tasks.size
-        promptView.text = task.prompt
-        answerArea.removeAllViews()
+        capView.text = if (tasks.size == 1) "ЗАДАЧА" else "ЗАДАЧА " + (index + 1) + " ИЗ " + tasks.size
+        stage.removeAllViews()
 
         when (task) {
             is DismissTask.Math -> buildMath(task)
@@ -223,74 +235,133 @@ class AlarmActivity : Activity() {
         startTimer()
     }
 
+    /**
+     * Пример и своя цифровая клавиатура.
+     *
+     * Системную клавиатуру не зовём нарочно: она поднимается поверх экрана,
+     * закрывает пример, а на локскрине ведёт себя непредсказуемо. Своя — это
+     * двенадцать больших клавиш, которые видно и по которым попадаешь.
+     */
     private fun buildMath(task: DismissTask.Math) {
-        val grid = GridLayout(this).apply {
-            columnCount = 2
+        val entered = StringBuilder()
+        val card = ui.card()
+
+        card.addView(ui.mono(task.prompt + " =", 34f).apply { letterSpacing = 0.04f })
+        card.addView(ui.spacer(14))
+
+        val field = ui.mono("", 40f, accent).apply {
+            background = rounded(Style.RAISE, ui.dp(14))
+            setPadding(ui.dp(12), ui.dp(10), ui.dp(12), ui.dp(10))
+            layoutParams = LinearLayout.LayoutParams(MATCH, ui.dp(72))
+            hint = "?"
+            setHintTextColor(Style.FAINT)
+        }
+        card.addView(field)
+        card.addView(ui.spacer(14))
+
+        val pad = GridLayout(this).apply {
+            columnCount = 3
             layoutParams = LinearLayout.LayoutParams(WRAP, WRAP)
         }
-        task.options.forEach { option ->
-            grid.addView(
-                bigButton(option.toString()) {
-                    if (task.check(option.toString())) next() else wrong()
-                },
-            )
+        val redraw = { field.text = entered.toString() }
+        val press = { digit: String ->
+            if (entered.length < 4) { entered.append(digit); redraw() }
         }
-        answerArea.addView(grid)
+
+        // 1..9, затем «стереть · 0 · Готово» — привычный порядок телефона
+        (1..9).forEach { n -> pad.addView(padKey(n.toString()) { press(n.toString()) }) }
+        pad.addView(padKey("←") { if (entered.isNotEmpty()) { entered.deleteCharAt(entered.length - 1); redraw() } })
+        pad.addView(padKey("0") { press("0") })
+        pad.addView(
+            padKey("OK") {
+                if (entered.isEmpty()) return@padKey
+                if (task.check(entered.toString())) next()
+                else { entered.clear(); redraw(); wrong(field) }
+            }.apply { setBackgroundDrawable(withRipple(rounded(accent, ui.dp(14)), Color.WHITE)) },
+        )
+        card.addView(pad)
+
+        stage.addView(card.apply { layoutParams = LinearLayout.LayoutParams(MATCH, WRAP) })
     }
 
-    private fun buildCode(task: DismissTask.Code) {
-        val input = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_NUMBER
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 28f)
-            gravity = Gravity.CENTER
-            typeface = Typeface.MONOSPACE
-            hint = "код"
-            width = dp(220)
+    /** Клавиша: три в ряд, во всю доступную ширину. */
+    private fun padKey(label: String, onClick: () -> Unit): TextView =
+        ui.key(label, accent, onClick).apply {
+            layoutParams = GridLayout.LayoutParams().apply {
+                width = ui.dp(88)
+                height = ui.dp(62)
+                setMargins(ui.dp(5), ui.dp(5), ui.dp(5), ui.dp(5))
+            }
         }
-        answerArea.addView(input)
-        answerArea.addView(
-            bigButton("Готово") {
-                if (task.check(input.text.toString())) next() else { input.setText(""); wrong() }
-            },
+
+    private fun buildCode(task: DismissTask.Code) {
+        val entered = StringBuilder()
+        val card = ui.card()
+        card.addView(ui.cap("введите код", Style.FAINT))
+        card.addView(ui.spacer(8))
+        card.addView(ui.mono(task.code, 34f).apply { letterSpacing = 0.22f })
+        card.addView(ui.spacer(14))
+
+        val field = ui.mono("", 34f, accent).apply {
+            background = rounded(Style.RAISE, ui.dp(14))
+            setPadding(ui.dp(12), ui.dp(10), ui.dp(12), ui.dp(10))
+            layoutParams = LinearLayout.LayoutParams(MATCH, ui.dp(66))
+            letterSpacing = 0.22f
+        }
+        card.addView(field)
+        card.addView(ui.spacer(14))
+
+        val pad = GridLayout(this).apply { columnCount = 3 }
+        val redraw = { field.text = entered.toString() }
+        (1..9).forEach { n -> pad.addView(padKey(n.toString()) { if (entered.length < 8) { entered.append(n); redraw() } }) }
+        pad.addView(padKey("←") { if (entered.isNotEmpty()) { entered.deleteCharAt(entered.length - 1); redraw() } })
+        pad.addView(padKey("0") { if (entered.length < 8) { entered.append('0'); redraw() } })
+        pad.addView(
+            padKey("OK") {
+                if (task.check(entered.toString())) next()
+                else { entered.clear(); redraw(); wrong(field) }
+            }.apply { setBackgroundDrawable(withRipple(rounded(accent, ui.dp(14)), Color.WHITE)) },
         )
+        card.addView(pad)
+        stage.addView(card.apply { layoutParams = LinearLayout.LayoutParams(MATCH, WRAP) })
     }
 
     private fun buildIcons(task: DismissTask.Icons) {
         val entered = StringBuilder()
-        val echo = TextView(this).apply {
-            setTextColor(Color.parseColor("#5B9DFF"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
-            gravity = Gravity.CENTER
-            height = dp(40)
+        val card = ui.card()
+        card.addView(ui.cap("нажмите по порядку", Style.FAINT))
+        card.addView(ui.spacer(8))
+        card.addView(ui.title(task.sequence.joinToString("   "), 30f))
+        card.addView(ui.spacer(12))
+
+        val echo = ui.title("", 26f, accent).apply {
+            background = rounded(Style.RAISE, ui.dp(14))
+            layoutParams = LinearLayout.LayoutParams(MATCH, ui.dp(56))
         }
-        answerArea.addView(echo)
+        card.addView(echo)
+        card.addView(ui.spacer(14))
 
         val grid = GridLayout(this).apply { columnCount = 4 }
         task.pool.forEach { icon ->
             grid.addView(
-                bigButton(icon) {
+                ui.key(icon, accent) {
                     entered.append(icon)
                     echo.text = entered.toString()
                     val target = task.sequence.joinToString("")
                     if (!target.startsWith(entered.toString())) {
-                        entered.clear(); echo.text = ""; wrong()
+                        entered.clear(); echo.text = ""; wrong(echo)
                     } else if (entered.toString() == target) next()
+                }.apply {
+                    layoutParams = GridLayout.LayoutParams().apply {
+                        width = ui.dp(66)
+                        height = ui.dp(62)
+                        setMargins(ui.dp(5), ui.dp(5), ui.dp(5), ui.dp(5))
+                    }
                 },
             )
         }
-        answerArea.addView(grid)
-    }
-
-    private fun bigButton(label: String, onClick: () -> Unit) = Button(this).apply {
-        text = label
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
-        setOnClickListener { onClick() }
-        layoutParams = GridLayout.LayoutParams().apply {
-            width = dp(120)
-            height = dp(64)
-            setMargins(dp(6), dp(6), dp(6), dp(6))
-        }
+        card.addView(grid)
+        stage.addView(card.apply { layoutParams = LinearLayout.LayoutParams(MATCH, WRAP) })
     }
 
     /**
@@ -300,7 +371,7 @@ class AlarmActivity : Activity() {
     private fun startTimer() {
         timer = object : CountDownTimer(config.timeoutSec * 1000L, 1000) {
             override fun onTick(msLeft: Long) {
-                timerView.text = "осталось " + (msLeft / 1000) + " с"
+                footView.text = "осталось " + (msLeft / 1000) + " с"
             }
             override fun onFinish() {
                 tasks = tasks.toMutableList().also {
@@ -308,15 +379,18 @@ class AlarmActivity : Activity() {
                         config.types.randomOrNull() ?: "math", config.difficulty,
                     )
                 }
-                timerView.text = "время вышло — новая задача"
+                footView.text = "время вышло — новая задача"
                 showTask()
             }
         }.start()
     }
 
-    private fun wrong() {
-        promptView.setTextColor(Color.parseColor("#FF6B6F"))
-        promptView.postDelayed({ promptView.setTextColor(Color.WHITE) }, 400)
+    /** Ошибка видна там, куда человек смотрит, — в поле ответа. */
+    private fun wrong(field: View) {
+        val was = field.background
+        field.background = rounded(Style.mix(Style.WARN, Style.SURFACE, 30), ui.dp(14),
+            ui.dp(1), Style.WARN)
+        field.postDelayed({ field.background = was }, 420)
     }
 
     private fun next() {

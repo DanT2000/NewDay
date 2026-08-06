@@ -57,7 +57,9 @@ const state = {
   habitId: null, habitKind: 'do', habitEmoji: '💧', habitGoal: 30, habitGoalCustom: false,
   habitTitle: '', habitTimes: 5, habitPlan: 'days', habitGoalDays: 730, habitPicker: false,
   habitDays: { 0: true, 1: true, 2: true, 3: true, 4: true, 5: false, 6: false },
-  aiStep: 'input', aiText: '', aiOff: {},
+  aiStep: 'input', aiText: '', aiOff: {}, aiItems: null, aiQuestion: '', aiOptions: [],
+  // запись, поток микрофона и остановка счётчика громкости — их надо отпускать
+  recorder: null, micStream: null, stopMeter: null,
   calY: 0, calM: 0, calFor: 'day', calBack: null,
   printScope: 0, printOff: {},
   statsDays: 30,
@@ -429,7 +431,7 @@ function sideBar() {
   });
   add(themeBtn, ico(dark() ? 'moon' : 'sun', '16px'), h('span', { text: dark() ? 'Тёмная тема' : 'Светлая тема' }));
 
-  const ai = h('button.wbtn-ai', { type: 'button', onclick: () => set({ modal: 'ai', aiStep: 'input' }) });
+  const ai = h('button.wbtn-ai', { type: 'button', onclick: () => openAi() });
   add(ai, ico('sparkle-fill', '17px'), h('span', { text: 'Помощник' }));
 
   return h('aside.wside',
@@ -611,8 +613,13 @@ function nowCard() {
     ? SCHEDULE.find(r => r.start > minutes)
     : SCHEDULE.find(r => !r.past);
 
+  /*
+   * Промежуток склеен неразрывными пробелами нарочно: подпись переносится по
+   * «·», а «13:30 – 17:00» остаётся целым. Разрыв после тире читается как
+   * другое время, и это хуже, чем вторая строка.
+   */
   const live = cur
-    ? { top: `сейчас · ${hhmm(cur.start)} – ${cur.end === null ? '' : hhmm(cur.end)}`.trim(),
+    ? { top: `сейчас · ${hhmm(cur.start)} – ${cur.end === null ? '' : hhmm(cur.end)}`.trim(),
       title: cur.title,
       left: cur.end === null ? null : durLabel(Math.max(1, cur.end - minutes)),
       leftNote: 'до конца блока',
@@ -930,7 +937,7 @@ function phoneDayHead() {
   const cur = dayOf();
   const ai = h('button.wpbtn.wpbtn-ai', {
     type: 'button', title: 'Помощник', 'aria-label': 'Помощник',
-    onclick: () => set({ modal: 'ai', aiStep: 'input' }),
+    onclick: () => openAi(),
   });
   add(ai, ico('sparkle-fill', '17px'));
 
@@ -1676,6 +1683,24 @@ function openLink(kind, label) {
   Promise.all([data.loadTemplate(), data.loadDay(state.date)])
     .then(() => { fill(); set({ tplRows: adapt.templateRows(store.template) }); })
     .catch(fail);
+}
+
+// ── Помощник ─────────────────────────────────────────────────
+
+/**
+ * Помощник открывается чистым.
+ *
+ * Раньше шторка просто ставила шаг «ввод», не тронув остального: человек
+ * закрывал её, открывал снова — и видел прошлый текст, а иногда и прошлый
+ * разобранный план. Выглядело так, будто приложение уже что-то записало, хотя
+ * это был мусор от предыдущего раза, и диктовать поверх него никто не просил.
+ */
+function openAi() {
+  set({
+    modal: 'ai', aiStep: 'input',
+    aiText: '', aiItems: null, aiOff: {}, aiQuestion: '', aiOptions: [],
+    notice: null,
+  });
 }
 
 // ── Аккаунт ──────────────────────────────────────────────────
@@ -2786,7 +2811,7 @@ const BODIES = {
 
     const addRow = h('button.wbtn-dashed', { type: 'button', onclick: () => newRow() });
     add(addRow, ico('plus', '15px'), h('span', { text: 'Строка' }));
-    const withAi = h('button.wbtn-dashed', { type: 'button', onclick: () => set({ modal: 'ai', aiStep: 'input' }) });
+    const withAi = h('button.wbtn-dashed', { type: 'button', onclick: () => openAi() });
     add(withAi, ico('sparkle-fill', '15px'), h('span', { text: 'С помощью ИИ' }));
 
     return h('div.wstack-tight', list,
@@ -2880,11 +2905,25 @@ const BODIES = {
           h('span.wlevel-hint', { text: 'слушаю — нажмите микрофон, чтобы закончить' }))
         : null,
       state.notice ? h('div.whint', { text: state.notice, style: { color: 'var(--accent)' } }) : null,
+      /*
+       * Кнопка на месте всегда, даже пока текста нет.
+       *
+       * Раньше она была живой и на пустом поле: нажатие отвечало «Сначала
+       * скажите, что нужно сделать» — то есть кнопка выглядела рабочей и
+       * ругалась в ответ. Теперь она погашена, а под ней написано, чего не
+       * хватает: видно и что делать, и почему пока нельзя.
+       */
       h('button.wbtn-wide', {
         type: 'button', text: state.busy ? 'Разбираю…' : 'Разобрать',
-        disabled: state.busy || !store.ai.ready,
+        disabled: state.busy || !store.ai.ready || !state.aiText.trim(),
         onclick: () => aiSend(null),
-      }));
+      }),
+      !store.ai.ready || state.aiText.trim() || state.busy
+        ? null
+        : h('div.wclock-cap', {
+          text: 'напишите или продиктуйте — и кнопка оживёт',
+          style: { margin: '0' },
+        }));
   },
 
   // ── Новая привычка ──
@@ -3771,6 +3810,12 @@ async function aiApply(items) {
     }
     state.busy = false;
     state.modal = null;
+    /*
+     * Записанное стираем: текст своё дело сделал, и в следующий раз шторка
+     * должна открыться пустой. Иначе человек видел бы предложение записать то,
+     * что уже записано, и делал это дважды.
+     */
+    Object.assign(state, { aiText: '', aiItems: null, aiOff: {}, aiStep: 'input' });
     await reload();
   } catch (e) {
     state.busy = false;
@@ -3846,28 +3891,75 @@ function levelMeter(stream) {
   };
 }
 
+/**
+ * Отпустить микрофон.
+ *
+ * Одно место на все случаи, и это важно: раньше поток закрывался только в
+ * `onstop` самой записи. Кто закрыл шторку крестиком, щелчком по фону или
+ * Escape посреди диктовки — оставлял микрофон включённым навсегда: в браузере
+ * горел индикатор записи, и человек справедливо считал, что сайт его слушает.
+ *
+ * Останавливаем и дорожки, и счётчик громкости: без остановки дорожек
+ * индикатор не гаснет, даже если запись давно не идёт.
+ */
+function releaseMic() {
+  try { state.stopMeter?.(); } catch { /* контекст мог быть уже закрыт */ }
+  state.stopMeter = null;
+  try { state.micStream?.getTracks().forEach(t => t.stop()); } catch { /* уже отпущен */ }
+  state.micStream = null;
+  const rec = state.recorder;
+  state.recorder = null;
+  if (rec && rec.state !== 'inactive') { try { rec.stop(); } catch { /* уже остановлена */ } }
+  if (state.aiStep === 'listening') state.aiStep = 'input';
+}
+
 async function dictate() {
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
     state.notice = 'Этот браузер не умеет записывать звук'; render(); return;
   }
   if (state.recorder) { state.recorder.stop(); return; }
 
+  /*
+   * Причину отказа называем настоящую.
+   *
+   * Раньше на любую неудачу писалось «Не дали доступ к микрофону», и человек
+   * искал разрешение, которое давно выдал: на самом деле бывает и занятый
+   * другой программой вход, и отсутствующий микрофон, и запрет из-за того, что
+   * страница открыта не по https. Неверный диагноз отправляет чинить не то.
+   */
   let stream;
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-  catch { state.notice = 'Не дали доступ к микрофону'; render(); return; }
+  catch (e) {
+    const name = e?.name ?? '';
+    state.notice = !window.isSecureContext
+      ? 'Микрофон работает только по https. Откройте сайт по защищённому адресу'
+      : name === 'NotAllowedError' || name === 'SecurityError'
+        ? 'Доступ к микрофону запрещён. Разрешите его в настройках сайта в браузере'
+        : name === 'NotFoundError' || name === 'OverconstrainedError'
+          ? 'Микрофон не найден — проверьте, что он подключён и выбран в системе'
+          : name === 'NotReadableError'
+            ? 'Микрофон занят другой программой — закройте её и попробуйте снова'
+            : `Микрофон не открылся: ${e?.message || name || 'неизвестная причина'}`;
+    render();
+    return;
+  }
 
   const chunks = [];
   const rec = new MediaRecorder(stream);
   state.recorder = rec;
+  state.micStream = stream;
   state.aiStep = 'listening';
   state.notice = null;
   render();
   const stopMeter = levelMeter(stream);
+  state.stopMeter = stopMeter;
 
   rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
   rec.onstop = async () => {
     stopMeter();
+    state.stopMeter = null;
     stream.getTracks().forEach(t => t.stop());
+    state.micStream = null;
     state.recorder = null;
     state.aiStep = 'input';
     const blob = new Blob(chunks, { type: chunks[0]?.type || 'audio/webm' });
@@ -3908,6 +4000,16 @@ const SAME_SCREEN = { plan: 'tasks', tasks: 'plan' };
 function render() {
   const root = $('#wapp');
   if (!root) return;
+
+  /*
+   * Микрофон живёт ровно столько, сколько открыта шторка помощника.
+   *
+   * Проверка стоит здесь нарочно, а не в каждом обработчике закрытия: путей
+   * уйти со шторки много — крестик, щелчок по фону, Escape, переход в другой
+   * раздел, нажатие на уведомление, — и достаточно забыть один, чтобы
+   * микрофон остался включённым. Одно правило в одном месте забыть нельзя.
+   */
+  if ((state.recorder || state.micStream) && state.modal !== 'ai') releaseMic();
 
   // Тема: переменные ставим на корень, чтобы CSS остался без вариантов
   const vars = { ...(dark() ? DARK : LIGHT) };
@@ -3978,6 +4080,13 @@ addEventListener('resize', () => {
 // Связь появилась или пропала — видно сразу, а не при первой неудачной правке
 addEventListener('online', () => { render(); reload(); });
 addEventListener('offline', render);
+
+/*
+ * Уходя со страницы, отпускаем микрофон. Закрытую вкладку браузер разбирает
+ * сам, но переход по ссылке или назад в истории её не закрывает — а индикатор
+ * записи остаётся горящим, и это уже похоже на слежку.
+ */
+addEventListener('pagehide', releaseMic);
 
 /*
  * Дата в хвосте адреса. Нажатие на уведомление в уже открытой вкладке

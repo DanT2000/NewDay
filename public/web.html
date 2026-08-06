@@ -27,6 +27,24 @@
     // `serviceWorker.ready` не разрешится, пока его никто не зарегистрировал
     if ('serviceWorker' in navigator) {
       addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js').catch(() => {}));
+
+      /*
+       * Новая выкладка подхватывается сама.
+       *
+       * Открытая вкладка живёт со своим CSS и своим кодом, пока её не
+       * перезагрузят руками: после выкладки человек видел прежний интерфейс и
+       * справедливо считал, что ничего не поменялось. Когда новый service
+       * worker берёт управление, страница перезагружается — один раз, чтобы
+       * не зациклиться, если он сменится ещё раз.
+       */
+      let reloading = false;
+      const wasControlled = Boolean(navigator.serviceWorker.controller);
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        // первый заход управления ещё не имел — перезагружать нечего
+        if (!wasControlled || reloading) return;
+        reloading = true;
+        location.reload();
+      });
     }
   </script>
   <script type="module" src="/js/web/app.js"></script>

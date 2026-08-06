@@ -193,6 +193,43 @@ set_ring_volume() {
   "$ADB" shell cmd media_session volume --stream 2 --set "$1" >/dev/null 2>&1
 }
 
+# Режим звонка: normal | vibrate | silent.
+#
+# Способов задать его снаружи несколько, и какой из них живой — зависит от
+# образа: `cmd audio` есть не на всех, `service call audio` требует своего
+# номера транзакции на каждой версии. Пробуем по очереди и возвращаем то, что
+# получилось на самом деле: молча «поставили», не поставив, хуже, чем честно
+# сказать «не умею» — сценарий тогда не сделает вид, что проверил.
+set_ringer_mode() {
+  local want=$1 got
+  "$ADB" shell cmd audio set-ringer-mode "$want" >/dev/null 2>&1
+  got=$(ringer_mode)
+  if [ "$got" != "$want" ]; then
+    local num=2
+    [ "$want" = "vibrate" ] && num=1
+    [ "$want" = "silent" ] && num=0
+    "$ADB" shell settings put global mode_ringer "$num" >/dev/null 2>&1
+    got=$(ringer_mode)
+  fi
+  echo "$got"
+}
+
+ringer_mode() {
+  local out
+  out=$("$ADB" shell cmd audio get-ringer-mode 2>&1 | tr -d '\r')
+  case "$out" in
+    *silent*|*SILENT*) echo silent; return ;;
+    *vibrate*|*VIBRATE*) echo vibrate; return ;;
+    *normal*|*NORMAL*) echo normal; return ;;
+  esac
+  case "$("$ADB" shell settings get global mode_ringer 2>/dev/null | tr -d '\r')" in
+    0) echo silent ;;
+    1) echo vibrate ;;
+    2) echo normal ;;
+    *) echo неизвестно ;;
+  esac
+}
+
 # await <секунд> <название> — ждёт появления экрана будильника.
 # Ожидание вместо фиксированной паузы: время перезагрузки эмулятора и
 # задержки планировщика непредсказуемы, а фиксированный sleep давал
@@ -389,13 +426,74 @@ restart; grace 60   # возвращаем значение по умолчан�
 
 fi
 
+if want 10; then
+echo "== 10. Беззвучный режим переключателем, а не громкостью =="
+# Сценарий 2 проверяет громкость потока, а это — сам режим звонка: человек
+# щёлкает переключателем на боку телефона, и «беззвучно» для него значит
+# именно это. Поток будильника режим звонка не трогает — на том и держится
+# обещание «будильник звонит на беззвучном».
+restart
+got=$(set_ringer_mode silent)
+echo "      режим звонка: $got"
+"$ADB" logcat -c >/dev/null 2>&1
+fire 10
+"$ADB" shell am kill $PKG >/dev/null 2>&1
+"$ADB" shell input keyevent KEYCODE_SLEEP
+if [ "$got" = "silent" ]; then
+  await_alarm 45 "звонит в беззвучном режиме при убитом приложении"
+else
+  check "беззвучный режим удалось включить (получилось «$got»)" 1
+fi
+set_ringer_mode normal >/dev/null
+
+fi
+
+if want 11; then
+echo "== 11. Режим вибрации =="
+restart
+got=$(set_ringer_mode vibrate)
+echo "      режим звонка: $got"
+"$ADB" logcat -c >/dev/null 2>&1
+fire 10
+"$ADB" shell am kill $PKG >/dev/null 2>&1
+"$ADB" shell input keyevent KEYCODE_SLEEP
+if [ "$got" = "vibrate" ]; then
+  await_alarm 45 "звонит в режиме вибрации при убитом приложении"
+else
+  check "режим вибрации удалось включить (получилось «$got»)" 1
+fi
+set_ringer_mode normal >/dev/null
+
+fi
+
 if [ "$WITH_REBOOT" = "1" ]; then
-  echo "== 10. Перезагрузка устройства =="
+  echo "== 12. Перезагрузка устройства =="
   restart; fire 150          # запас на перезагрузку эмулятора
   "$ADB" reboot
   "$ADB" wait-for-device
   until [ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" = "1" ]; do sleep 3; done
   await_alarm 240 "будильник пережил перезагрузку"
+
+  echo "== 13. Телефон был выключен в момент звонка =="
+  # Самый обидный случай: человек выключил телефон на ночь, будильник должен был
+  # прозвенеть в 07:00, а телефон включили в 07:10. Система про этот будильник
+  # уже забыла, и без своей обработки он пропадает молча — то есть человек
+  # просто не просыпается. Пропущенный будильник обязан прозвенеть сразу после
+  # загрузки, а не исчезнуть.
+  restart; fire 60
+  sleep 3
+  "$ADB" emu kill >/dev/null 2>&1 || "$ADB" shell reboot -p >/dev/null 2>&1
+  echo "      телефон выключен, ждём, пока время будильника пройдёт"
+  sleep 75
+  if [ -n "${AVD_NAME:-}" ]; then
+    EMU="${LOCALAPPDATA}/Android/Sdk/emulator/emulator.exe"
+    "$EMU" -avd "$AVD_NAME" -no-snapshot-save -no-boot-anim >/dev/null 2>&1 &
+    "$ADB" wait-for-device
+    until [ "$("$ADB" shell getprop sys.boot_completed | tr -d '\r')" = "1" ]; do sleep 3; done
+    await_alarm 240 "пропущенный будильник прозвенел после включения"
+  else
+    echo "      пропущено: нужен AVD_NAME, чтобы включить телефон обратно"
+  fi
 fi
 
 echo
