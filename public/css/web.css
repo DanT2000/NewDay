@@ -25,6 +25,8 @@
   --accent: #9d8cf0;
   --accent-soft: color-mix(in srgb, var(--accent) 18%, transparent);
   --accent-line: color-mix(in srgb, var(--accent) 40%, transparent);
+  /* Тревожный цвет: отказ сервера, незаполненное поле, метка напоминания */
+  --warn: #ff6a5e;
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   --ui: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
 
@@ -32,8 +34,13 @@
    * Высота ровно в экран, и прокручивается только рабочее поле. Иначе при
    * высоком содержимом (месяц) страница ползёт целиком, и низ боковой
    * колонки — «Помощник», тема, профиль — уезжает под сгиб.
+   *
+   * Делится на увеличение: `zoom` множит и `dvh`, и при 125 % корень
+   * становился выше экрана. `dvh`, а не `vh`, — на телефоне адресная строка
+   * то появляется, то прячется, и `vh` считает по большему из состояний.
    */
-  height: 100vh; overflow: hidden;
+  --zoom: 1;
+  height: calc(100dvh / var(--zoom)); overflow: hidden;
   background: var(--bg);
   color: var(--text);
   font-family: var(--ui);
@@ -48,6 +55,8 @@
   --dim: #565b6e;
   --faint: #767b8d;
   --line: rgba(41, 43, 49, .12);
+  /* На белом фоне тот же красный светловат — берём насыщеннее */
+  --warn: #d9382b;
 }
 
 .wroot * { box-sizing: border-box; }
@@ -80,8 +89,15 @@
 
 /* ── Боковая колонка ───────────────────────────────────────── */
 
+/*
+ * Колонка стоит на месте во всю высоту экрана и никуда не уезжает: разделы,
+ * «Помощник», тема и профиль должны быть под рукой из любого места дня.
+ * Прокручивается она сама по себе, если не влезла, — но не вместе с
+ * содержимым справа.
+ */
 .wside {
   width: 236px; flex: none;
+  height: 100%; position: sticky; top: 0;
   padding: 22px 16px;
   display: flex; flex-direction: column; gap: 26px;
   background: var(--bg);
@@ -489,7 +505,10 @@ select.winput { appearance: auto; cursor: pointer; }
   padding: 9px 12px 10px 18px; margin: 0 0 6px;
   box-shadow: inset 12px 0 0 -10px var(--accent);
 }
-.wsched-title { font: 400 15px/1.3 var(--ui); color: var(--text); }
+.wsched-title { font: 400 15px/1.3 var(--ui); color: var(--text); display: flex; align-items: center; gap: 7px; }
+/* Колокольчик перед названием: строка та же, а времени она не занимает */
+.wsched-kind { color: var(--warn); flex: none; }
+.wsched-row.moment .wsched-dot { background: transparent; border: 1px solid var(--warn); }
 .wsched-row.past .wsched-title { color: var(--dim); }
 .wsched-row.now .wsched-title { font: 500 16px/1.3 var(--ui); }
 .wsched-row.inner .wsched-title { font: 400 14px/1.3 var(--ui); }
@@ -566,13 +585,6 @@ select.winput { appearance: auto; cursor: pointer; }
 /* Последний день недели обведён — это «сегодня» */
 .whabit-week i:last-child { outline: 1px solid var(--dim); outline-offset: 1px; }
 
-.wrem { display: flex; align-items: center; gap: 11px; padding: 10px 12px; border-radius: 10px; cursor: pointer; border: 0; background: transparent; color: inherit; width: 100%; text-align: left; }
-.wrem:hover { background: var(--raise); }
-.wrem > i:first-child { color: var(--accent); font-size: 17px; flex: none; }
-.wrem-body { flex: 1; min-width: 0; }
-.wrem-title { font: 400 14px/1.3 var(--ui); }
-.wrem-meta { font: 400 12px/1.3 var(--ui); color: var(--faint); margin-top: 4px; }
-
 /* ── Экран «Расписание» ────────────────────────────────────── */
 
 .wplan-head, .wplan-grid { display: grid; }
@@ -587,6 +599,8 @@ select.winput { appearance: auto; cursor: pointer; }
 .wplan-day.on { background: var(--accent-soft); color: var(--accent); }
 .wplan-day-dow { font: 400 11px/1 var(--ui); letter-spacing: .06em; text-transform: uppercase; opacity: .8; }
 .wplan-day-num { font: 500 17px/1 var(--mono); margin-top: 6px; }
+/* В одиночном дне место есть: пишем словами, а не одним числом */
+.wplan-day-full { font: 500 15px/1 var(--ui); letter-spacing: -.01em; }
 
 .wplan-hours { padding-top: 6px; }
 .wplan-hour {
@@ -634,29 +648,31 @@ select.winput { appearance: auto; cursor: pointer; }
 }
 .wblock.compact .wblock-note { display: none; }
 /*
- * Момент в сетке: напоминание на время. Не блок — оно ничего не занимает,
- * поэтому метка тонкая и лежит поверх блоков, а точка стоит ровно на минуте.
+ * Напоминание в сетке — такой же блок, только без заливки и с точкой.
+ *
+ * Раньше оно рисовалось меткой поверх сетки и ложилось на чужие блоки: в
+ * неделе, где колонка узкая, под напоминанием не было видно вообще ничего.
+ * Теперь оно занимает свою дорожку и никого не перекрывает, а точка и контур
+ * показывают, что времени оно не занимает.
  */
-.wmoment {
-  --pin: var(--accent);
-  position: absolute; left: 3px; right: 3px; z-index: 6;
-  display: flex; align-items: center; gap: 6px; height: 16px;
-  transform: translateY(-8px);
-  border: 0; background: transparent; color: var(--text);
-  padding: 0 4px; cursor: pointer; overflow: hidden;
+/*
+ * Своего цвета у напоминания по умолчанию нет, и берёт оно тревожный красный:
+ * по точке видно, что это напоминание, а не короткий блок. Выбранный цвет
+ * приходит строчным стилем и эту подстановку перебивает.
+ */
+.wblock.moment {
+  --pin: var(--warn);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pin) 45%, transparent);
 }
-.wmoment-dot {
-  width: 7px; height: 7px; border-radius: 50%; flex: none;
-  background: var(--bg); box-shadow: 0 0 0 2px var(--pin);
+.wblock.moment .wblock-time { color: var(--pin); }
+.wblock-dot {
+  position: absolute; top: 7px; left: 7px; width: 6px; height: 6px;
+  border-radius: 50%; background: var(--pin);
 }
-.wmoment-time { font: 500 10px/1 var(--mono); color: var(--pin); flex: none; }
-.wmoment-title {
-  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font: 400 11px/1 var(--ui);
-  /* подложка под текст: метка лежит поверх блока, и без неё они сливаются */
-  background: var(--bg); padding: 2px 5px; border-radius: 5px;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pin) 40%, transparent);
-}
+/* точка стоит слева, поэтому содержимое сдвинуто — иначе они наезжают */
+.wblock.moment { padding-left: 19px; }
+.wblock.moment.compact { padding-left: 20px; }
 
 /* Точка в углу: комментарий есть, а места под него нет */
 .wblock-mark {
@@ -722,6 +738,7 @@ select.winput { appearance: auto; cursor: pointer; }
  * Так в месяце сразу видно, где занято время, а где просто напомнить.
  */
 .wcell-item.rem {
+  --pin: var(--warn);
   background: transparent;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pin) 40%, transparent);
 }
@@ -825,8 +842,14 @@ select.winput { appearance: auto; cursor: pointer; }
 
 /* ── Шторка ────────────────────────────────────────────────── */
 
+/*
+ * Затемнение — во весь экран, а не во весь увеличенный корень: при 125 %
+ * `inset: 0` растягивало его на 125 % экрана, шторка вставала ниже края и
+ * кнопка «Готово» оказывалась за пределами телефона.
+ */
 .wveil {
-  position: fixed; inset: 0; z-index: 80; padding: 40px;
+  position: fixed; top: 0; left: 0; z-index: 80; padding: 40px;
+  width: calc(100vw / var(--zoom)); height: calc(100dvh / var(--zoom));
   background: rgba(8, 9, 16, .66);
   display: grid; place-items: center;
   animation: wfade 180ms ease;
@@ -842,7 +865,8 @@ select.winput { appearance: auto; cursor: pointer; }
  * дёргалась на пиксель, стоило содержимому перерасти высоту.
  */
 .wmodal {
-  width: 560px; max-width: 92vw; max-height: 86vh; overflow-y: auto;
+  width: 560px; max-width: calc(92vw / var(--zoom)); max-height: calc(86dvh / var(--zoom));
+  overflow-y: auto;
   border-radius: 20px; padding: 22px 24px 24px;
   background: var(--surface); box-shadow: 0 30px 80px rgba(0, 0, 0, .55);
   animation: wpop 180ms ease;
@@ -1011,7 +1035,8 @@ select.winput { appearance: auto; cursor: pointer; }
  * колонок с зазором 4, карточки радиусом 14, полоса разделов с иконкой 23 px.
  */
 .wroot.wphone {
-  display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  display: flex; flex-direction: column;
+  height: calc(100dvh / var(--zoom)); overflow: hidden;
 }
 .wpbody {
   flex: 1; min-height: 0; overflow-y: auto;
@@ -1019,13 +1044,18 @@ select.winput { appearance: auto; cursor: pointer; }
 }
 .wpscreen { display: flex; flex-direction: column; gap: 18px; }
 
-.wphead { display: flex; align-items: center; gap: 8px; }
-.wphead-text { flex: 1; min-width: 0; }
+.wphead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 10px; }
+/*
+ * Дате хватает места на одну строку, иначе кнопки переезжают вниз целой
+ * группой. `min-width` считан по самой длинной дате — «26 сентября».
+ */
+.wphead-text { flex: 1 1 auto; min-width: max-content; }
+.wphead-btns { display: flex; align-items: center; gap: 8px; margin-left: auto; flex: none; }
 .wphead-dow {
   font: 500 12px/1 var(--ui); letter-spacing: .12em;
   text-transform: uppercase; color: var(--faint);
 }
-.wphead-num { font: 500 28px/1.1 var(--ui); letter-spacing: -.02em; margin-top: 8px; }
+.wphead-num { font: 500 28px/1.1 var(--ui); letter-spacing: -.02em; margin-top: 8px; white-space: nowrap; }
 .wphead-title { font: 500 22px/1.1 var(--ui); letter-spacing: -.02em; }
 .wphead-hint { font: 400 13px/1.4 var(--ui); color: var(--faint); margin-top: 7px; }
 
@@ -1122,10 +1152,15 @@ select.winput { appearance: auto; cursor: pointer; }
 .wphone .wclock-grid.wclock-mins { grid-template-columns: repeat(6, 1fr); gap: 4px; }
 .wphone .wclock { padding: 12px; }
 
-/* Шторка снизу: окно посередине отобрало бы половину экрана под пустоту */
+/*
+ * Шторка снизу: окно посередине отобрало бы половину экрана под пустоту.
+ * Высота считается от экрана и делится на увеличение — при 125 % шторка
+ * вырастала выше телефона, и её заголовок с крестиком оказывались над
+ * верхним краем: закрыть было нечем.
+ */
 .wphone .wveil { padding: 0; place-items: end stretch; }
 .wphone .wmodal, .wphone .wmodal.wide {
-  width: 100%; max-width: 100%; max-height: 88vh;
+  width: 100%; max-width: 100%; max-height: calc(88dvh / var(--zoom));
   border-radius: 24px 24px 0 0; padding: 12px 18px 26px;
   animation: wup 220ms cubic-bezier(.22, .61, .36, 1);
 }
@@ -1153,12 +1188,13 @@ select.winput { appearance: auto; cursor: pointer; }
 
 @media (max-width: 1024px) {
   /* Колонкой сверху вниз: прокрутка снова общая, иначе разделы не достать */
-  .wroot { flex-direction: column; height: auto; min-height: 100vh; overflow: visible; }
+  .wroot { flex-direction: column; height: auto; min-height: calc(100dvh / var(--zoom)); overflow: visible; }
   .wbody { overflow: visible; }
+  /* Полосой сверху — но липкой: разделы нужны и на середине длинного месяца */
   .wside {
     width: 100%; height: auto; flex-direction: row; align-items: center;
     gap: 12px; padding: 12px 16px; box-shadow: 0 1px 0 var(--line);
-    overflow-x: auto;
+    overflow-x: auto; position: sticky; top: 0; z-index: 30;
   }
   .wside .wnav { flex-direction: row; }
   .wside-foot { margin-top: 0; flex-direction: row; }
@@ -1179,7 +1215,9 @@ select.winput { appearance: auto; cursor: pointer; }
   .whead-text { flex: 1 1 100%; }
   .wnotes { grid-template-columns: minmax(0, 1fr); }
   .wveil { padding: 0; place-items: end stretch; }
-  .wmodal, .wmodal.wide { width: 100%; max-width: 100%; max-height: 92vh; border-radius: 20px 20px 0 0; }
+  .wmodal, .wmodal.wide {
+    width: 100%; max-width: 100%; max-height: calc(92dvh / var(--zoom)); border-radius: 20px 20px 0 0;
+  }
 }
 
 /* ── Служебные сообщения ───────────────────────────────────── */

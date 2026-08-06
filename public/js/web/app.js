@@ -38,18 +38,18 @@ const state = {
   theme: 'dark', color: 'violet', screen: 'today', scale: 1,
   date: '', view: 'week',
   catFilter: 'all', noteFilter: 'all',
-  modal: null, busy: false, notice: null, noticeBad: false,
+  modal: null, busy: false, notice: null, noticeBad: false, toast: null,
   rowId: null, rowStart: null, rowEnd: null, rowField: 'start', rowTitle: '', rowAlarm: 'off', rowLeads: ['at'],
   rowKind: 'normal', rowColor: null, rowConflict: 'overlap', rowNote: '',
+  rowRepeat: 'Разово', rowSeriesId: null,
+  rowDays: { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
   taskId: null, taskTitle: '', taskCat: 'work',
-  mealId: null, mealTitle: '', mealKcal: '', mealMode: 'none', mealDur: 30, mealSched: false,
+  mealId: null, mealTitle: '', mealKcal: '', mealMode: 'none', mealField: 'start', mealSched: false,
   mealStart: 720, mealEnd: 840, mealLeads: ['at'], mealSchedId: null, mealConflict: 'overlap',
+  mealDate: null,
   foodPlan: '', foodGoal: '',
   sportId: null, sportTitle: '', sportSets: '', sportReps: '', sportWeight: '',
   noteId: null, noteTitle: '', noteText: '', noteDated: true, noteDate: '',
-  remId: null, remRepeat: 'Разово', remTitle: '', remDate: '', remTime: '10:00', remLeads: ['at'],
-  remAlarm: 'notify', remSeriesId: null,
-  remDays: { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
   fileKind: 'export', sound: 'Рассвет', notifySound: 'Капля', soundKind: 'Звук будильника',
   tplRows: null, tplEdit: null, tplStart: 420, tplEnd: 480, tplField: 'start',
   tplTitle: '', tplAlarm: 'off', tplLeads: ['at'],
@@ -77,7 +77,6 @@ let TASKS = [];
 let MEALS = [];
 let HABITS = [];
 let NOTES = [];
-let REMINDERS = [];
 
 /** Сегодня по часовому поясу человека, а не браузера. */
 const todayKey = () => store.settings?.today ?? data.todayFor();
@@ -164,7 +163,7 @@ window.__wopen = name => {
   if (name === 'notify' || name === 'template') return openLink(name);
   if (name === 'file') return openLink('export');
   if (name === 'tplRow') return openTplRow('new');
-  if (name === 'reminder') return openReminder(null);
+  if (name === 'reminder') return newRow({ kind: 'reminder' });
   return set({ modal: name });
 };
 
@@ -280,11 +279,18 @@ const hasPlans = date => {
   return (store.range?.days ?? []).some(d => d.date === date && d.counts.schedule > 0);
 };
 
-/** Короткое сообщение поверх экрана. Через четыре секунды убирается само. */
+/**
+ * Короткое сообщение поверх экрана. Через четыре секунды убирается само.
+ *
+ * Экранное сообщение и сообщение шторки — разные вещи и лежат в разных
+ * местах. Раньше это было одно поле, и «Впишите, что делаем» из редактора
+ * оставалось висеть над днём: человек уходил в другой раздел, листал дни, а
+ * сообщение шло за ним и читалось как поломка экрана.
+ */
 function note(text) {
-  state.notice = text;
+  state.toast = text;
   render();
-  setTimeout(() => { if (state.notice === text) { state.notice = null; render(); } }, 4000);
+  setTimeout(() => { if (state.toast === text) { state.toast = null; render(); } }, 4000);
 }
 
 /** Сообщение об отказе. Молчаливая неудача — худшее, что может быть. */
@@ -347,7 +353,6 @@ function fill() {
   TASKS = adapt.tasks(store.day);
   MEALS = adapt.meals(store.day);
   HABITS = adapt.habits(store.day);
-  REMINDERS = adapt.reminders(SCHEDULE);
   NOTES = adapt.notes(store.notes, todayKey(), state.date);
 }
 const ico = (name, size = '17px', cls = '') => icon(name, { size, cls });
@@ -490,7 +495,20 @@ function topBar() {
      * период: на месяце — месяц.
      */
     h('div.wtop-nav',
-      chip('Сегодня', state.date === todayKey(), () => go(todayKey())),
+      (() => {
+        /*
+         * «Сегодня» со значком: рядом стоит «Календарь», и две одинаковые
+         * подписи без картинок читались как один блок. Значок отличает
+         * возврат к текущему дню от выбора произвольного.
+         */
+        const b = h('button.wchip.wchip-icon', {
+          type: 'button', class: state.date === todayKey() ? 'on' : '',
+          title: 'Вернуться к сегодняшнему дню',
+          onclick: () => go(todayKey()),
+        });
+        add(b, ico('sun-horizon', '15px'), h('span', { text: 'Сегодня' }));
+        return b;
+      })(),
       cal,
       iconBtn('caret-left', { title: `Предыдущий ${what}`, onclick: () => shiftPeriod(-1) }),
       iconBtn('caret-right', { title: `Следующий ${what}`, onclick: () => shiftPeriod(1) })),
@@ -507,18 +525,17 @@ function topBar() {
 /**
  * Вложенность: строка, начавшаяся до конца предыдущей, лежит внутри неё.
  *
- * Напоминания в этом не участвуют. Напоминание — точка, а не отрезок: оно
- * ничего не занимает и ни во что не вкладывается. Раньше напоминание в 10:00
- * внутри рабочего блока рисовалось склеенной карточкой с подписью «внутри
- * блока», как будто это дело внутри дела.
+ * Напоминания участвуют наравне с блоками: это одна сущность, и напоминание в
+ * десять внутри рабочего блока — такое же «внутри», как созвон. Отличается оно
+ * только тем, что не занимает времени, и это показано значком, а не другим
+ * поведением.
  */
 function nesting() {
   const inner = {}, parent = {};
   let base = null;
   for (const r of SCHEDULE) {
-    if (r.isReminder) continue;
     if (base && base.end !== null && r.start < base.end) { inner[r.id] = true; parent[base.id] = true; }
-    else base = r;
+    else if (r.end !== null) base = r;
   }
   return { inner, parent };
 }
@@ -529,6 +546,7 @@ function scheduleList() {
   add(wrap, ...SCHEDULE.map(r => {
     const mode = alarmOf(r);
     const sub = [];
+    if (r.isReminder) sub.push('напоминание');
     if (inner[r.id]) sub.push('внутри блока');
     if (r.fromFood) sub.push('из питания');
     if (mode !== 'off' && !hasLead(r, 'at')) sub.push(leadsLabel(r));
@@ -537,15 +555,25 @@ function scheduleList() {
 
     const row = h('button.wsched-row', {
       type: 'button',
-      class: [r.past ? 'past' : '', r.now ? 'now' : '', inner[r.id] ? 'inner' : '', parent[r.id] ? 'parent' : ''].filter(Boolean).join(' '),
+      class: [
+        r.past ? 'past' : '', r.now ? 'now' : '',
+        inner[r.id] ? 'inner' : '', parent[r.id] ? 'parent' : '',
+        r.isReminder ? 'moment' : '',
+      ].filter(Boolean).join(' '),
       style: r.color ? { '--pin': PALETTE[r.color][dark() ? 'dark' : 'light'] } : {},
       onclick: () => openRow(r),
     });
+    /*
+     * Напоминание видно значком и подписью «напоминание»: сущность та же, а
+     * смысл другой — у него нет длительности, и путать его с блоком не нужно.
+     */
     add(row,
       h('span.wsched-time', { text: r.end === null ? hhmm(r.start) : `${hhmm(r.start)}–${hhmm(r.end)}` }),
       h('span.wsched-mark', h('span.wsched-dot')),
       h('div.wsched-body',
-        h('div.wsched-title', { text: r.title }),
+        h('div.wsched-title',
+          r.isReminder ? ico('bell', '13px', 'wsched-kind') : null,
+          h('span', { text: r.title })),
         sub.length ? h('div.wsched-sub', { text: sub.join(' · ') }) : null),
       mode === 'off' ? null : ico(bellOf(mode).icon, '16px', 'wbell'));
     return row;
@@ -845,6 +873,13 @@ function dayNotes() {
 }
 
 function todayScreen() {
+  /*
+   * Напоминания живут в расписании, а не отдельным блоком.
+   *
+   * Блок времени и напоминание — одна сущность: у одного есть длительность, у
+   * другого нет. Разделять их на два списка значило заставлять человека искать
+   * своё дело в двух местах и помнить, чем они отличаются.
+   */
   const left = h('div.wcol', nowCard(),
     h('div',
       sectHd('расписание', (() => {
@@ -852,26 +887,22 @@ function todayScreen() {
         add(b, ico('pencil-simple', '13px'), h('span', { text: 'изменить' }));
         return b;
       })()),
-      scheduleList()));
+      scheduleList(),
+      (() => {
+        const row = h('div.wrow', { style: { padding: '4px 12px 0' } });
+        const block = h('button.wadd', { type: 'button', onclick: () => newRow() });
+        add(block, ico('plus', '15px'), h('span', { text: 'Блок' }));
+        const rem = h('button.wadd', { type: 'button', onclick: () => newRow({ kind: 'reminder' }) });
+        add(rem, ico('bell', '15px'), h('span', { text: 'Напоминание' }));
+        return add(row, block, rem);
+      })()));
 
   const mid = h('div.wcol', statCards(), tasksBlock(), foodBlock());
-
-  const remList = h('div.wlist');
-  add(remList, ...REMINDERS.map(r => {
-    const row = h('button.wrem', { type: 'button', onclick: () => openReminder(r.raw) });
-    add(row, ico(r.icon, '17px'),
-      h('div.wrem-body', h('div.wrem-title', { text: r.title }), h('div.wrem-meta', { text: r.meta })));
-    return row;
-  }));
-  const addRem = h('button.wadd', { type: 'button', onclick: () => openReminder(null) });
-  add(addRem, ico('plus', '15px'), h('span', { text: 'Напоминание' }));
-  add(remList, addRem);
 
   const right = h('div.wcol',
     h('div', sectHd('привычки сегодня'),
       h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
         ...HABITS.map(hb => habitCard(hb)))),
-    h('div', sectHd('напоминания'), remList),
     h('div', sectHd('заметки дня'), dayNotes()));
 
   return h('div.wcols', left, mid, right);
@@ -907,21 +938,22 @@ function phoneDayHead() {
   });
   add(cal, ico('calendar-blank', '17px'));
 
+  const back = h('button.wpbtn', { type: 'button', title: 'Предыдущий день', 'aria-label': 'Предыдущий день', onclick: () => shiftDay(-1) });
+  add(back, ico('caret-left', '17px'));
+  const fwd = h('button.wpbtn', { type: 'button', title: 'Следующий день', 'aria-label': 'Следующий день', onclick: () => shiftDay(1) });
+  add(fwd, ico('caret-right', '17px'));
+
+  /*
+   * Кнопки собраны в одну группу, а не разбросаны по шапке. При увеличении
+   * 125 % место кончается, и группа целиком переходит на вторую строку —
+   * иначе на неё уползала одна последняя кнопка, а «6 августа» ломалось
+   * пополам.
+   */
   return h('div.wphead',
     h('div.wphead-text',
       h('div.wphead-dow', { text: DOW_LONG[cur.getDay()] }),
       h('div.wphead-num', { text: `${cur.getDate()} ${MONTHS[cur.getMonth()]}` })),
-    (() => {
-      const b = h('button.wpbtn', { type: 'button', title: 'Предыдущий день', 'aria-label': 'Предыдущий день', onclick: () => shiftDay(-1) });
-      add(b, ico('caret-left', '17px'));
-      return b;
-    })(),
-    (() => {
-      const b = h('button.wpbtn', { type: 'button', title: 'Следующий день', 'aria-label': 'Следующий день', onclick: () => shiftDay(1) });
-      add(b, ico('caret-right', '17px'));
-      return b;
-    })(),
-    cal, ai);
+    h('div.wphead-btns', back, fwd, cal, ai));
 }
 
 /** Полоска недели: семь дней, точка — «в этом дне что-то есть». */
@@ -981,12 +1013,20 @@ function phoneToday() {
     }));
   }
 
-  const all = h('button.wlink', { type: 'button', onclick: () => set({ modal: 'schedule' }) });
-  add(all, h('span', { text: 'всё расписание' }), ico('caret-right', '13px'));
+  /*
+   * Кнопки под расписанием крупные: на телефоне ссылка в углу — цель для
+   * пальца слишком мелкая, а добавить строку прямо отсюда хочется чаще, чем
+   * открывать весь список.
+   */
+  const all = h('button.wbtn-dashed', { type: 'button', onclick: () => set({ modal: 'schedule' }) });
+  add(all, ico('list-checks', '15px'), h('span', { text: 'Всё расписание' }));
+  const addRow = h('button.wbtn-dashed', { type: 'button', onclick: () => newRow() });
+  add(addRow, ico('plus', '15px'), h('span', { text: 'Строка' }));
 
   return h('div.wpscreen',
     phoneDayHead(), phoneWeek(), nowCard(),
-    h('div', sectHd('расписание', all), near),
+    h('div', sectHd('расписание'), near,
+      h('div.wrow', { style: { marginTop: '10px' } }, all, addRow)),
     statCards());
 }
 
@@ -1003,26 +1043,13 @@ function phoneTasks() {
   </svg>`;
   add(ring, h('span', { text: empty ? '—' : `${percent}%` }));
 
-  const remList = h('div.wpcard');
-  if (!REMINDERS.length) {
-    add(remList, h('div.wpempty', { text: 'На этот день напоминаний нет' }));
-  } else {
-    add(remList, ...REMINDERS.map(r => {
-      const row = h('button.wprow', { type: 'button', onclick: () => openReminder(r.raw) });
-      add(row, ico(r.icon, '17px'),
-        h('div.wrem-body', h('div.wrem-title', { text: r.title }), h('div.wrem-meta', { text: r.meta })),
-        ico('caret-right', '14px', 'wchev'));
-      return row;
-    }));
-  }
-  const addRem = h('button.wadd', { type: 'button', onclick: () => openReminder(null) });
-  add(addRem, ico('plus', '15px'), h('span', { text: 'Добавить напоминание' }));
-  add(remList, addRem);
-
   const notesLink = h('button.wlink', { type: 'button', onclick: () => set({ screen: 'notes' }) });
   add(notesLink, h('span', { text: 'все заметки' }), ico('caret-right', '13px'));
 
-  const shades = shadeSet();
+  /*
+   * Отдельного блока напоминаний здесь тоже нет: они часть расписания, и
+   * искать своё дело в двух списках человеку не нужно.
+   */
   return h('div.wpscreen',
     phoneDayHead(), phoneWeek(),
     h('div.wprow-head',
@@ -1034,7 +1061,6 @@ function phoneTasks() {
       ring),
     tasksBlock(),
     foodBlock(),
-    h('div', sectHd('напоминания', null, shades[3]), remList),
     h('div', sectHd('заметки дня', notesLink), dayNotes()));
 }
 
@@ -1080,10 +1106,24 @@ const snap = px => FROM_MIN
  * группа — цепочка блоков, которые действительно задевают друг друга;
  * ширину делят только они.
  */
+/** Сколько места занимает момент в сетке: своей длительности у него нет. */
+const MOMENT_MIN = 20;
+
 function lanesFor(rows) {
+  /*
+   * Моменты — напоминания — считаются наравне с блоками и занимают дорожку.
+   *
+   * Раньше они рисовались меткой поверх сетки и ложились на чужие блоки: в
+   * неделе, где колонка узкая, под напоминанием не было видно вообще ничего.
+   * Своей длительности у момента нет, поэтому для раскладки берём короткую
+   * условную — на вид это остаётся точкой со временем, но место оно занимает
+   * честно и никого не перекрывает.
+   */
   const items = rows
-    .filter(r => r.end !== null && r.start >= FROM_MIN)
-    .slice()
+    .filter(r => r.start >= FROM_MIN)
+    .map(r => (r.end === null
+      ? { ...r, end: Math.min(1439, r.start + MOMENT_MIN), moment: true }
+      : r))
     .sort((a, b) => a.start - b.start || b.end - a.end);
 
   const place = {};
@@ -1174,7 +1214,7 @@ function planColumn(index, dateKey) {
     const step = 100 / of;
     const block = h('button.wblock', {
       type: 'button',
-      class: [compact ? 'compact' : '', i > 0 ? 'inner' : ''].filter(Boolean).join(' '),
+      class: [compact ? 'compact' : '', i > 0 ? 'inner' : '', r.moment ? 'moment' : ''].filter(Boolean).join(' '),
       style: {
         top: `${(r.start - FROM_MIN) * PX_PER_MIN}px`,
         height: `${height}px`,
@@ -1211,10 +1251,16 @@ function planColumn(index, dateKey) {
     const titleLines = compact ? 1 : (r.note ? Math.min(2, fits) : fits);
     const noteRoom = compact ? 0 : Math.floor((room - titleLines * 16) / 15);
     const showNote = Boolean(r.note) && noteRoom >= 1;
-    const hint = `${hhmm(r.start)}–${hhmm(r.end)} · ${r.title}${r.note ? `\n${r.note}` : ''}`;
+    /*
+     * У момента нет конца, и показывать «15:00–15:20» было бы враньём:
+     * двадцать минут придуманы ради раскладки. Пишем только время начала.
+     */
+    const when = r.moment ? hhmm(r.start) : `${hhmm(r.start)}–${hhmm(r.end)}`;
+    const hint = `${when} · ${r.title}${r.note ? `\n${r.note}` : ''}`;
 
     add(block,
-      tight ? null : h('span.wblock-time', { text: `${hhmm(r.start)}–${hhmm(r.end)}` }),
+      r.moment ? h('i.wblock-dot') : null,
+      tight ? null : h('span.wblock-time', { text: when }),
       h('span.wblock-title', {
         text: r.title,
         title: hint,
@@ -1233,33 +1279,6 @@ function planColumn(index, dateKey) {
         })
         : null);
     add(col, block);
-  }
-
-  /*
-   * Моменты — напоминания и строки без конца — стоят в сетке на своей минуте.
-   *
-   * Раньше их тут не было вовсе: дорожки считаются по отрезкам, а у момента
-   * конца нет, и он молча выпадал. Но напоминание на 12:00 — это часть
-   * расписания: человек смотрит на день и должен видеть, что в полдень что-то
-   * есть. Рисуем не блоком, а меткой на времени — оно ничего не занимает.
-   */
-  for (const r of rowsForDate(dateKey)) {
-    if (r.end !== null || r.start < FROM_MIN || r.start > FROM_MIN + HOURS * 60) continue;
-    const mark = h('button.wmoment', {
-      type: 'button',
-      title: `${hhmm(r.start)} · ${r.title}${r.note ? `\n${r.note}` : ''}`,
-      style: {
-        top: `${(r.start - FROM_MIN) * PX_PER_MIN}px`,
-        ...(r.color ? { '--pin': PALETTE[r.color][dark() ? 'dark' : 'light'] } : {}),
-      },
-      onclick: e => { e.stopPropagation(); openRow(r, dateKey); },
-      onmousedown: e => e.stopPropagation(),
-    });
-    add(mark,
-      h('i.wmoment-dot'),
-      h('span.wmoment-time', { text: hhmm(r.start) }),
-      h('span.wmoment-title', { text: r.title }));
-    add(col, mark);
   }
 
   if (dateKey === todayKey()) {
@@ -1326,9 +1345,19 @@ function planScreen() {
       // через go: иначе открытый день менялся, а содержимое оставалось от прежнего
       onclick: () => go(key),
     });
-    add(dayBtn,
-      h('span.wplan-day-dow', { text: DOW_SHORT[i] }),
-      h('span.wplan-day-num', { text: pad2(dt.getDate()) }));
+    /*
+     * В виде «День» колонка одна и места много: пишем «суббота, 8 августа».
+     * Одинокая «08» посреди широкой полосы читалась как обрубок.
+     */
+    if (single) {
+      add(dayBtn, h('span.wplan-day-full', {
+        text: `${DOW_LONG[dt.getDay()]}, ${dt.getDate()} ${MONTHS[dt.getMonth()]}`,
+      }));
+    } else {
+      add(dayBtn,
+        h('span.wplan-day-dow', { text: DOW_SHORT[i] }),
+        h('span.wplan-day-num', { text: pad2(dt.getDate()) }));
+    }
     add(headRow, dayBtn);
     add(grid, planColumn(i, key));
   }
@@ -1503,8 +1532,14 @@ function settingsScreen() {
       onclick: () => { state.theme = k; render(); api.saveSettings({ theme: k }).catch(fail); },
     })));
 
+  /*
+   * Два размера, а не три. Полуторный на телефоне не оставлял места ни строке
+   * расписания, ни полосе разделов: экран превращался в две карточки и
+   * прокрутку. Крупнее 125 % имеет смысл делать системным увеличением
+   * телефона, а не своим.
+   */
   const scaleSeg = h('div.wsegline');
-  add(scaleSeg, ...[[1, '100%'], [1.25, '125%'], [1.5, '150%']].map(([v, label]) =>
+  add(scaleSeg, ...[[1, '100%'], [1.25, '125%']].map(([v, label]) =>
     h('button', {
       type: 'button', text: label, class: state.scale === v ? 'on' : '',
       style: { fontSize: `${13 + (v - 1) * 8}px` },
@@ -1684,18 +1719,18 @@ function savePassword() {
  * `calFor` говорит, чью дату выбираем: открытого дня, заметки или напоминания.
  * Без этого выбор даты в заметке уводил бы весь экран на другой день.
  */
+const CAL_FIELD = { note: 'noteDate', row: 'rowDate', meal: 'mealDate' };
+
 function openCalendar(target = 'day') {
-  const base = target === 'note' ? (state.noteDate ?? state.date)
-    : target === 'reminder' ? (fromRuDate(state.remDate) ?? state.date)
-      : state.date;
+  const base = state[CAL_FIELD[target]] ?? state.date;
   const [y, m] = base.split('-').map(Number);
   set({ modal: 'calendar', calY: y, calM: m - 1, calFor: target, calBack: state.modal });
 }
 
 /** Выбранный день уходит туда, откуда календарь позвали. */
 function pickDate(key) {
-  if (state.calFor === 'note') { set({ modal: state.calBack, noteDate: key }); return; }
-  if (state.calFor === 'reminder') { set({ modal: state.calBack, remDate: RU_DATE(key) }); return; }
+  const field = CAL_FIELD[state.calFor];
+  if (field) { set({ modal: state.calBack, [field]: key }); return; }
   closeModal();
   go(key);
 }
@@ -1706,12 +1741,24 @@ const shiftCal = n => ({
 });
 
 function openRow(r, date = state.date) {
+  /*
+   * Повтор читается из правила самой строки: блок и напоминание — одна
+   * сущность, и повторяться может любая. Раньше повтор жил только в шторке
+   * напоминания, и «каждый вторник зал» задать было нечем.
+   */
+  const seriesId = r.seriesId ?? r.raw?.series_id ?? null;
+  const rule = seriesId ? (store.series ?? []).find(x => x.id === seriesId) : null;
+  const mask = rule?.byweekday ?? 0;
+
   set({
     modal: 'row', rowId: r.id, rowDate: date,
     rowStart: r.start, rowEnd: r.end ?? r.start + 30, rowField: 'start',
     rowTitle: r.title, rowAlarm: r.alarm, rowLeads: leadsOf(r),
     rowKind: r.isReminder ? 'reminder' : (r.kind ?? 'normal'),
     rowColor: r.color ?? null, rowConflict: 'overlap', rowNote: r.note ?? '', notice: null,
+    rowRepeat: rule ? (REPEAT_OF[rule.freq] ?? 'Разово') : 'Разово',
+    rowSeriesId: seriesId,
+    rowDays: Object.fromEntries(Array.from({ length: 7 }, (_, i) => [i, Boolean(mask & (1 << i))])),
   });
 }
 
@@ -1722,6 +1769,8 @@ function newRow({ date = state.date, start = 600, end = 660, kind = 'normal' } =
     rowStart: start, rowEnd: end, rowField: 'start',
     rowTitle: '', rowAlarm: kind === 'reminder' ? 'notify' : 'off', rowLeads: ['at'],
     rowKind: kind, rowColor: null, rowConflict: 'overlap', rowNote: '', notice: null,
+    rowRepeat: 'Разово', rowSeriesId: null,
+    rowDays: { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
   });
 }
 
@@ -1742,12 +1791,66 @@ function saveRow() {
   }
 
   const date = state.rowDate ?? state.date;
+  const wasDate = state.date;
   const other = state.rowKind === 'reminder' ? null : crossing();
   const way = other ? state.rowConflict : 'overlap';
 
-  busy(applyConflict(date, other, way, body.endMin).then(() => (state.rowId === 'new'
-    ? data.createRow(date, body)
-    : data.updateRow(date, state.rowId, body))));
+  const freq = FREQ_OF[state.rowRepeat];
+  const mask = Object.entries(state.rowDays)
+    .reduce((acc, [i, on]) => (on ? acc | (1 << Number(i)) : acc), 0);
+  /*
+   * Дни недели имеют смысл только у еженедельного, и посылать их надо всегда:
+   * без явной маски сервер берёт «все дни», и «каждый вторник» приходило бы
+   * каждый день. Пусто значит «в тот же день недели» — считаем из даты.
+   */
+  const byweekday = freq !== 'weekly' ? undefined
+    : (mask || (1 << ((new Date(`${date}T00:00:00`).getDay() + 6) % 7)));
+
+  if (state.rowId === 'new') {
+    busy(applyConflict(date, other, way, body.endMin).then(() => (freq
+      ? data.createRepeat({ freq, startDate: date, row: body, byweekday })
+      : data.createRow(date, body))));
+    return;
+  }
+
+  /*
+   * Правка существующей. Дату строки нельзя поменять на месте — она часть её
+   * адреса, поэтому при переносе строку пересоздаём в нужном дне. Повтор
+   * приводим к выбранному: было разово и стало ежедневно — правило создаём,
+   * было правило и стало «Разово» — убираем.
+   */
+  busy((async () => {
+    await applyConflict(date, other, way, body.endMin);
+    if (date !== wasDate) {
+      await data.removeRow(wasDate, state.rowId);
+      await data.createRow(date, body);
+    } else {
+      await data.updateRow(wasDate, state.rowId, body);
+    }
+
+    const rule = state.rowSeriesId
+      ? (store.series ?? []).find(s => s.id === state.rowSeriesId)
+      : null;
+    if (!freq && rule) { await data.removeSeries(rule.id); return; }
+    if (!freq) return;
+    if (rule) {
+      await data.updateSeries(rule.id, { freq, startDate: date, ...(byweekday ? { byweekday } : {}) });
+      return;
+    }
+    await data.createRepeat({ freq, startDate: date, row: body, byweekday });
+  })());
+}
+
+/**
+ * Удаление строки повтора — это три разных желания, и путать их нельзя:
+ * убрать только этот день, прекратить с этого дня, убрать весь повтор.
+ */
+function removeRowScope(scope) {
+  if (state.rowId === 'new') { closeModal(); return; }
+  const date = state.rowDate ?? state.date;
+  if (scope === 'series') { busy(data.removeSeries(state.rowSeriesId)); return; }
+  if (scope === 'from') { busy(data.endSeries(state.rowSeriesId, date)); return; }
+  busy(data.removeRow(date, state.rowId));
 }
 
 // ── Привычка ─────────────────────────────────────────────────
@@ -1824,7 +1927,7 @@ function openMeal(m) {
   const block = blockId
     ? (store.day?.schedule ?? []).find(r => r.id === blockId)
     : null;
-  const dur = block && block.end_min !== null ? Math.max(5, block.end_min - block.start_min) : 30;
+  const blockEnd = block && block.end_min !== null ? Math.max(start + 5, block.end_min) : null;
 
   set({
     modal: 'meal', mealId: m?.id ?? 'new', notice: null,
@@ -1832,8 +1935,13 @@ function openMeal(m) {
     mealKcal: m?.kcal === null || m?.kcal === undefined ? '' : String(m.kcal),
     mealMode: mode,
     mealStart: start,
-    mealEnd: m?.end ?? start + 120,
-    mealDur: dur,
+    /*
+     * Конец у окна свой, у точного времени — конец его блока. Готовка бывает
+     * дольше самой еды, поэтому запас берём от блока, а не считаем получасом.
+     */
+    mealEnd: m?.end ?? blockEnd ?? (mode === 'window' ? start + 120 : start + 30),
+    mealField: 'start',
+    mealDate: state.date,
     mealLeads: m ? m.leads : ['at'],
     mealSched: Boolean(block),
     mealSchedId: block ? blockId : null,
@@ -1844,13 +1952,12 @@ function openMeal(m) {
 /**
  * Сколько времени приём пищи займёт в расписании.
  *
- * У точного времени это выбранная длительность, у окна — само окно: «обед с
- * 12:00 до 14:00» и в расписании должен стоять окном, а не получасовой точкой
- * в его начале.
+ * Диапазон один и тот же в обоих режимах: «обед с 12:00 до 14:00» стоит в
+ * сетке окном, а «в 12:00, готовлю два часа» — блоком той же длины. Раньше у
+ * точного времени было пять готовых длительностей, и полтора часа на плиту
+ * задать было нечем.
  */
-const mealBlockEnd = () => (state.mealMode === 'window'
-  ? Math.max(state.mealStart + 5, state.mealEnd)
-  : state.mealStart + state.mealDur);
+const mealBlockEnd = () => Math.max(state.mealStart + 5, state.mealEnd);
 
 const mealConflictBlock = () => {
   const end = mealBlockEnd();
@@ -1874,7 +1981,14 @@ function saveMeal() {
   });
   if (!body.title) { needField('mealTitle', 'Впишите, что едим'); return; }
 
-  const date = state.date;
+  /*
+   * День — часть адреса приёма пищи, поменять его на месте нельзя. При
+   * переезде убираем из старого дня и заводим в новом, забирая с собой и
+   * блок расписания: иначе завтрашний ужин остался бы стоять сегодня.
+   */
+  const wasDate = state.date;
+  const date = state.mealDate ?? wasDate;
+  const moved = date !== wasDate && state.mealId !== 'new';
   /*
    * В расписание попадает и окно, а не только точное время: «обед с 12:00 до
    * 14:00» — это тоже занятое время, и в сетке он должен стоять окном. Дела
@@ -1898,18 +2012,25 @@ function saveMeal() {
     const other = wantBlock ? crossingIn(date, state.mealStart, end, state.mealSchedId) : null;
     await applyConflict(date, other, state.mealConflict, end);
 
-    const meal = state.mealId === 'new'
+    if (moved) {
+      if (state.mealSchedId) await data.removeRow(wasDate, state.mealSchedId);
+      await data.removeMeal(wasDate, state.mealId);
+    }
+
+    const meal = state.mealId === 'new' || moved
       ? await data.createMeal(date, body)
       : await data.updateMeal(date, state.mealId, body);
     const mealId = meal?.id ?? state.mealId;
+    // после переезда прежней ссылки на блок нет — он остался в старом дне
+    const schedId = moved ? null : state.mealSchedId;
 
-    if (wantBlock && state.mealSchedId) {
-      await data.updateRow(date, state.mealSchedId, blockBody);
+    if (wantBlock && schedId) {
+      await data.updateRow(date, schedId, blockBody);
     } else if (wantBlock) {
       const block = await data.createRow(date, blockBody);
       if (block?.id) await data.updateMeal(date, mealId, { scheduleItemId: block.id });
-    } else if (state.mealSchedId) {
-      await data.removeRow(date, state.mealSchedId);
+    } else if (schedId) {
+      await data.removeRow(date, schedId);
       await data.updateMeal(date, mealId, { scheduleItemId: null });
     }
   })();
@@ -2020,100 +2141,12 @@ const FREQ_OF = {
 
 const REPEAT_OF = Object.fromEntries(Object.entries(FREQ_OF).map(([k, v]) => [v, k]));
 
-function openReminder(row) {
-  const r = row?.raw ?? row ?? null;
-  const seriesId = r?.series_id ?? null;
-  const rule = seriesId ? (store.series ?? []).find(s => s.id === seriesId) : null;
-  const mask = rule?.byweekday ?? 0;
-  return set({
-    modal: 'reminder',
-    remId: row?.id ?? 'new',
-    remTitle: row?.title ?? '',
-    remDate: RU_DATE(state.date),
-    remTime: hhmm(r?.start_min ?? row?.start ?? 600),
-    remLeads: row ? leadsOf(row.raw ? row : adapt.scheduleRow(r, { isToday: false, minutes: 0 })) : ['at'],
-    remAlarm: row?.alarm ?? 'notify',
-    remRepeat: rule ? (REPEAT_OF[rule.freq] ?? 'Разово') : 'Разово',
-    remSeriesId: seriesId,
-    // дни недели для еженедельного повтора: пусто значит «в тот же день недели»
-    remDays: Object.fromEntries(Array.from({ length: 7 }, (_, i) => [i, Boolean(mask & (1 << i))])),
-    notice: null,
-  });
-}
-
-function saveReminder() {
-  const title = String(state.remTitle ?? '').trim();
-  if (!title) { needField('remTitle', 'Впишите, о чём напомнить'); return; }
-  const date = fromRuDate(state.remDate);
-  if (!date) { setIn({ notice: 'Дата пишется как 05.08.2026' }); return; }
-  const startMin = parseHhmm(state.remTime);
-  if (startMin === null) { setIn({ notice: 'Время пишется как 10:00' }); return; }
-
-  const body = adapt.rowToServer({
-    title, start: startMin, end: null, kind: 'reminder',
-    alarm: state.remAlarm, leads: state.remLeads,
-  });
-  const freq = FREQ_OF[state.remRepeat];
-  const mask = Object.entries(state.remDays)
-    .reduce((acc, [i, on]) => (on ? acc | (1 << Number(i)) : acc), 0);
-  /*
-   * Дни недели имеют смысл только у еженедельного. И посылать их надо всегда:
-   * без явной маски сервер берёт «все дни» по умолчанию, и еженедельное
-   * напоминание приходило каждый день. Пусто значит «в тот же день недели»,
-   * поэтому считаем его из самой даты.
-   */
-  const byweekday = freq !== 'weekly' ? undefined
-    : (mask || (1 << ((new Date(`${date}T00:00:00`).getDay() + 6) % 7)));
-
-  if (state.remId === 'new') {
-    busy(freq
-      ? data.createRepeat({ freq, startDate: date, row: body, byweekday })
-      : data.createRow(date, body));
-    return;
-  }
-
-  /*
-   * Правка существующего. Раньше уходила только сама строка, поэтому смена
-   * повтора и даты закрывала шторку без ошибки и не сохранялась ничего:
-   * человек открывал заново и видел прежнее.
-   *
-   * Дату строки нельзя поменять на месте — она часть её адреса; поэтому при
-   * переносе строку пересоздаём в нужном дне.
-   */
-  const wasDate = state.date;
-  busy((async () => {
-    if (date !== wasDate) {
-      await data.removeRow(wasDate, state.remId);
-      await data.createRow(date, body);
-    } else {
-      await data.updateRow(wasDate, state.remId, body);
-    }
-
-    const rule = state.remSeriesId
-      ? (store.series ?? []).find(s => s.id === state.remSeriesId)
-      : null;
-    if (!freq && rule) { await data.removeSeries(rule.id); return; }
-    if (!freq) return;
-    if (rule) {
-      await data.updateSeries(rule.id, { freq, startDate: date, ...(byweekday ? { byweekday } : {}) });
-      return;
-    }
-    await data.createRepeat({ freq, startDate: date, row: body, byweekday });
-  })());
-}
-
-/**
- * Удаление напоминания. У повтора это три разных желания, и путать их нельзя:
- * убрать только этот день, прекратить с этого дня и дальше, убрать весь
- * повтор вместе с историей.
+/*
+ * Своей шторки у напоминания больше нет: блок времени и напоминание правятся
+ * одним редактором строки, где тип выбирается двумя кнопками. Две шторки на
+ * одну сущность значили два места, где приходится держать одно и то же —
+ * повтор, сроки, цвет, — и они начали расходиться.
  */
-function removeReminder(scope) {
-  if (state.remId === 'new') { closeModal(); return; }
-  const date = state.date;
-  if (scope === 'series') { busy(data.removeSeries(state.remSeriesId)); return; }
-  if (scope === 'from') { busy(data.endSeries(state.remSeriesId, date)); return; }
-  busy(data.removeRow(date, state.remId));
-}
 
 // ── Шаблон дня ───────────────────────────────────────────────
 
@@ -2187,10 +2220,23 @@ function busy(job) {
   }).catch(e => { state.busy = false; fail(e); });
 }
 
-const closeModal = () => set({ modal: null });
+/*
+ * Закрывая шторку, гасим и её сообщение.
+ *
+ * Сообщение о проверке относилось к шторке, а висело над днём: человек выходил
+ * из редактора, а сверху по-прежнему стояло «Впишите, что делаем». Это читается
+ * как ошибка экрана, которой нет.
+ */
+const closeModal = () => set({ modal: null, notice: null, noticeBad: false });
 
 const TITLES = {
-  row: () => (state.rowId === 'new' ? 'Новый блок' : 'Строка расписания'),
+  /*
+   * Редактор один, а заголовок называет вещи своими именами: напоминание —
+   * та же строка расписания, но человек-то заводил именно напоминание.
+   */
+  row: () => (state.rowKind === 'reminder'
+    ? (state.rowId === 'new' ? 'Новое напоминание' : 'Напоминание')
+    : (state.rowId === 'new' ? 'Новый блок' : 'Строка расписания')),
   schedule: () => 'Расписание дня',
   ai: () => 'Помощник',
   habit: () => (state.habitId === 'new' ? 'Новая привычка' : 'Привычка'),
@@ -2198,7 +2244,6 @@ const TITLES = {
   task: () => 'Задача',
   food: () => 'Питание на день',
   meal: () => 'Приём пищи',
-  reminder: () => 'Напоминание',
   calendar: () => 'Выбор дня',
   account: () => 'Аккаунт',
   sound: () => state.soundKind,
@@ -2251,16 +2296,23 @@ const DURS = [15, 30, 45, 60, 90, 120, 180, 240];
  *
  * Нужно там, где перерисовывать шторку нельзя: пока человек набирает число,
  * возвращать в поле вычисленное значение — значит мешать ему набирать.
+ *
+ * Плитки одни и те же везде, где задаётся промежуток: строка расписания,
+ * приём пищи, шаблон. Подписи и служат ключом — искать по ним надёжнее, чем
+ * заводить каждому редактору свой набор имён.
  */
-function paintRowTiles() {
-  const rs = state.rowStart ?? 600;
-  const re = state.rowEnd ?? rs + 60;
-  const values = { начало: hhmm(rs), длится: durLabel(Math.max(5, re - rs)), конец: hhmm(re) };
+function paintTiles(start, end) {
+  const values = { начало: hhmm(start), длится: durLabel(Math.max(5, end - start)), конец: hhmm(end) };
   for (const tile of document.querySelectorAll('.wmodal .wtile')) {
     const cap = tile.querySelector('.wtile-cap')?.textContent;
     const field = tile.querySelector('input');
     if (cap && field && values[cap] !== undefined) field.value = values[cap];
   }
+}
+
+function paintRowTiles() {
+  const rs = state.rowStart ?? 600;
+  paintTiles(rs, state.rowEnd ?? rs + 60);
 }
 
 const durLabel = min => {
@@ -2275,11 +2327,15 @@ const durLabel = min => {
  * Раньше плитка «длится» открывала ту же сетку часов, что и «начало», и
  * нажатие на час меняло начало: выбрать длительность было нечем. Здесь
  * готовые значения и своё число минут, а конец считается сам.
+ *
+ * `endKey` — где лежит конец: у строки расписания это `rowEnd`, у приёма пищи
+ * `mealEnd`. Сетка одна на всех: промежуток задаётся всюду одинаково, и
+ * привыкать к разному не приходится.
  */
-function durPicker(rs, dur) {
+function durPicker(rs, dur, endKey = 'rowEnd') {
   const chips = h('div.wwrap');
   add(chips, ...DURS.map(v => sheetChip(durLabel(v), dur === v,
-    () => setIn({ rowEnd: Math.min(1439, rs + v) }), 'wchip-dur')));
+    () => setIn({ [endKey]: Math.min(1439, rs + v) }), 'wchip-dur')));
 
   return h('div.wclock',
     h('div.wclock-cap', { text: 'конец посчитается сам' }),
@@ -2298,12 +2354,12 @@ function durPicker(rs, dur) {
        * мышь.
        */
       h('input.wnum', {
-        name: 'rowDur', value: String(dur), inputMode: 'numeric',
+        name: `${endKey}Dur`, value: String(dur), inputMode: 'numeric',
         oninput: e => {
           const n = Number(String(e.target.value).replace(/\D+/g, ''));
           if (!n) return;
-          state.rowEnd = Math.min(1439, rs + Math.max(5, n));
-          paintRowTiles();
+          state[endKey] = Math.min(1439, rs + Math.max(5, n));
+          paintTiles(rs, state[endKey]);
         },
       }),
       h('span.wclock-cap', { text: 'минут', style: { margin: '0' } })));
@@ -2329,11 +2385,16 @@ const crossing = () => (state.rowKind === 'reminder' ? null : crossingIn(
  * выбирает человек, и применяется он при сохранении.
  */
 function conflictCard(other, end, current, pick) {
+  /*
+   * Двигать следующие нечем нарочно: сдвиг тянет за собой весь остаток дня,
+   * а человек правил один блок. Остаётся то, что меняет только соседа:
+   * оставить внахлёст (так и стоит по умолчанию — пересечение бывает
+   * настоящим) или сократить следующее.
+   */
   const ways = [
-    { k: 'shift', label: 'Сдвинуть следующие', icon: 'arrows-down-up' },
+    { k: 'overlap', label: 'Оставить внахлёст', icon: 'stack-simple' },
     // сократить можно только то, от чего что-то останется
     ...(other.end > end + 5 ? [{ k: 'trim', label: 'Сократить следующее', icon: 'arrows-in-line-vertical' }] : []),
-    { k: 'overlap', label: 'Оставить внахлёст', icon: 'stack-simple' },
   ];
 
   const list = h('div.wstack-tight', { style: { marginTop: '11px' } });
@@ -2350,10 +2411,13 @@ const conflictBlock = () => {
   return other ? conflictCard(other, state.rowEnd ?? 0, state.rowConflict, k => setIn({ rowConflict: k })) : null;
 };
 
-/** Способ расхождения применяется до записи: иначе сдвиг ляжет на старые времена. */
+/**
+ * Способ расхождения применяется до записи: иначе правка соседа легла бы на
+ * старые времена. Внахлёст ничего не меняет — это и есть согласие оставить как
+ * есть.
+ */
 function applyConflict(date, other, way, end) {
-  if (!other || way === 'overlap') return Promise.resolve();
-  if (way === 'shift') return data.shiftRows(date, other.id, end - other.start);
+  if (!other || way !== 'trim') return Promise.resolve();
   return data.updateRow(date, other.id, { startMin: end });
 }
 
@@ -2411,6 +2475,48 @@ const BODIES = {
       () => setIn({ rowKind: k, rowField: k === 'reminder' ? 'start' : field }))));
 
     /*
+     * Дата — тут же: и блок, и напоминание могут переехать на другой день.
+     * Раньше день менялся только у напоминания, и перенести блок было нечем.
+     */
+    const [dy, dm, dd] = String(state.rowDate ?? state.date).split('-').map(Number);
+    const dayTile = h('div.wtile', { onclick: () => openCalendar('row') });
+    add(dayTile, h('span.wtile-cap', { text: 'день' }),
+      h('input', { value: `${dd} ${MONTHS[dm - 1]} ${dy}`, readOnly: true, tabIndex: -1 }));
+
+    /*
+     * Повтор — у любой строки, не только у напоминания: «каждый вторник зал»
+     * такое же обычное дело, как ежегодный день рождения.
+     */
+    const repeats = h('div.wwrap');
+    add(repeats, ...REPEATS.map(r => sheetChip(r, state.rowRepeat === r, () => setIn({ rowRepeat: r }))));
+
+    const weekdays = h('div.wdays7');
+    add(weekdays, ...DOW_SHORT.map((d, i) =>
+      h('button', {
+        type: 'button', text: d, class: state.rowDays[i] ? 'on' : '',
+        onclick: () => setIn(s => ({ rowDays: { ...s.rowDays, [i]: !s.rowDays[i] } })),
+      })));
+
+    /*
+     * У повтора удаление — три разных желания. Показываем их отдельно: одно
+     * «Удалить» тихо решало бы за человека, то ли день, то ли весь повтор.
+     */
+    const repeating = Boolean(state.rowSeriesId);
+    const removes = h('div.wstack-tight',
+      h('button.wbtn-quiet', {
+        type: 'button', text: 'Убрать только в этот день', disabled: state.busy,
+        onclick: () => removeRowScope('day'),
+      }),
+      h('button.wbtn-quiet', {
+        type: 'button', text: 'Прекратить с этого дня', disabled: state.busy,
+        onclick: () => removeRowScope('from'),
+      }),
+      h('button.wbtn-quiet', {
+        type: 'button', text: 'Убрать повтор целиком', disabled: state.busy,
+        onclick: () => removeRowScope('series'),
+      }));
+
+    /*
      * Три плитки времени. У напоминания их одна: момент длительности не имеет,
      * а пустые «длится» и «конец» только сбивали бы с толку.
      */
@@ -2437,7 +2543,12 @@ const BODIES = {
       else setIn({ rowStart: at, rowEnd: at + dur });
     };
 
-    const picker = field === 'dur'
+    /*
+     * Сетка часов нужна и напоминанию: у него нет длительности, но время-то
+     * есть. Раньше её для момента не рисовали вовсе, и нажатие на «начало»
+     * ничем не отвечало — время напоминания было не поменять.
+     */
+    const picker = field === 'dur' && !moment
       ? durPicker(rs, dur)
       : h('div.wclock',
         h('div.wclock-cap', { text: 'выберите час' }),
@@ -2461,8 +2572,10 @@ const BODIES = {
           oninput: e => { state.rowTitle = e.target.value; },
         })),
       kinds,
+      dayTile,
       tiles,
-      moment ? null : picker,
+      picker,
+      // Момент времени не занимает — и пересечься ни с чем не может
       moment ? null : conflictBlock(),
       /*
        * Комментарий к активности: необязательный и короткий. Виден и в самом
@@ -2477,10 +2590,16 @@ const BODIES = {
           oninput: e => { state.rowNote = e.target.value; },
         })),
       colorRow(),
+      h('div', h('div.wfield-label', { text: 'повтор' }), repeats,
+        state.rowRepeat === 'Еженедельно'
+          ? h('div', { style: { marginTop: '10px' } }, weekdays,
+            h('div.wclock-cap', { text: 'пусто — в тот же день недели, что и дата', style: { marginTop: '8px' } }))
+          : null),
       h('div', h('div.wfield-label', { text: 'предупредить · можно несколько' }), leads),
       h('div', h('div.wfield-label', { text: 'чем предупредить' }), modes),
+      repeating ? h('div', h('div.wfield-label', { text: 'убрать' }), removes) : null,
       h('div.wrow-end',
-        h('button.wbtn-quiet', {
+        repeating ? null : h('button.wbtn-quiet', {
           type: 'button', text: state.rowId === 'new' ? 'Отменить' : 'Удалить', onclick: deleteRow,
         }),
         h('button.wbtn-wide', {
@@ -2496,9 +2615,7 @@ const BODIES = {
    */
   calendar() {
     const y = state.calY, m = state.calM;
-    const chosen = state.calFor === 'note' ? (state.noteDate ?? state.date)
-      : state.calFor === 'reminder' ? (fromRuDate(state.remDate) ?? state.date)
-        : state.date;
+    const chosen = state[CAL_FIELD[state.calFor]] ?? state.date;
 
     const grid = h('div.wcal');
     add(grid, ...DOW_SHORT.map(d => h('span.wcal-dow', { text: d })));
@@ -2792,7 +2909,7 @@ const BODIES = {
 
     const save = () => {
       const body = adapt.taskToServer({ title: state.taskTitle, cat: state.taskCat });
-      if (!body.text) { state.notice = 'Впишите задачу'; render(); return; }
+      if (!body.text) { needField('taskTitle', 'Впишите задачу'); return; }
       busy(state.taskId === 'new'
         ? data.createTask(state.date, body)
         : data.updateTask(state.date, state.taskId, body));
@@ -2801,7 +2918,7 @@ const BODIES = {
     return h('div.wstack',
       h('label', h('span.wfield-label', { text: 'задача' }),
         h('input.winput', {
-          value: state.taskTitle, placeholder: 'Что нужно сделать',
+          name: 'taskTitle', value: state.taskTitle, placeholder: 'Что нужно сделать',
           oninput: e => { state.taskTitle = e.target.value; },
         })),
       h('div', h('div.wfield-label', { text: 'категория' }), cats),
@@ -2841,19 +2958,26 @@ const BODIES = {
 
   // ── Приём пищи ──
   meal() {
+    /*
+     * Переключение на «окно» раздвигает промежуток до двух часов, если он ещё
+     * не тронут: окно в полчаса — это не рамка, а то же точное время, и
+     * задавать его заново пришлось бы каждому.
+     */
+    const setMode = k => setIn(s => ({
+      mealMode: k,
+      mealEnd: k === 'window' && s.mealEnd - s.mealStart <= 30
+        ? Math.min(1439, s.mealStart + 120)
+        : s.mealEnd,
+    }));
+
     const modes = h('div.wgrid3');
     add(modes, ...[
       ['none', 'Без времени', 'list-dashes'],
       ['window', 'Окно', 'arrows-out-line-horizontal'],
       ['exact', 'Точное время', 'clock'],
-    ].map(([k, label, iconName]) => opt(label, iconName, state.mealMode === k, () => setIn({ mealMode: k }), true)));
+    ].map(([k, label, iconName]) => opt(label, iconName, state.mealMode === k, () => setMode(k), true)));
 
     const window_ = state.mealMode === 'window';
-    const exact = state.mealMode === 'exact';
-
-    const durs = h('div.wwrap');
-    add(durs, ...[15, 30, 45, 60, 90].map(v =>
-      sheetChip(durLabel(v), state.mealDur === v, () => setIn({ mealDur: v }), 'wchip-dur')));
 
     /*
      * У окна есть свой срок — «к концу окна». Съесть можно где угодно внутри,
@@ -2873,31 +2997,60 @@ const BODIES = {
       h('div.wtoggle-card-body',
         h('div.wrow-sw-title', { text: 'Добавить в расписание' }),
         h('div.wrow-sw-hint', {
-          text: window_
-            ? `займёт окно ${hhmm(state.mealStart)}–${hhmm(state.mealEnd)}, ничего не сдвинет без подтверждения`
-            : `займёт блок ${durLabel(state.mealDur)}, ничего не сдвинет без подтверждения`,
+          text: `займёт ${hhmm(state.mealStart)}–${hhmm(mealBlockEnd())}`
+            + ', ничего не сдвинет без подтверждения',
         })),
       sw(state.mealSched));
 
     /*
-     * Времена вписываются руками: сетка часов здесь была бы третьей по счёту
-     * на одном экране. Разбор мягкий — «19», «1930» и «19:30» одинаково
-     * понятны, и это уже умеет parseHhmm.
+     * Время — теми же плитками и той же сеткой, что у строки расписания.
      *
-     * Шторка при наборе не перерисовывается. Раньше правка применялась по
-     * уходу из поля, а уход случается на нажатии мыши: кнопку «Готово»
-     * пересоздавали до того, как её отпустили, и первое нажатие пропадало.
+     * Раньше здесь было «точное время + 30 минут» с готовыми длительностями:
+     * а если человек готовит наперёд, ему нужно два часа, и такого выбора не
+     * было вовсе. Плюс времена набирались руками, и нажатия по ним ничего не
+     * делали. Диапазон везде задаётся одинаково — привыкать заново не нужно.
      */
-    const timeField = (name, value, onDone) => h('input.wtime', {
-      name, value: hhmm(value),
-      oninput: e => {
-        const at = parseHhmm(e.target.value);
-        if (at === null) return;               // человек ещё набирает
-        Object.assign(state, onDone(at));
-        const other = document.querySelector('.wmodal [name="mealTo"]');
-        if (other && name === 'mealFrom') other.value = hhmm(state.mealEnd);
-      },
-    });
+    const ms = state.mealStart;
+    const me = Math.max(ms + 5, state.mealEnd);
+    const mdur = me - ms;
+    const mfield = state.mealField ?? 'start';
+
+    /*
+     * День — такой же плиткой, как у строки расписания: приём пищи тоже
+     * переезжает, и записывать завтрашний ужин, стоя в сегодняшнем дне,
+     * человек должен уметь, не выходя из шторки.
+     */
+    const [dy, dm, dd] = String(state.mealDate ?? state.date).split('-').map(Number);
+    const mdayTile = h('div.wtile', { onclick: () => openCalendar('meal') });
+    add(mdayTile, h('span.wtile-cap', { text: 'день' }),
+      h('input', { value: `${dd} ${MONTHS[dm - 1]} ${dy}`, readOnly: true, tabIndex: -1 }));
+
+    const mtiles = h('div.wgrid3');
+    add(mtiles, ...[
+      ['start', 'начало', hhmm(ms)],
+      ['dur', 'длится', durLabel(mdur)],
+      ['end', 'конец', hhmm(me)],
+    ].map(([k, label, value]) => {
+      const tile = h('div.wtile', { class: mfield === k ? 'on' : '', onclick: () => setIn({ mealField: k }) });
+      add(tile, h('span.wtile-cap', { text: label }), h('input', { value, readOnly: true, tabIndex: -1 }));
+      return tile;
+    }));
+
+    const mtarget = mfield === 'end' ? me : ms;
+    const setMealClock = (hv, mv) => {
+      const at = hv * 60 + mv;
+      if (mfield === 'end') setIn({ mealEnd: Math.max(ms + 5, at) });
+      // правка начала двигает конец, сохраняя длительность — как в расписании
+      else setIn({ mealStart: at, mealEnd: Math.min(1439, at + mdur) });
+    };
+
+    const mpicker = mfield === 'dur'
+      ? durPicker(ms, mdur, 'mealEnd')
+      : h('div.wclock',
+        h('div.wclock-cap', { text: 'выберите час' }),
+        clockGrid(24, 1, mtarget, hv => setMealClock(hv, mtarget % 60)),
+        h('div.wclock-cap', { text: 'минуты', style: { margin: '12px 0 9px' } }),
+        clockGrid(12, 5, mtarget, mv => setMealClock(Math.floor(mtarget / 60), mv)));
 
     return h('div.wstack',
       h('label', h('span.wfield-label', { text: 'что едим' }),
@@ -2907,26 +3060,18 @@ const BODIES = {
         })),
       h('div',
         h('div.wfield-label', { text: 'время' }), modes,
-        state.mealMode === 'none' ? null : h('div.wrow', { style: { marginTop: '12px' } },
-          timeField('mealFrom', state.mealStart, at => ({
-            mealStart: at,
-            // окно двигается целиком: правя начало, человек не хочет менять его ширину
-            mealEnd: window_ ? at + Math.max(15, state.mealEnd - state.mealStart) : state.mealEnd,
-          })),
-          h('span.whint', { text: window_ ? '—' : '+' }),
-          window_
-            ? timeField('mealTo', state.mealEnd, at => ({ mealEnd: Math.max(state.mealStart + 15, at) }))
-            : h('span.wtime.wtime-flat', { text: durLabel(state.mealDur) })),
         window_
-          ? h('div.wclock-cap', { text: 'мягкая рамка: съесть где-то внутри окна', style: { marginTop: '8px' } })
+          ? h('div.wclock-cap', { text: 'мягкая рамка: съесть где-то внутри окна', style: { marginTop: '10px' } })
           : null),
+      mdayTile,
+      state.mealMode === 'none' ? null : mtiles,
+      state.mealMode === 'none' ? null : mpicker,
       h('div.wrow',
         h('input.wnum', {
           name: 'mealKcal', value: state.mealKcal, placeholder: '—', inputMode: 'numeric',
           oninput: e => { state.mealKcal = e.target.value; },
         }),
         h('span.wsmall', { text: 'ккал — можно оставить пустым' })),
-      exact ? h('div', h('div.wfield-label', { text: 'сколько занять в расписании' }), durs) : null,
       state.mealMode === 'none' ? null : schedCard,
       state.mealMode !== 'none' && state.mealSched ? mealConflictBlock() : null,
       state.mealMode === 'none' ? null : h('div',
@@ -2941,101 +3086,6 @@ const BODIES = {
         h('button.wbtn-wide', {
           type: 'button', text: state.busy ? 'Сохраняю…' : 'Готово', disabled: state.busy,
           onclick: saveMeal,
-        })));
-  },
-
-  // ── Напоминание ──
-  reminder() {
-    const repeats = h('div.wwrap');
-    add(repeats, ...REPEATS.map(r => sheetChip(r, state.remRepeat === r, () => setIn({ remRepeat: r }))));
-
-    const days = h('div.wdays7');
-    add(days, ...DOW_SHORT.map((d, i) =>
-      h('button', {
-        type: 'button', text: d, class: state.remDays[i] ? 'on' : '',
-        onclick: () => setIn(s => ({ remDays: { ...s.remDays, [i]: !s.remDays[i] } })),
-      })));
-
-    const leads = h('div.wwrap.wleads');
-    add(leads, ...[...LEADS, { k: 'week', label: 'за неделю' }].map(l =>
-      sheetChip(l.label, state.remLeads.includes(l.k), () => setIn({ remLeads: toggleLead(state.remLeads, l.k) }))));
-
-    const modes = h('div.wgrid2');
-    add(modes, ...ALARM.filter(a => a.k !== 'off').map(a =>
-      opt(a.label, a.icon, state.remAlarm === a.k, () => setIn({ remAlarm: a.k }))));
-
-    /*
-     * У повтора удаление — это три разных желания. Показываем их отдельными
-     * кнопками, иначе «Удалить» тихо решает за человека: то ли один день, то
-     * ли весь повтор — а вернуть уже нечем.
-     */
-    const remAt = parseHhmm(state.remTime) ?? 600;
-    const remDay = fromRuDate(state.remDate) ?? state.date;
-    const [ry, rm, rd] = remDay.split('-').map(Number);
-
-    const remTiles = h('div.wgrid2');
-    add(remTiles,
-      (() => {
-        const tile = h('div.wtile', { onclick: () => openCalendar('reminder') });
-        add(tile, h('span.wtile-cap', { text: 'когда' }),
-          h('input', { value: `${rd} ${MONTHS[rm - 1]} ${ry}`, readOnly: true, tabIndex: -1 }));
-        return tile;
-      })(),
-      (() => {
-        const tile = h('div.wtile', { class: 'on' });
-        add(tile, h('span.wtile-cap', { text: 'во сколько' }),
-          h('input', { value: hhmm(remAt), readOnly: true, tabIndex: -1 }));
-        return tile;
-      })());
-
-    const repeating = Boolean(state.remSeriesId);
-    const removes = h('div.wstack-tight',
-      h('button.wbtn-quiet', {
-        type: 'button', text: 'Убрать только этот день', disabled: state.busy,
-        onclick: () => removeReminder('day'),
-      }),
-      h('button.wbtn-quiet', {
-        type: 'button', text: 'Не напоминать с этого дня', disabled: state.busy,
-        onclick: () => removeReminder('from'),
-      }),
-      h('button.wbtn-quiet', {
-        type: 'button', text: 'Убрать повтор целиком', disabled: state.busy,
-        onclick: () => removeReminder('series'),
-      }));
-
-    return h('div.wstack',
-      h('label', h('span.wfield-label', { text: 'о чём напомнить' }),
-        h('input.winput', {
-          name: 'remTitle', value: state.remTitle, placeholder: 'Например, забрать документы',
-          oninput: e => { state.remTitle = e.target.value; },
-        })),
-      /*
-       * Дата и время — теми же плитками, что у строки расписания, и с той же
-       * сеткой часов. Раньше здесь было голое поле: время в нём приходилось
-       * набирать вслепую, и оно не читалось как то, что вообще можно менять.
-       */
-      remTiles,
-      h('div.wclock',
-        h('div.wclock-cap', { text: 'выберите час' }),
-        clockGrid(24, 1, remAt, hv => setIn({ remTime: hhmm(hv * 60 + (remAt % 60)) })),
-        h('div.wclock-cap', { text: 'минуты', style: { margin: '12px 0 9px' } }),
-        clockGrid(12, 5, remAt, mv => setIn({ remTime: hhmm(Math.floor(remAt / 60) * 60 + mv) }))),
-      h('div', h('div.wfield-label', { text: 'повтор' }), repeats,
-        state.remRepeat === 'Еженедельно'
-          ? h('div', { style: { marginTop: '10px' } }, days,
-            h('div.wclock-cap', { text: 'пусто — в тот же день недели, что и дата', style: { marginTop: '8px' } }))
-          : null),
-      h('div', h('div.wfield-label', { text: 'предупредить · можно несколько' }), leads),
-      h('div', h('div.wfield-label', { text: 'чем предупредить' }), modes),
-      repeating ? h('div', h('div.wfield-label', { text: 'убрать' }), removes) : null,
-      h('div.wrow-end',
-        repeating ? null : h('button.wbtn-quiet', {
-          type: 'button', text: state.remId === 'new' ? 'Отменить' : 'Удалить', disabled: state.busy,
-          onclick: () => removeReminder('day'),
-        }),
-        h('button.wbtn-wide', {
-          type: 'button', text: state.busy ? 'Сохраняю…' : 'Готово', disabled: state.busy,
-          onclick: saveReminder,
         })));
   },
 
@@ -3642,7 +3692,16 @@ function render() {
   vars['--accent-line'] = `color-mix(in srgb, ${accent()} 40%, transparent)`;
   root.dataset.theme = dark() ? 'dark' : 'light';
   for (const [k, v] of Object.entries(vars)) root.style.setProperty(k, v);
+  /*
+   * Увеличение — и как `zoom`, и как переменная.
+   *
+   * `zoom` множит внутри себя всё, включая `100dvh`: при 125 % корень
+   * вырастал до 1055 пикселей на экране в 844, и полоса разделов уезжала
+   * ниже края телефона — до неё было не дотянуться. Высоты, которые должны
+   * остаться экранными, делятся на эту переменную обратно.
+   */
   root.style.zoom = String(state.scale);
+  root.style.setProperty('--zoom', String(state.scale));
 
   const phone = isPhone();
   root.classList.toggle('wphone', phone);
@@ -3658,9 +3717,12 @@ function render() {
     ? h('div.wnotice.bad', { text: 'Нет связи. Смотреть можно, а правки не сохранятся — они не уходят на сервер' })
     : null;
 
-  const notice = state.notice && !state.modal
-    ? h('div.wnotice', { class: state.noticeBad ? 'bad' : '', text: state.notice })
-    : null;
+  /*
+   * На экране показываем только экранное сообщение. Сообщение шторки живёт в
+   * самой шторке и с ней же исчезает — иначе «Впишите, что делаем» уходило
+   * вместе с человеком в другой раздел и читалось как поломка экрана.
+   */
+  const notice = state.toast ? h('div.wnotice', { text: state.toast }) : null;
 
   if (phone) {
     replace(root,

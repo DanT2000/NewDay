@@ -139,9 +139,20 @@ const after = await doneCount();
  * живучести соседнего узла: если экран перестроили целиком, прежний узел
  * выбрасывается из документа.
  */
-await js(`window.__side = document.querySelector('.wside');
+/*
+ * Прокрутку проверяем на нарочно низком окне: на высоком содержимое влезает
+ * целиком, прокручивать нечего, и проверка ничего не проверяет.
+ */
+await rpc(ws, 'Emulation.setDeviceMetricsOverride', { width: 1440, height: 560, deviceScaleFactor: 1, mobile: false });
+await wait(600);
+const прокрутка = await js(`(() => {
+  window.__side = document.querySelector('.wside');
   window.__tasks = document.querySelector('.wtasks');
-  document.querySelector('.wbody').scrollTop = 120;`);
+  const b = document.querySelector('.wbody');
+  b.scrollTop = 120;
+  return b.scrollTop;
+})()`);
+проба('на низком окне есть что прокручивать', прокрутка > 0, `прокрутилось на ${прокрутка}`);
 await js(`[...document.querySelectorAll('.wchips .wchip')].find(c => c.textContent === 'Дом').click()`);
 await wait(500);
 проба('фильтр не перерисовывает весь экран',
@@ -149,8 +160,10 @@ await wait(500);
   await js(`'меню живо: ' + document.body.contains(window.__side)
     + ', задачи заменены: ' + !document.body.contains(window.__tasks)`));
 проба('прокрутка на месте после фильтра',
-  (await js(`document.querySelector('.wbody').scrollTop`)) === 120,
-  `${await js(`document.querySelector('.wbody').scrollTop`)}`);
+  (await js(`document.querySelector('.wbody').scrollTop`)) === прокрутка,
+  `${прокрутка} → ${await js(`document.querySelector('.wbody').scrollTop`)}`);
+await rpc(ws, 'Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+await wait(500);
 проба('фильтр действительно отфильтровал',
   await js(`[...document.querySelectorAll('.wtasks .wtag')].every(t => t.textContent === 'Дом')`));
 await js(`[...document.querySelectorAll('.wchips .wchip')].find(c => c.textContent === 'Все').click()`);
@@ -334,10 +347,17 @@ const roundtrip = await js(`(async () => {
 await nav('Сейчас');
 await waitFor('Boolean(document.querySelector(".wsched"))');
 await wait(600);
-проба('на «Сейчас» пять разделов эталона и ни одного лишнего',
+/*
+ * Разделов пять, и «напоминаний» среди них нет нарочно: напоминание — это
+ * строка расписания без конца, и живёт оно в расписании. Отдельный список
+ * заставлял бы помнить, куда записана мысль.
+ */
+проба('на «Сейчас» пять разделов и ни одного лишнего',
   (await js(`[...document.querySelectorAll('.wcap')].map(e => e.textContent).join(',')`))
-    === 'расписание,задачи,питание,привычки сегодня,напоминания,заметки дня',
+    === 'расписание,задачи,питание,привычки сегодня,заметки дня',
   await js(`[...document.querySelectorAll('.wcap')].map(e => e.textContent).join(',')`));
+проба('напоминание заводится прямо из расписания',
+  await js(`[...document.querySelectorAll('.wadd')].some(b => b.textContent.includes('Напоминание'))`));
 
 await nav('Настройки');
 await waitFor('Boolean(document.querySelector(".wsettings"))');
@@ -350,6 +370,51 @@ await wait(700);
   (await js(`[...document.querySelectorAll('.wsettings .wcap')].map(e => e.textContent).join(',')`))
     === 'аккаунт,оформление,день и питание,звуки и данные,устройства',
   await js(`[...document.querySelectorAll('.wsettings .wcap')].map(e => e.textContent).join(',')`));
+/*
+ * Размеров два. Полуторный убран нарочно: на телефоне он не оставлял места
+ * ни строке расписания, ни полосе разделов.
+ */
+проба('размеров текста два: 100 % и 125 %',
+  (await js(`(() => { const seg = [...document.querySelectorAll('.wsegline')]
+    .find(s => s.previousElementSibling?.textContent === 'Размер текста');
+    return seg ? [...seg.children].map(b => b.textContent).join(',') : 'нет'; })()`)) === '100%,125%');
+
+/*
+ * Увеличение не должно ронять раскладку: `zoom` множит и высоту экрана, и при
+ * 125 % корень становился выше окна — низ боковой колонки и полоса разделов
+ * уезжали за край. Проверяем ровно это: корень ростом в окно.
+ */
+await js(`[...document.querySelectorAll('.wsegline')]
+  .find(s => s.previousElementSibling?.textContent === 'Размер текста')
+  .children[1].click()`);
+await wait(900);
+const при125 = await js(`(() => {
+  const r = document.querySelector('.wroot').getBoundingClientRect();
+  const foot = document.querySelector('.wside-foot')?.getBoundingClientRect();
+  return { увеличение: getComputedStyle(document.querySelector('.wroot')).zoom,
+           корень: Math.round(r.height), экран: innerHeight,
+           низКолонкиВиден: foot ? foot.bottom <= innerHeight + 1 : null };
+})()`);
+проба('при 125 % корень ростом в экран, низ колонки виден',
+  при125.увеличение === '1.25' && Math.abs(при125.корень - при125.экран) <= 1 && при125.низКолонкиВиден,
+  JSON.stringify(при125));
+await js(`[...document.querySelectorAll('.wsegline')]
+  .find(s => s.previousElementSibling?.textContent === 'Размер текста')
+  .children[0].click()`);
+await wait(700);
+
+/*
+ * Боковая колонка стоит на месте: она прокручивается сама, а не вместе с
+ * содержимым — иначе «Помощник» и профиль уезжают под сгиб на длинном месяце.
+ */
+проба('боковая колонка занимает всю высоту и не уезжает',
+  await js(`(() => { const s = document.querySelector('.wside'); const r = s.getBoundingClientRect();
+    return getComputedStyle(s).position === 'sticky'
+      && Math.abs(r.height - innerHeight) <= 1 && Math.round(r.top) === 0; })()`),
+  await js(`(() => { const s = document.querySelector('.wside'); const r = s.getBoundingClientRect();
+    return getComputedStyle(s).position + ' ' + Math.round(r.top) + '…' + Math.round(r.bottom)
+      + ' при ' + innerHeight; })()`));
+
 const строкиДанных = `(() => {
   const panel = [...document.querySelectorAll('.wsettings .wpanel-list')]
     .find(p => p.querySelector('.wcap')?.textContent === 'звуки и данные');
@@ -369,15 +434,22 @@ await wait(1000);
 await js(`document.querySelector('.wmodal-x').click()`);
 await waitFor('!document.querySelector(".wveil")');
 
-// Напоминание: повтор уходит настоящим правилом
+/*
+ * Напоминание: повтор уходит настоящим правилом.
+ *
+ * Отдельной шторки у напоминания больше нет — оно заводится тем же
+ * редактором строки, и проверяем именно его: одна сущность, один экран.
+ */
 await nav('Сейчас');
-await waitFor('Boolean(document.querySelector(".wrem"))', 40);
+await waitFor('Boolean(document.querySelector(".wsched-row"))', 40);
 await wait(600);
 const правил = () => js(`fetch('/api/v1/series?templates=0').then(r=>r.json()).then(l => l.length)`, true);
 const былоПравил = await правил();
 await js(`[...document.querySelectorAll('.wadd')].find(b => b.textContent.includes('Напоминание')).click()`);
-проба('шторка напоминания открылась',
-  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Напоминание'`));
+проба('напоминание заводится редактором строки',
+  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Новое напоминание'`));
+проба('у напоминания одна плитка времени — момент длительности не имеет',
+  await js(`Boolean(document.querySelector('.wmodal .wgrid1')) && !document.querySelector('.wmodal .wgrid3')`));
 await js(`(() => {
   const i = document.querySelector('.wmodal .winput');
   i.value = 'День рождения Ани';
@@ -647,9 +719,37 @@ await js(`[...document.querySelectorAll('.wmodal .wopt')].find(o => o.textConten
 await wait(300);
 проба('у окна тоже есть «Добавить в расписание»',
   await js(`Boolean(document.querySelector('.wmodal .wtoggle-card'))`));
-проба('подпись говорит про окно, а не про блок',
-  (await js(`document.querySelector('.wmodal .wrow-sw-hint')?.textContent ?? ''`)).includes('займёт окно'),
+проба('подпись называет весь промежуток',
+  /займёт \d\d:\d\d–\d\d:\d\d/.test(await js(`document.querySelector('.wmodal .wrow-sw-hint')?.textContent ?? ''`)),
   await js(`document.querySelector('.wmodal .wrow-sw-hint')?.textContent ?? 'нет'`));
+
+/*
+ * Промежуток у приёма пищи задаётся теми же тремя плитками, что и у строки
+ * расписания: готовка бывает дольше еды, а привыкать к двум разным способам
+ * задать время человек не должен.
+ */
+проба('у приёма пищи те же плитки, что и у строки: день и промежуток',
+  (await js(`[...document.querySelectorAll('.wmodal .wtile .wtile-cap')].map(e => e.textContent).join(' · ')`))
+    === 'день · начало · длится · конец',
+  await js(`[...document.querySelectorAll('.wmodal .wtile .wtile-cap')].map(e => e.textContent).join(' · ')`));
+await js(`[...document.querySelectorAll('.wmodal .wtile')].find(t => t.textContent.includes('день')).click()`);
+проба('клик по дню приёма пищи открывает календарь',
+  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Выбор дня'`));
+await js(`document.querySelector('.wmodal .wcal-day.today').click()`);
+await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Приём пищи'`);
+await wait(300);
+await js(`[...document.querySelectorAll('.wmodal .wtile')].find(t => t.textContent.includes('длится')).click()`);
+await wait(300);
+проба('«длится» открывает длительности, а не часы',
+  await js(`Boolean(document.querySelector('.wmodal [name=mealEndDur]'))`));
+проба('длительность задаётся своим числом минут — хоть 100',
+  await js(`(() => { const i = document.querySelector('.wmodal [name=mealEndDur]');
+    i.value = '100'; i.dispatchEvent(new Event('input', { bubbles: true }));
+    return [...document.querySelectorAll('.wmodal .wtile')]
+      .find(t => t.textContent.includes('длится')).querySelector('input').value; })()`) === '1 ч 40 мин');
+// возвращаем окно к 12:00–14:00, дальше проверка ждёт именно эти времена
+await js(`(() => { const i = document.querySelector('.wmodal [name=mealEndDur]');
+  i.value = '120'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
 await js(`document.querySelector('.wmodal .wtoggle-card').click()`);
 await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
 await waitFor('!document.querySelector(".wveil")', 40);
@@ -675,10 +775,65 @@ await js(`(async () => {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: '' }) });
 })()`, true);
 
+/*
+ * Напоминание в недельной сетке — обычный блок с точкой, а не наклейка
+ * поверх соседей.
+ *
+ * Раньше момент рисовался отдельным слоем поверх колонки: он ложился на
+ * блок, под которым стоял, и того просто не было видно. Ставим напоминание
+ * внутрь рабочего блока и смотрим, что прямоугольники не налезают.
+ */
+const внутри = await js(`(async () => {
+  const d = await (await fetch('/api/v1/days/${DAY}/full')).json();
+  // самый длинный блок дня: в его середине точно есть место для момента
+  const host = d.schedule.filter(x => x.end_min !== null)
+    .sort((a, b) => (b.end_min - b.start_min) - (a.end_min - a.start_min))[0];
+  if (!host) return 'блоков в дне нет';
+  const at = Math.round((host.start_min + host.end_min) / 2);
+  await fetch('/api/v1/days/${DAY}/schedule', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ startMin: at, endMin: null, title: 'Точка внутри блока',
+                           kind: 'reminder', alarmMode: 'notify' }) });
+  return host.title;
+})()`, true);
+console.log('    напоминание поставлено внутрь блока:', внутри);
 await nav('Расписание');
 await wait(600);
 await js(`[...document.querySelectorAll('.wseg button')].find(b => b.textContent === 'Неделя')?.click()`);
-await wait(600);
+await waitFor(`[...document.querySelectorAll('.wblock-title')].some(e => e.textContent === 'Точка внутри блока')`, 40);
+await wait(500);
+
+проба('в неделе напоминание нарисовано блоком с точкой',
+  await js(`(() => { const t = [...document.querySelectorAll('.wblock-title')]
+    .find(e => e.textContent === 'Точка внутри блока');
+    const b = t?.closest('.wblock');
+    return Boolean(b && b.classList.contains('moment') && b.querySelector('.wblock-dot')); })()`));
+проба('в неделе нет отдельного слоя поверх колонки',
+  (await js(`document.querySelectorAll('.wmoment').length`)) === 0);
+
+const налезание = await js(`(() => {
+  const t = [...document.querySelectorAll('.wblock-title')].find(e => e.textContent === 'Точка внутри блока');
+  const me = t?.closest('.wblock');
+  if (!me) return 'блока нет';
+  const a = me.getBoundingClientRect();
+  const col = me.parentElement;
+  const плохие = [...col.querySelectorAll('.wblock')].filter(o => o !== me).filter(o => {
+    const b = o.getBoundingClientRect();
+    // перекрываются и по времени, и по ширине — значит один закрывает другой
+    return a.top < b.bottom && b.top < a.bottom && a.left < b.right - 1 && b.left < a.right - 1;
+  });
+  return плохие.map(o => o.querySelector('.wblock-title')?.textContent).join('|');
+})()`);
+проба('напоминание не закрывает соседний блок', налезание === '', `налезает на: ${налезание}`);
+проба('сосед под напоминанием остался виден',
+  (await js(`(() => { const t = [...document.querySelectorAll('.wblock-title')]
+    .find(e => e.textContent === 'Точка внутри блока');
+    const col = t?.closest('.wblock')?.parentElement;
+    return col ? col.querySelectorAll('.wblock').length : 0; })()`)) > 1);
+
+await js(`(async () => { const d = await (await fetch('/api/v1/days/${DAY}/full')).json();
+  for (const r of d.schedule.filter(x => x.title === 'Точка внутри блока'))
+    await fetch('/api/v1/days/${DAY}/schedule/' + r.id, { method: 'DELETE' }); })()`, true);
 
 /* Месяц: «+ ещё N» когда строк больше, чем влезает, и добавление по клику. */
 await js(`[...document.querySelectorAll('.wseg button')].find(b => b.textContent === 'Месяц').click()`);
@@ -762,12 +917,12 @@ await js(`[...document.querySelectorAll('.wadd')].find(b => b.textContent.includ
 await js(`(() => { const i = document.querySelector('.wmodal .winput');
   i.value = 'Обед проверкой'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
 await js(`[...document.querySelectorAll('.wmodal .wopt')].find(o => o.textContent.includes('Окно')).click()`);
-проба('у окна два времени и подпись про рамку',
-  (await js(`document.querySelectorAll('.wmodal .wtime').length`)) === 2
+проба('у окна день, три плитки времени и подпись про рамку',
+  (await js(`document.querySelectorAll('.wmodal .wtile').length`)) === 4
   && (await js(`[...document.querySelectorAll('.wmodal .wclock-cap')].some(e => e.textContent.includes('внутри окна'))`)));
 await js(`[...document.querySelectorAll('.wmodal .wopt')].find(o => o.textContent.includes('Точное время')).click()`);
-проба('у точного времени есть выбор длительности и переключатель расписания',
-  (await js(`document.querySelectorAll('.wmodal .wchip-dur').length`)) >= 4
+проба('у точного времени тот же диапазон и переключатель расписания',
+  (await js(`document.querySelectorAll('.wmodal .wtile').length`)) === 4
   && (await js(`Boolean(document.querySelector('.wmodal .wtoggle-card'))`)));
 await js(`document.querySelector('.wmodal .wtoggle-card').click()`);
 await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
