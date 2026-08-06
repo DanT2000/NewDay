@@ -14,7 +14,18 @@ import os
 from PIL import Image
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'brand-icon.png')
+
+"""
+`--android-only` нужен затем, что источники у иконок разные.
+
+Иконка запуска на телефоне — светлая: на рабочем столе Android она соседствует
+с чужими значками, и тёмная плашка среди них выглядит дырой. А `logo-256.png` в
+вебе стоит на тёмных страницах входа, и светлый вариант там был бы белым
+пятном. Поэтому одна команда правит только нативные иконки, не задевая веб.
+"""
+ANDROID_ONLY = '--android-only' in sys.argv
+args = [a for a in sys.argv[1:] if not a.startswith('--')]
+SRC = args[0] if args else os.path.join(ROOT, 'brand-icon.png')
 
 WEB = os.path.join(ROOT, 'public', 'icons')
 ANDROID = os.path.join(ROOT, 'android', 'app', 'src', 'main', 'res')
@@ -96,14 +107,18 @@ def main():
     src = load(SRC)
     print(f'Исходник: {os.path.relpath(SRC, ROOT)} {src.width}x{src.height}')
 
-    print('Веб и PWA:')
-    for name, size in WEB_SIZES.items():
-        save(resized(src, size), os.path.join(WEB, name))
-    # maskable обрезается системой под свою форму, поэтому фон должен быть залит,
-    # а содержимое — с полями, иначе по краям окажется дыра
     bg = edge_color(src)
     print(f'Фоновый цвет из иконки: #{bg[0]:02X}{bg[1]:02X}{bg[2]:02X}')
-    save(inset(src, 512, 0.80, bg), os.path.join(WEB, 'icon-maskable-512.png'))
+
+    if ANDROID_ONLY:
+        print('Только Android: веб-иконки не трогаю')
+    else:
+        print('Веб и PWA:')
+        for name, size in WEB_SIZES.items():
+            save(resized(src, size), os.path.join(WEB, name))
+        # maskable обрезается системой под свою форму, поэтому фон должен быть залит,
+        # а содержимое — с полями, иначе по краям окажется дыра
+        save(inset(src, 512, 0.80, bg), os.path.join(WEB, 'icon-maskable-512.png'))
 
     if os.path.isdir(os.path.join(ROOT, 'android')):
         print('Android:')

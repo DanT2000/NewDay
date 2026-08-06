@@ -444,8 +444,35 @@ select.winput { appearance: auto; cursor: pointer; }
   border: 1px solid transparent; background: var(--raise); color: var(--dim);
 }
 .wopt.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
-.wopt > span { flex: 1; text-align: left; }
+.wopt > span { flex: 1; text-align: left; min-width: 0; }
 .wopt-sm { min-height: 44px; font: 400 14px/1.2 var(--ui); }
+
+/*
+ * Четыре степени сигнала в одну строку. Значок над надписью, а не рядом:
+ * рядом четыре подписи в строку не влезают, а столбиком влезают и читаются
+ * одним взглядом.
+ *
+ * Когда шторка узкая — при увеличении 125 % на телефоне четверти строки
+ * хватает на восемь букв, — строится два на два. Ломать «Без напоминания» на
+ * «Без напоми / нания» нельзя: подпись перестаёт читаться, а понятнее от
+ * этого не становится. Поэтому в подписях перенос только по словам.
+ */
+.wgrid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.wgrid4 .wopt {
+  flex-direction: column; gap: 6px; padding: 10px 6px; min-height: 62px;
+  justify-content: center;
+}
+.wgrid4 .wopt > span {
+  flex: none; text-align: center; font: 400 12px/1.25 var(--ui);
+  overflow-wrap: normal; hyphens: manual;
+}
+/*
+ * Мерой служит тело шторки, а не сама строка: элемент не может отвечать на
+ * запрос о собственном контейнере — контейнером должен быть кто-то выше.
+ */
+@container (max-width: 400px) {
+  .wgrid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 
 /* Часы и минуты в редакторе строки */
 .wgrid1 { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
@@ -1002,6 +1029,13 @@ select.winput { appearance: auto; cursor: pointer; }
 }
 @keyframes wpop { from { opacity: 0; transform: translateY(10px) scale(.99); } }
 .wmodal.wide { width: 640px; }
+
+/*
+ * Тело шторки — мера для того, что внутри неё перестраивается по тесноте
+ * (например, четыре степени сигнала). Ширина шторки зависит и от экрана, и от
+ * увеличения, а медиазапрос второго не видит.
+ */
+.wmodal-body { container-type: inline-size; }
 
 .wmodal-hd { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
 .wmodal-hd b { flex: 1; font: 500 20px/1.2 var(--ui); letter-spacing: -.01em; }

@@ -2709,8 +2709,14 @@ const BODIES = {
     add(leads, ...LEADS.map(l => sheetChip(l.label, state.rowLeads.includes(l.k),
       () => setIn({ rowLeads: toggleLead(state.rowLeads, l.k) }))));
 
-    const modes = h('div.wgrid2');
-    add(modes, ...ALARM.map(a => opt(a.label, a.icon, state.rowAlarm === a.k, () => setIn({ rowAlarm: a.k }))));
+    /*
+     * Четыре степени в одну строку: они и так короткие, а сеткой два на два
+     * занимали вдвое больше места и читались как две пары, хотя это одна шкала
+     * от тишины до будильника.
+     */
+    const modes = h('div.wgrid4');
+    add(modes, ...ALARM.map(a =>
+      opt(a.label, a.icon, state.rowAlarm === a.k, () => setIn({ rowAlarm: a.k }), true)));
 
     return h('div.wstack',
       h('label', h('span.wfield-label', { text: moment ? 'о чём напомнить' : 'что делаем' }),
@@ -2745,7 +2751,23 @@ const BODIES = {
             h('div.wclock-cap', { text: 'пусто — в тот же день недели, что и дата', style: { marginTop: '8px' } }))
           : null),
       h('div', h('div.wfield-label', { text: 'предупредить · можно несколько' }), leads),
-      h('div', h('div.wfield-label', { text: 'чем предупредить' }), modes),
+      /*
+       * Про будильник говорим честно: звонит он на телефоне.
+       *
+       * В браузере уведомление показывает система, а звук играет страница — и
+       * только пока она открыта. Задачу пробуждения в браузере ставить некому:
+       * закрыл вкладку, и будильника нет. Обещать здесь звонок значило бы
+       * обещать то, чего не будет; поэтому подпись тихая, а не красная — это
+       * не ошибка, а объяснение, где эта настройка работает.
+       */
+      h('div', h('div.wfield-label', { text: 'чем предупредить' }), modes,
+        state.rowAlarm === 'alarm' || state.rowAlarm === 'sound'
+          ? h('div.wclock-cap', {
+            text: 'будильник звонит на телефоне — там же настраиваются звук и задача '
+              + 'пробуждения. В браузере придёт уведомление, а звук — только пока NewDay открыт',
+            style: { marginTop: '9px' },
+          })
+          : null),
       repeating ? h('div', h('div.wfield-label', { text: 'убрать' }), removes) : null,
       h('div.wrow-end',
         repeating ? null : h('button.wbtn-quiet', {
