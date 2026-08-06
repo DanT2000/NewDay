@@ -137,8 +137,27 @@ def main():
         for density, size in ANDROID_FOREGROUND.items():
             save(inset(src, size, SAFE_ZONE_RATIO),
                  os.path.join(ANDROID, f'mipmap-{density}', 'ic_launcher_foreground.png'))
-        for name, size in (('drawable/splash.png', 960),):
-            save(inset(src, size, 0.35, bg), os.path.join(ANDROID, name))
+        """
+        Экран запуска — во всех вариантах сразу.
+
+        Android выбирает `@drawable/splash` по уточнителям, и портретный
+        `drawable-port-xxxhdpi` перебивает обычный `drawable`. Раньше правился
+        только обычный, а в портретных лежала синяя заглушка Capacitor — и при
+        запуске человек видел сначала чужой логотип, потом наш. Поэтому пишем
+        все варианты одним и тем же.
+
+        Ещё нужен `splash_icon`: на Android 12 и новее систему не обмануть
+        картинкой в фоне окна — она рисует свой экран запуска и берёт для него
+        отдельную иконку.
+        """
+        for size in (960,):
+            splash = inset(src, size, 0.35, bg)
+            save(splash, os.path.join(ANDROID, 'drawable/splash.png'))
+            for orient in ('port', 'land'):
+                for density in ANDROID_MIPMAP:
+                    save(splash, os.path.join(ANDROID, f'drawable-{orient}-{density}', 'splash.png'))
+        # иконка для системного экрана запуска: холст 288dp, содержимое в центре
+        save(inset(src, 576, 0.62), os.path.join(ANDROID, 'drawable/splash_icon.png'))
     else:
         print('Каталог android/ не найден — пропускаю нативные иконки')
 

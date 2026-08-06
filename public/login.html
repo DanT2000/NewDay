@@ -44,7 +44,12 @@
 
     <p class="auth-footer">Нет аккаунта? <a href="/register.html">Зарегистрироваться</a></p>
     <p class="auth-footer"><a href="/reset.html">Забыли пароль?</a></p>
-    <p class="auth-footer"><a href="/install.html">Приложение для Android</a></p>
+    <!--
+      Ссылка на приложение — только в браузере. Внутри самого приложения
+      предлагать его скачать бессмысленно: оно уже установлено, и человек
+      читает это как «вы не там, где нужно».
+    -->
+    <p class="auth-footer" id="get-app"><a href="/install.html">Приложение для Android</a></p>
   </div>
 
   <script type="module">
@@ -56,6 +61,8 @@
      * известен: он либо сохранён с прошлого раза, либо стоит в поле.
      */
     if (window.Capacitor?.isNativePlatform?.()) {
+      // приложение уже здесь — предлагать его скачать незачем
+      document.getElementById('get-app')?.remove();
       const saved = localStorage.getItem('newday.apiBase');
       if (!saved) {
         const fallback = document.getElementById('server')?.value?.trim();

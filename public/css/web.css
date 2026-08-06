@@ -1181,6 +1181,24 @@ select.winput { appearance: auto; cursor: pointer; }
 .wtoken-name { font: 400 14px/1.3 var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wtoken-meta { font: 400 12px/1.3 var(--ui); color: var(--faint); margin-top: 5px; }
 
+/*
+ * Строка разрешения будильника. Состояние видно значком и цветом, а рядом
+ * написано, что без него сломается: «разрешите доступ» без объяснения человек
+ * не выдаёт, и правильно делает.
+ */
+.wperm {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap; row-gap: 10px;
+  padding: 12px 14px; border-radius: 12px; background: var(--raise);
+  box-shadow: inset 2px 0 0 var(--warn);
+}
+.wperm.ok { box-shadow: inset 2px 0 0 var(--accent); }
+.wperm-ok { color: var(--accent); flex: none; }
+.wperm-bad { color: var(--warn); flex: none; }
+.wperm-body { flex: 1 1 180px; min-width: 0; }
+.wperm-title { font: 400 14px/1.3 var(--ui); }
+.wperm-hint { font: 400 12px/1.4 var(--ui); color: var(--faint); margin-top: 4px; }
+.wperm .wbtn-line { height: 38px; flex: none; }
+
 /* Файл: экспорт и импорт */
 .wfile { display: flex; align-items: center; gap: 14px; padding: 14px; border-radius: 14px; background: var(--raise); }
 .wfile > i:first-child { font-size: 24px; color: var(--accent); }
@@ -1409,7 +1427,20 @@ select.winput { appearance: auto; cursor: pointer; }
   border-color: #ff6a5e;
   box-shadow: 0 0 0 3px color-mix(in srgb, #ff6a5e 22%, transparent);
 }
-.wnotice.bad { box-shadow: inset 3px 0 0 #ff6a5e; }
+.wnotice.bad { box-shadow: inset 3px 0 0 var(--warn); }
+
+/*
+ * Отсутствие связи — не ошибка, а состояние.
+ *
+ * Красная полоса читалась как «что-то сломалось», хотя не сломалось ничего:
+ * человек в метро, приложение работает. Поэтому спокойный серый и тусклый
+ * текст — заметно, но не тревожно.
+ */
+.wnotice.calm {
+  box-shadow: inset 3px 0 0 var(--faint);
+  color: var(--dim);
+}
+.wnotice.calm b { color: var(--text); font-weight: 500; }
 
 .wnotice {
   margin-bottom: 16px; padding: 12px 14px; border-radius: 12px;

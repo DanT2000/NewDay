@@ -15,8 +15,23 @@
         <item name="android:background">@null</item>
     </style>
 
+    <!--
+        Экран запуска — один, а не два подряд.
 
+        Раньше здесь стоял только `android:background`, и получалось вот что: на
+        Android 12 и новее система рисует свой экран запуска сама, из иконки
+        приложения, а фон окна показывался следом. Человек видел два логотипа по
+        очереди, а до правки иконок — ещё и чужой синий крестик первым.
+
+        Теперь системному экрану заданы и фон, и иконка, а `postSplashScreenTheme`
+        говорит, куда уходить после него. Фон — светлый, тот же, что у иконки
+        запуска: тёмный на светлой иконке давал вспышку при переходе.
+    -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/ic_launcher_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
+        <!-- на Android 11 и старше системного экрана нет: там работает фон окна -->
         <item name="android:background">@drawable/splash</item>
     </style>
 </resources>

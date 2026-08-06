@@ -50,20 +50,95 @@ export const store = {
   template: null,     // именованное правило-шаблон, применяется вручную
   series: [],         // правила повторов без имени: ими живут повторяющиеся напоминания
   ai: { ready: false, voice: false },
+  /*
+   * `true`, если то, что на экране, прочитано из локальной копии, а не с
+   * сервера. Экран по этому признаку показывает спокойную полосу: «видно, но
+   * это последнее известное».
+   */
+  offline: false,
 };
 
-/** Один раз при запуске: кто мы и что настроено. */
+/*
+ * Последняя известная копия — чтобы приложение открывалось без сети.
+ *
+ * На телефоне это главное: человек заходит в метро, и приложение обязано
+ * показать сегодняшний день, а не «нет связи с сервером». Раньше запуск падал
+ * на первом же запросе настроек, и от офлайна оставался только кеш оболочки —
+ * то есть пустая страница с сообщением об ошибке.
+ *
+ * Храним в localStorage, а не в Cache API: это не ответы, а состояние, и читать
+ * его нужно синхронно на запуске, до первой отрисовки.
+ */
+const LOCAL = 'newday.local.';
+
+function keep(name, value) {
+  try { localStorage.setItem(LOCAL + name, JSON.stringify({ at: Date.now(), value })); }
+  catch { /* приватный режим или переполнение — офлайн просто не будет */ }
+}
+
+function kept(name) {
+  try {
+    const raw = localStorage.getItem(LOCAL + name);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+/** Когда копия была снята: этим экран объясняет, насколько данные свежие. */
+export const keptAt = name => kept(name)?.at ?? null;
+
+/** Забыть всё локальное: при выходе из аккаунта чужой день видеть нельзя. */
+export function forgetLocal() {
+  try {
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith(LOCAL)) localStorage.removeItem(k);
+    }
+  } catch { /* нечего забывать */ }
+}
+
+/**
+ * Один раз при запуске: кто мы и что настроено.
+ *
+ * Без сети берём последнюю копию и говорим об этом полем `offline`: врать, что
+ * это свежие настройки, нельзя — от них зависит и «сегодня», и тема.
+ */
 export async function boot() {
-  const settings = await api.getSettings();
-  store.settings = settings;
-  store.user = { email: settings.email, username: settings.username, isAdmin: settings.isAdmin };
-  store.ai = await api.GET('/ai/status').catch(() => ({ ready: false, voice: false }));
-  return settings;
+  try {
+    const settings = await api.getSettings();
+    store.settings = settings;
+    store.user = { email: settings.email, username: settings.username, isAdmin: settings.isAdmin };
+    store.offline = false;
+    keep('settings', settings);
+    store.ai = await api.GET('/ai/status').catch(() => ({ ready: false, voice: false }));
+    return settings;
+  } catch (e) {
+    // 401 разбирает вызывающий: там нужен переход на страницу входа, а не копия
+    if (e?.status === 401) throw e;
+    const saved = kept('settings');
+    if (!saved) throw e;
+    store.settings = saved.value;
+    store.user = {
+      email: saved.value.email, username: saved.value.username, isAdmin: saved.value.isAdmin,
+    };
+    store.offline = true;
+    store.ai = { ready: false, voice: false };
+    return saved.value;
+  }
 }
 
 export async function loadDay(date) {
-  store.day = await api.getDay(date);
-  return store.day;
+  try {
+    store.day = await api.getDay(date);
+    store.offline = false;
+    keep(`day.${date}`, store.day);
+    return store.day;
+  } catch (e) {
+    if (e?.status === 401) throw e;
+    const saved = kept(`day.${date}`);
+    if (!saved) throw e;
+    store.day = saved.value;
+    store.offline = true;
+    return store.day;
+  }
 }
 
 /**
@@ -82,8 +157,19 @@ export async function loadRange(date, view) {
     from = keyOf(mondayOf(date));
     to = addDays(from, 6);
   }
-  store.range = await api.GET(`/days/range?from=${from}&to=${to}`);
-  return store.range;
+  try {
+    store.range = await api.GET(`/days/range?from=${from}&to=${to}`);
+    keep(`range.${from}.${to}`, store.range);
+    return store.range;
+  } catch (e) {
+    if (e?.status === 401) throw e;
+    // сетка недели и месяца без сети показывает последнее известное
+    const saved = kept(`range.${from}.${to}`);
+    if (!saved) throw e;
+    store.range = saved.value;
+    store.offline = true;
+    return store.range;
+  }
 }
 
 /**
@@ -112,9 +198,20 @@ export const createToken = (name = 'Интеграция') => api.tokens.create(
 export const revokeToken = id => api.tokens.revoke(id);
 
 export async function loadNotes() {
-  const rows = await api.GET('/notes');
-  store.notes = Array.isArray(rows) ? rows : (rows.days ?? []);
-  return store.notes;
+  try {
+    const rows = await api.GET('/notes');
+    store.notes = Array.isArray(rows) ? rows : (rows.days ?? []);
+    keep('notes', store.notes);
+    return store.notes;
+  } catch (e) {
+    if (e?.status === 401) throw e;
+    // заметки без сети тоже нужны: в них лежит то, что человек записал для себя
+    const saved = kept('notes');
+    if (!saved) throw e;
+    store.notes = saved.value;
+    store.offline = true;
+    return store.notes;
+  }
 }
 
 // ── Шаблон дня ───────────────────────────────────────────────

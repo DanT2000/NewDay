@@ -17,6 +17,7 @@ object AlarmStore {
     private const val KEY_CONFIG = "dismiss_config"
     private const val KEY_ENABLED = "enabled"
     private const val KEY_ACCENT = "accent"
+    private const val KEY_FIRED = "fired_ids"
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -58,6 +59,37 @@ object AlarmStore {
     }
 
     fun accent(ctx: Context): String = prefs(ctx).getString(KEY_ACCENT, "violet") ?: "violet"
+
+    /**
+     * Отметка «это срабатывание уже было».
+     *
+     * Нужна для пропущенных. Телефон, выключенный в момент звонка, о будильнике
+     * забывает совсем: после включения его время уже прошло, и планировщик
+     * молча отбрасывал его — человек просто не просыпался. Теперь недавно
+     * пропущенный звонит сразу после загрузки, но тогда нужен и способ не
+     * зазвонить второй раз: список будильников приходит из веб-части при каждой
+     * синхронизации, и прошедший будильник без отметки звонил бы снова и снова.
+     *
+     * Ключ — номер вместе с временем срабатывания, а не один номер. Иначе
+     * повторяющийся будильник, у которого номер один на все дни, после первого
+     * же звонка считался бы отработавшим навсегда — и завтрашний подъём тихо
+     * пропадал бы. Поймалось это проверкой: «пропущенный после включения»
+     * падал ровно потому, что тот же номер уже звонил в предыдущем сценарии.
+     */
+    fun markFired(ctx: Context, id: Long, fireAt: Long) {
+        val fired = firedKeys(ctx).toMutableList()
+        val key = "$id@$fireAt"
+        if (fired.contains(key)) return
+        fired.add(key)
+        // держим сотню последних: список не должен расти бесконечно
+        prefs(ctx).edit().putStringSet(KEY_FIRED, fired.takeLast(100).toSet()).apply()
+    }
+
+    fun hasFired(ctx: Context, id: Long, fireAt: Long): Boolean =
+        firedKeys(ctx).contains("$id@$fireAt")
+
+    private fun firedKeys(ctx: Context): List<String> =
+        (prefs(ctx).getStringSet(KEY_FIRED, emptySet()) ?: emptySet()).toList()
 
     fun isEnabled(ctx: Context) = prefs(ctx).getBoolean(KEY_ENABLED, true)
 

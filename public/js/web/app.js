@@ -25,6 +25,11 @@ import { store } from './store.js';
 import * as api from '../api.js';
 import { printSheet } from './sheet.js';
 import { renderEmojiPicker } from '../emoji.js';
+/*
+ * Мост в нативные будильники. В браузере плагина нет, и `native.available()`
+ * честно отвечает «нет» — раздел разрешений тогда просто не показывается.
+ */
+import * as native from '../native.js';
 
 /** Часовая сетка: 18 часов с 06:00, строка часа — 44 px. */
 const HOUR_H = 44;
@@ -64,6 +69,8 @@ const state = {
   printScope: 0, printOff: {},
   statsDays: 30,
   accName: '', passOld: '', passNew: '', passNew2: '',
+  // что разрешено будильнику на этом телефоне; в браузере остаётся null
+  alarmPerms: null,
   // секрет токена живёт только пока открыта шторка: сервер его не помнит
   tokenShown: null,
   pairCode: null,
@@ -340,10 +347,32 @@ async function reload() {
     // На настройках нужны шаблон (для его шторки) и список устройств
     if (state.screen === 'settings') {
       jobs.push(data.loadTemplate().catch(() => null), data.loadAccount().catch(() => null));
+      /*
+       * Разрешения будильника спрашиваем у телефона тут же: список меняется
+       * снаружи приложения — человек мог выдать или отобрать разрешение в
+       * системных настройках, — и показывать запомненное значило бы врать.
+       */
+      if (native.available()) {
+        jobs.push(native.checkPermissions().then(p => { state.alarmPerms = p; }).catch(() => null));
+      }
     }
-    await Promise.all(jobs);
+    /*
+     * `allSettled`, а не `all`: одна неудачная попутная загрузка не должна
+     * обваливать всё обновление.
+     *
+     * Без сети первым падали заметки — и вместе с ними не выполнялись `fill` и
+     * `render`. Расписание в локальной копии лежало целым, а на экране его не
+     * было: приложение выглядело так, будто офлайн у него ничего нет.
+     *
+     * Об отказах сообщаем один раз и коротко: список причин на экране человеку
+     * не нужен, ему нужно понимать, что данные могут быть не свежие, — и это
+     * говорит спокойная полоса.
+     */
+    const итоги = await Promise.allSettled(jobs);
     fill();
     render();
+    const беда = итоги.find(r => r.status === 'rejected');
+    if (беда && navigator.onLine !== false && !store.offline) fail(беда.reason);
   } catch (e) {
     fail(e);
   }
@@ -1650,7 +1679,7 @@ function settingsScreen() {
   }));
   const out = h('button.wrow-link.wrow-danger', {
     type: 'button',
-    onclick: () => api.POST('/auth/logout').finally(() => { location.href = '/login.html'; }),
+    onclick: () => logOut(),
   });
   add(out, ico('sign-out', '17px'), h('span', { text: 'Выйти из аккаунта' }),
     h('span.wrow-link-val', { text: '' }), ico('caret-right', '14px'));
@@ -1658,7 +1687,171 @@ function settingsScreen() {
 
   return h('div',
     h('div.whead-title', { text: 'Настройки', style: { marginBottom: '18px' } }),
-    h('div.wsettings', account, look, day, dataPanel, devices));
+    h('div.wsettings', account, look, alarmPanel(), day, dataPanel, devices));
+}
+
+/**
+ * Будильник. Настройки общие на человека, а не у каждой строки: «математика
+ * средней сложности» — свойство человека, а не восьми утра вторника, и
+ * задавать её каждому будильнику отдельно значило бы восемь раз повторить один
+ * выбор.
+ *
+ * Звонит будильник на телефоне, и об этом сказано прямо. В браузере уведомление
+ * показывает система, а звук играет страница — и только пока она открыта;
+ * задачу пробуждения там ставить некому. Настройки при этом правятся и здесь:
+ * они хранятся в профиле и доезжают до телефона синхронизацией.
+ */
+function alarmPanel() {
+  const s = store.settings?.settings ?? {};
+  const advanced = s.alarmMode === 'advanced';
+  const graceOn = s.alarmGraceEnabled !== false;
+  const graceSec = Number(s.alarmGraceSec ?? 60);
+  const save = patch => data.saveSettings(patch).then(() => {
+    render();
+    // на телефоне настройка должна подействовать сразу, а не с очередной
+    // синхронизацией: человек проверяет будильник тут же
+    native.pushAlarmConfig?.(s.alarmProfile).catch(() => {});
+  }).catch(fail);
+
+  const panel = h('div.wpanel', cap('будильник'));
+  add(panel, h('div.wpanel-note', {
+    text: 'Будильник звонит на телефоне: там он поднимает экран, звучит в беззвучном режиме '
+      + 'и переживает перезагрузку. Настройки ниже общие для всех будильников и доезжают '
+      + 'до телефона сами.',
+  }));
+
+  // ── Режим ──
+  const modeSeg = h('div.wsegline');
+  add(modeSeg, ...[['simple', 'Простой'], ['advanced', 'Продвинутый']].map(([k, label]) =>
+    h('button', {
+      type: 'button', text: label, class: (s.alarmMode ?? 'simple') === k ? 'on' : '',
+      onclick: () => save({ alarmMode: k }),
+    })));
+  add(panel, h('div.wpanel-label', { text: 'Режим' }), modeSeg,
+    h('div.wclock-cap', {
+      text: advanced
+        ? 'выключается задачей — «просто нажал и спишь дальше» не выйдет'
+        : 'звонит, нажали — выключился, как обычный будильник',
+      style: { marginTop: '8px' },
+    }));
+
+  if (advanced) {
+    // ── Окно «просто выключить» ──
+    const graceSeg = h('div.wsegline');
+    add(graceSeg, ...[[0, 'Выключено'], [30, '30 с'], [60, '1 мин'], [300, '5 мин']].map(([v, label]) =>
+      h('button', {
+        type: 'button', text: label,
+        class: (v === 0 ? !graceOn : graceOn && graceSec === v) ? 'on' : '',
+        onclick: () => save(v === 0
+          ? { alarmGraceEnabled: false }
+          : { alarmGraceEnabled: true, alarmGraceSec: v }),
+      })));
+    add(panel, h('div.wpanel-label', { text: 'Сначала можно просто выключить' }), graceSeg,
+      h('div.wclock-cap', {
+        text: 'столько будильник звучит тихо и гаснет одной кнопкой — на случай, '
+          + 'если вы уже встали сами. Дальше громкость идёт вверх и появляется задача',
+        style: { marginTop: '8px' },
+      }));
+
+    // ── Задача ──
+    const types = Array.isArray(s.alarmTaskTypes) && s.alarmTaskTypes.length
+      ? s.alarmTaskTypes : ['math'];
+    const taskRow = h('div.wwrap');
+    add(taskRow, ...ALARM_TASKS.map(t => sheetChip(t.label, types.includes(t.k), () => {
+      const next = types.includes(t.k) ? types.filter(x => x !== t.k) : [...types, t.k];
+      // без задачи будильник перестаёт быть продвинутым — математику не отнять
+      save({ alarmTaskTypes: next.length ? next : ['math'] });
+    })));
+    add(panel, h('div.wpanel-label', { text: 'Задача пробуждения' }), taskRow,
+      h('div.wclock-cap', {
+        text: 'QR-код и шаги работают только на телефоне: камеры и датчика шагов в браузере нет. '
+          + 'Если код потерялся или идти некуда, будильник сам предложит математику',
+        style: { marginTop: '8px' },
+      }));
+
+    if (types.includes('math')) {
+      const lvlSeg = h('div.wsegline');
+      add(lvlSeg, ...[[1, 'Простая'], [2, 'Средняя'], [3, 'Сложная']].map(([v, label]) =>
+        h('button', {
+          type: 'button', text: label,
+          class: Number(s.alarmTaskDifficulty ?? 1) === v ? 'on' : '',
+          onclick: () => save({ alarmTaskDifficulty: v }),
+        })));
+      add(panel, h('div.wpanel-label', { text: 'Сложность математики' }), lvlSeg,
+        h('div.wclock-cap', {
+          text: ['однозначные на сложение', 'двузначные на сложение',
+            'двузначные со сложением и вычитанием'][Number(s.alarmTaskDifficulty ?? 1) - 1],
+          style: { marginTop: '8px' },
+        }));
+    }
+  }
+
+  // ── Разрешения: только на телефоне ──
+  if (!native.available()) {
+    add(panel, h('div.wclock-cap', {
+      text: 'Разрешения будильника проверяются в приложении на телефоне — там же есть кнопка '
+        + '«Проверить будильник», которая даёт ему прозвенеть по-настоящему.',
+      style: { marginTop: '14px' },
+    }));
+    return panel;
+  }
+
+  const perms = state.alarmPerms;
+  add(panel, h('div.wpanel-label', { text: 'Разрешения', style: { marginTop: '16px' } }));
+  if (!perms) {
+    add(panel, h('div.wclock-cap', { text: 'Смотрю…', style: { margin: '0' } }));
+    return panel;
+  }
+
+  /*
+   * Каждое разрешение — своей строкой, и рядом сказано, что без него сломается.
+   * «Разрешите доступ» без объяснения человек не выдаёт, и правильно делает.
+   */
+  const list = h('div.wstack-tight', { style: { marginTop: '4px' } });
+  add(list, ...ALARM_PERMS.filter(p => p.shown(perms)).map(p => {
+    const ok = Boolean(perms[p.k]);
+    const row = h('div.wperm', { class: ok ? 'ok' : '' });
+    add(row,
+      ico(ok ? 'check-circle-fill' : 'warning-circle-fill', '18px', ok ? 'wperm-ok' : 'wperm-bad'),
+      h('div.wperm-body',
+        h('div.wperm-title', { text: p.label }),
+        h('div.wperm-hint', { text: ok ? p.done : p.why })),
+      ok ? null : h('button.wbtn-line', {
+        type: 'button', text: 'Разрешить',
+        onclick: () => native.openSystemSettings(p.what).then(refreshAlarmPerms).catch(fail),
+      }));
+    return row;
+  }));
+  add(panel, list);
+
+  if (perms.needsVendorAutostart) {
+    add(panel, h('div.wclock-cap', {
+      text: `На ${perms.manufacturer} автозапуск режется отдельно от системных разрешений: `
+        + 'найдите NewDay в списке автозапуска оболочки и разрешите его, иначе будильник '
+        + 'может не сработать после долгого простоя.',
+      style: { marginTop: '10px' },
+    }));
+  }
+
+  add(panel, h('div.wrow', { style: { marginTop: '14px' } },
+    h('button.wbtn-line', {
+      type: 'button', text: 'Проверить разрешения', onclick: refreshAlarmPerms,
+    }),
+    h('button.wbtn-line', {
+      type: 'button', text: 'Проверить будильник',
+      onclick: () => native.testAlarm(15, 'wakeup')
+        .then(() => note('Через 15 секунд зазвонит — заблокируйте экран, чтобы увидеть, как это выглядит'))
+        .catch(fail),
+    })));
+  return panel;
+}
+
+/** Заново спросить у телефона, что разрешено. */
+function refreshAlarmPerms() {
+  if (!native.available()) return Promise.resolve();
+  return native.checkPermissions()
+    .then(p => { state.alarmPerms = p; render(); })
+    .catch(fail);
 }
 
 /**
@@ -1683,6 +1876,19 @@ function openLink(kind, label) {
   Promise.all([data.loadTemplate(), data.loadDay(state.date)])
     .then(() => { fill(); set({ tplRows: adapt.templateRows(store.template) }); })
     .catch(fail);
+}
+
+/**
+ * Выход из аккаунта забирает и локальную копию.
+ *
+ * Копия нужна, чтобы приложение открывалось без сети, — но она же означает, что
+ * чужой день остался бы на устройстве и открылся бы у следующего вошедшего,
+ * пока нет связи. Выходя, человек рассчитывает, что его данных здесь больше
+ * нет.
+ */
+function logOut() {
+  data.forgetLocal();
+  return api.POST('/auth/logout').finally(() => { location.href = '/login.html'; });
 }
 
 // ── Помощник ─────────────────────────────────────────────────
@@ -2433,6 +2639,57 @@ const footer = (quiet, main, onMain = closeModal) =>
 
 /** Готовые длительности: от четверти часа до четырёх — как в эталоне. */
 const DURS = [15, 30, 45, 60, 90, 120, 180, 240];
+
+/*
+ * Задачи пробуждения. Математика — основная и всегда доступна: она работает на
+ * любом устройстве и не зависит ни от камеры, ни от датчиков. QR и шаги живут
+ * только на телефоне, и если код потерялся или идти некуда, будильник
+ * предлагает математику — иначе выключить его было бы нечем.
+ */
+const ALARM_TASKS = [
+  { k: 'math', label: 'Математика' },
+  { k: 'qr', label: 'QR-код' },
+  { k: 'steps', label: 'Шаги' },
+  { k: 'code', label: 'Код' },
+  { k: 'icons', label: 'Значки' },
+];
+
+/*
+ * Разрешения будильника. У каждого — зачем оно, потому что «разрешите доступ»
+ * без объяснения человек не выдаёт, и правильно делает.
+ */
+const ALARM_PERMS = [
+  {
+    k: 'notifications', what: 'notifications', label: 'Уведомления',
+    why: 'без них будильник не покажется на экране и не зазвонит',
+    done: 'разрешены',
+    shown: () => true,
+  },
+  {
+    k: 'exactAlarm', what: 'exactAlarm', label: 'Точное время',
+    why: 'без него система разбудит «примерно тогда» — на четверть часа позже',
+    done: 'будильник сработает точно в срок',
+    shown: p => p.sdk >= 31,
+  },
+  {
+    k: 'batteryUnrestricted', what: 'battery', label: 'Работа в фоне',
+    why: 'экономия батареи усыпляет приложение, и будильник может не прозвенеть',
+    done: 'приложение не усыпляется',
+    shown: () => true,
+  },
+  {
+    k: 'overlay', what: 'overlay', label: 'Поверх других приложений',
+    why: 'без него экран будильника не поднимется, если телефоном в этот момент пользуются',
+    done: 'экран будильника поднимется поверх всего',
+    shown: () => true,
+  },
+  {
+    k: 'fullScreenIntent', what: 'fullScreenIntent', label: 'Экран на весь экран',
+    why: 'без него будильник придёт полоской уведомления, а не экраном',
+    done: 'будильник откроется на весь экран',
+    shown: p => p.sdk >= 34,
+  },
+];
 
 /*
  * Два размера текста, а не три. Полуторный на телефоне не оставлял места ни
@@ -3393,7 +3650,7 @@ const BODIES = {
       h('div.wrow-end',
         h('button.wbtn-quiet', {
           type: 'button', text: 'Выйти из аккаунта',
-          onclick: () => api.POST('/auth/logout').finally(() => { location.href = '/login.html'; }),
+          onclick: () => logOut(),
         }),
         h('button.wbtn-wide', {
           type: 'button', text: state.busy ? 'Меняю…' : 'Сменить пароль',
@@ -4060,9 +4317,23 @@ function render() {
    * Полоса «нет связи» стоит выше всего остального: пока её нет, человек
    * считает, что правки уходят на сервер, и узнаёт обратное позже — когда
    * откроет тот же день на другом устройстве.
+   *
+   * Спокойная, а не красная: связи нет — это состояние, а не поломка. Человек
+   * в метро, приложение работает, и пугать его нечем. Но сказать, что правки
+   * сейчас не сохранятся, обязательно: промолчать здесь хуже, чем встревожить.
    */
-  const offline = navigator.onLine === false
-    ? h('div.wnotice.bad', { text: 'Нет связи. Смотреть можно, а правки не сохранятся — они не уходят на сервер' })
+  /*
+   * Признак не только `navigator.onLine`: он врёт в обе стороны — показывает
+   * «связь есть» при подключении к точке без интернета и «нет» на некоторых
+   * оболочках Android. Поэтому вторым признаком служит то, что данные на
+   * экране прочитаны из локальной копии: это факт, а не догадка.
+   */
+  const noNet = navigator.onLine === false || store.offline;
+  const offline = noNet
+    ? h('div.wnotice.calm',
+      h('b', { text: 'Нет связи. ' }),
+      'Расписание и дела видны — это последнее, что успело сохраниться на устройстве. '
+      + 'Правки пока не уходят на сервер: появится связь — повторите.')
     : null;
 
   /*
@@ -4099,9 +4370,32 @@ addEventListener('resize', () => {
   render();
 });
 
-// Связь появилась или пропала — видно сразу, а не при первой неудачной правке
-addEventListener('online', () => { render(); reload(); });
+/*
+ * Связь появилась или пропала — видно сразу, а не при первой неудачной правке.
+ *
+ * Признак снимаем не дожидаясь ответа сервера: он ставится при чтении из
+ * локальной копии и сам не сбрасывается, поэтому спокойная полоса висела бы до
+ * конца перечитывания, а при неудаче — и дольше. Если перечитать не удастся,
+ * следующее же чтение поставит признак обратно.
+ */
+addEventListener('online', () => { store.offline = false; render(); reload(); });
 addEventListener('offline', render);
+
+/*
+ * Возврат к приложению — тоже повод перечитать.
+ *
+ * На событие `online` полагаться нельзя: на части оболочек Android оно не
+ * приходит вовсе, а в браузере срабатывает и при подключении к точке без
+ * интернета. Человек же обычно возвращается к приложению уже со связью — и
+ * ждёт увидеть свежий день, а не полосу «нет связи», оставшуюся с метро.
+ */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (!store.offline && navigator.onLine !== false) return;
+  store.offline = false;
+  render();
+  reload();
+});
 
 /*
  * Уходя со страницы, отпускаем микрофон. Закрытую вкладку браузер разбирает
@@ -4172,9 +4466,17 @@ async function bootstrap() {
     const view = settings.settings?.planView;
     if (view === 'day' || view === 'week' || view === 'month') state.view = view;
   } catch (e) {
-    // Не вошли — обработчик выше уже увёл на страницу входа
+    /*
+     * Не вошли — обработчик выше уже увёл на страницу входа. Всё остальное
+     * сюда доходит только если нет ни связи, ни локальной копии: тогда
+     * показывать нечего, и честнее сказать это, чем рисовать пустой день.
+     */
     if (e?.status !== 401) {
-      replace($('#wapp'), h('div.wboot', { text: `Не удалось загрузить: ${e.message}` }));
+      replace($('#wapp'), h('div.wboot', {
+        text: navigator.onLine === false
+          ? 'Нет связи, а сохранённой копии на этом устройстве ещё нет. Откройте приложение один раз со связью.'
+          : `Не удалось загрузить: ${e.message}`,
+      }));
     }
     return;
   }

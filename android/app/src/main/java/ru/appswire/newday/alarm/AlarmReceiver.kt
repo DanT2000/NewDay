@@ -22,6 +22,12 @@ class AlarmReceiver : BroadcastReceiver() {
             return
         }
 
+        /*
+         * Отмечаем, что он отработал. Без этого перезагрузка или синхронизация
+         * сочли бы его пропущенным и позвонили бы второй раз за то же самое.
+         */
+        AlarmStore.markFired(ctx, alarm.id, alarm.fireAt)
+
         val svc = Intent(ctx, AlarmService::class.java).apply {
             action = AlarmService.ACTION_START
             putExtra("alarmId", id)
