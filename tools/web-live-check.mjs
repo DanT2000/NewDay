@@ -493,6 +493,98 @@ const осталосьНапоминаний = await js(`fetch('/api/v1/days/${D
 проба('прогон убрал за собой напоминание', осталосьНапоминаний === 0,
   `осталось ${осталосьНапоминаний}`);
 
+/*
+ * Повтор в редакторе строки: три перехода, каждый из которых однажды делал не
+ * то, о чём просили.
+ */
+const открытьСтроку = async title => {
+  await js(`[...document.querySelectorAll('.wsched-row')]
+    .find(r => r.textContent.includes(${JSON.stringify(title)}))?.click()`);
+  return waitFor(`document.querySelector('.wmodal-hd b')`, 30);
+};
+const выбратьПовтор = async label => {
+  await js(`(() => { const blk = [...document.querySelectorAll('.wmodal .wfield-label')]
+    .find(e => e.textContent === 'повтор')?.parentElement;
+    [...blk.querySelectorAll('.wchip-sheet')].find(c => c.textContent === ${JSON.stringify(label)})?.click(); })()`);
+  await wait(400);
+};
+const строкиС = async title => js(`fetch('/api/v1/days/${DAY}/full').then(r=>r.json())
+  .then(d => d.schedule.filter(x => x.title === ${JSON.stringify(title)}))`, true);
+
+await nav('Сейчас');
+await waitFor('Boolean(document.querySelector(".wsched-row"))', 40);
+await wait(600);
+await js(`fetch('/api/v1/days/${DAY}/schedule', { method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ startMin: 1380, endMin: null, title: 'Проба повтора',
+                         kind: 'reminder', alarmMode: 'notify' }) })`, true);
+await nav('Расписание'); await wait(400); await nav('Сейчас');
+await waitFor(`[...document.querySelectorAll('.wsched-row')].some(r => r.textContent.includes('Проба повтора'))`, 40);
+
+/*
+ * «Разово → Ежедневно» не должно давать близнеца. Раньше строка оставалась
+ * ничьей, сервер считал день недостроенным и создавал вторую такую же.
+ */
+await открытьСтроку('Проба повтора');
+await выбратьПовтор('Ежедневно');
+await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
+await waitFor('!document.querySelector(".wveil")', 40);
+await wait(1400);
+const послеПовтора = await строкиС('Проба повтора');
+проба('«Разово → Ежедневно» не плодит близнеца', послеПовтора.length === 1,
+  `строк ${послеПовтора.length}`);
+проба('строка привязалась к повтору', Boolean(послеПовтора[0]?.series_id),
+  `series_id = ${послеПовтора[0]?.series_id}`);
+
+/*
+ * «Ежедневно → Разово» должно оставить эту строку и прекратить повтор. Раньше
+ * оно стирало и её: удаление правила забирало все строки от сегодняшнего дня.
+ */
+await открытьСтроку('Проба повтора');
+await выбратьПовтор('Разово');
+await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
+await waitFor('!document.querySelector(".wveil")', 40);
+await wait(1400);
+const послеРазово = await строкиС('Проба повтора');
+проба('«Ежедневно → Разово» оставляет строку в дне', послеРазово.length === 1,
+  `строк ${послеРазово.length}`);
+проба('и снимает с неё повтор', послеРазово[0]?.series_id === null,
+  `series_id = ${послеРазово[0]?.series_id}`);
+проба('назавтра повтор уже не достраивает',
+  (await js(`fetch('/api/v1/days/${dayIn(1)}/full').then(r=>r.json())
+    .then(d => d.schedule.filter(x => x.title === 'Проба повтора').length)`, true)) === 0);
+
+/*
+ * Правка строки из чужой колонки — это правка, а не перенос. Раньше «прежним
+ * днём» считался открытый, и строка среды пересоздавалась с новым номером:
+ * слетала галочка, терялся повтор, рвалась связь с приёмом пищи.
+ */
+await nav('Расписание');
+await wait(600);
+await js(`[...document.querySelectorAll('.wseg button')].find(b => b.textContent === 'Неделя').click()`);
+await waitFor(`[...document.querySelectorAll('.wblock-title')].some(e => e.textContent === 'Проба повтора')`, 40);
+const строкаДо = (await строкиС('Проба повтора'))[0];
+await js(`[...document.querySelectorAll('.wblock-title')]
+  .find(e => e.textContent === 'Проба повтора')?.closest('.wblock')?.click()`);
+await waitFor(`document.querySelector('.wmodal-hd b')`, 30);
+await js(`(() => { const i = document.querySelector('.wmodal [name=rowNote]');
+  i.value = 'правка из колонки'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
+await waitFor('!document.querySelector(".wveil")', 40);
+await wait(1200);
+const строкаПосле = (await строкиС('Проба повтора'))[0];
+проба('правка из недельной сетки не пересоздаёт строку',
+  строкаПосле?.id === строкаДо?.id && строкаПосле?.note === 'правка из колонки',
+  `${строкаДо?.id} → ${строкаПосле?.id}, комментарий «${строкаПосле?.note}»`);
+
+await js(`(async () => { const d = await (await fetch('/api/v1/days/${DAY}/full')).json();
+  for (const r of d.schedule.filter(x => x.title === 'Проба повтора'))
+    await fetch('/api/v1/days/${DAY}/schedule/' + r.id, { method: 'DELETE' });
+  const list = await (await fetch('/api/v1/series?templates=0')).json();
+  for (const r of list) await fetch('/api/v1/series/' + r.id, { method: 'DELETE' }); })()`, true);
+await wait(600);
+проба('прогон убрал за собой пробу повтора', (await строкиС('Проба повтора')).length === 0);
+
 // ── Заметка: заголовок и текст ──
 /*
  * На эталоне у заметки два поля. В модели это один текст дня, где первая
@@ -808,8 +900,17 @@ await wait(500);
     .find(e => e.textContent === 'Точка внутри блока');
     const b = t?.closest('.wblock');
     return Boolean(b && b.classList.contains('moment') && b.querySelector('.wblock-dot')); })()`));
-проба('в неделе нет отдельного слоя поверх колонки',
-  (await js(`document.querySelectorAll('.wmoment').length`)) === 0);
+/*
+ * Проверяем не отсутствие старого класса — такая проба сторожила бы пустоту, —
+ * а то, что момент стоит в общей дорожке: у него есть сосед по колонке и
+ * ненулевая ширина, полученная от раскладки.
+ */
+проба('момент стоит в дорожке, а не отдельным слоем',
+  await js(`(() => { const t = [...document.querySelectorAll('.wblock-title')]
+    .find(e => e.textContent === 'Точка внутри блока');
+    const b = t?.closest('.wblock'); if (!b) return false;
+    const s = getComputedStyle(b);
+    return s.position === 'absolute' && b.getBoundingClientRect().width > 8; })()`));
 
 const налезание = await js(`(() => {
   const t = [...document.querySelectorAll('.wblock-title')].find(e => e.textContent === 'Точка внутри блока');

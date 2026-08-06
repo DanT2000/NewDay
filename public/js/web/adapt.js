@@ -265,6 +265,15 @@ export function templateRows(rule) {
         remind_before_min: r.remindBeforeMin,
       }),
       color: r.color ?? null,
+      /*
+       * Тип и комментарий тоже. Сервер их в шаблоне хранит и переносит, а
+       * клиент не читал и не отправлял — и напоминание уезжало в общее
+       * расписание обычным блоком. Хуже того, шаблон пишется набором целиком,
+       * поэтому правка одной строки обнуляла тип и комментарий у всех.
+       */
+      kind: r.kind ?? 'normal',
+      note: r.note ?? '',
+      isReminder: r.kind === 'reminder',
     }))
     .sort((a, b) => a.start - b.start);
 }
@@ -278,6 +287,7 @@ export function templateRows(rule) {
 export const templateToServer = rows => rows.map(r => rowToServer({
   title: r.title, start: r.start, end: r.end,
   alarm: r.alarm, leads: r.leads, color: r.color,
+  kind: r.kind, note: r.note,
 }));
 
 export const taskToServer = ({ title, cat }) => ({

@@ -70,12 +70,23 @@ function sanitizeSchedule(body, { partial }) {
    * Сроков предупреждения может быть несколько: «за день» и «за час» вместе —
    * обычная просьба. Первый (самый ранний) дублируется в remindBeforeMin,
    * чтобы всё, что знает только про одно число, продолжало работать.
+   *
+   * «К концу» (−1) принимает и строка расписания: приём пищи окном ставит в
+   * расписание блок с теми же сроками, и раньше «к концу окна» вместе с
+   * «Добавить в расписание» упиралось в проверку — приём пищи записывался, а
+   * блок к нему нет.
    */
   if (body.remindBefore !== undefined) {
-    const list = normalizeLeads(body.remindBefore);
+    const list = normalizeLeads(body.remindBefore, { allowEnd: true });
     // в базе это строка: колонка одна, а разбирают её и клиент, и планировщик
     out.remindBefore = list.length ? JSON.stringify(list) : null;
-    out.remindBeforeMin = list.length ? list[0] : null;
+    /*
+     * В одиночное число попадает только настоящий срок. «К концу» — отметка, а
+     * не минуты, и старый клиент прочитал бы −1 как «через минуту после
+     * начала»: уведомление пришло бы не тогда, когда просили.
+     */
+    const plain = list.filter(x => x >= 0);
+    out.remindBeforeMin = plain.length ? plain[0] : null;
   }
 
   // Строку time разбирает сам репозиторий — так это работает и для PUT /days/:date/full
@@ -137,13 +148,26 @@ const sanitizeSport = (body, { partial }) => pick(body, {
   sortOrder: x => v.int(x, { min: 0, max: 100000, field: 'порядок', nullable: true }),
 }, partial);
 
-/** Дополнительный эндпоинт расписания: сдвиг времени. */
-function scheduleExtra(router, repo, { dateOf }) {
+/** Дополнительные эндпоинты расписания: сдвиг времени и привязка к повтору. */
+function scheduleExtra(router, repo, { dateOf, idOf }) {
   router.post('/shift', wrap((req, res) => {
     const fromId = v.int(req.body.fromId, { min: 1, field: 'fromId' });
     const minutes = v.int(req.body.minutes, { min: -1439, max: 1439, field: 'minutes' });
     const cascade = req.body.cascade === undefined ? true : Boolean(req.body.cascade);
     res.json(repo.shift(req.user.id, dateOf(req), fromId, minutes, cascade));
+  }));
+
+  /*
+   * Привязка строки к повтору отдельным путём, а не полем в PATCH: id правила
+   * приходит от клиента, и его нужно сверить с владельцем. Обычная правка
+   * строки проверок владельца правила не делает и делать не должна.
+   */
+  router.post('/:id/series', wrap((req, res) => {
+    const raw = req.body.seriesId;
+    const seriesId = raw === null || raw === undefined || raw === ''
+      ? null
+      : v.int(raw, { min: 1, field: 'повтор' });
+    res.json(repo.setSeries(req.user.id, idOf(req), seriesId));
   }));
 }
 

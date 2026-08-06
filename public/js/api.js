@@ -158,6 +158,9 @@ const entity = seg => ({
 export const schedule = { ...entity('schedule'),
   shift: (date, fromId, minutes, cascade) =>
     POST(`/days/${date}/schedule/shift`, { fromId, minutes, cascade }),
+  // Привязать строку к повтору или отвязать: seriesId = null снимает связь
+  setSeries: (date, id, seriesId) =>
+    POST(`/days/${date}/schedule/${id}/series`, { seriesId }),
 };
 export const tasks = entity('tasks');
 export const meals = entity('meals');

@@ -58,15 +58,23 @@ export function buildSheet(day, { parts, scope = 'day', range = null } = {}) {
     h('span', { text: scope === 'day' ? 'план дня' : scope === 'week' ? 'план недели' : 'план месяца' })));
 
   if (want('Расписание')) {
+    /*
+     * Напоминания печатаются здесь же — они и есть строки расписания. Раньше
+     * им отводился свой раздел, и каждое выходило на бумаге дважды: один раз
+     * в расписании, второй — в «Напоминаниях».
+     */
     const rows = (day.schedule ?? []).map(r => h('div.prow',
       tick(),
       h('span.ptime', { text: r.end_min === null ? adapt.hhmm(r.start_min) : `${adapt.hhmm(r.start_min)}–${adapt.hhmm(r.end_min)}` }),
       // комментарий к активности печатается вместе со строкой: на бумаге его
       // больше нигде не прочитать
       h('span.ptext', { text: r.note ? `${r.title} — ${r.note}` : r.title }),
-      // сколько длится — на бумаге это видно только числом
+      // сколько длится — на бумаге это видно только числом; у момента длины
+      // нет, и вместо неё пишем, что это напоминание
       h('span.pmeta', {
-        text: r.end_min === null ? '' : durText(r.end_min - r.start_min),
+        text: r.end_min === null
+          ? (r.kind === 'reminder' ? 'напоминание' : '')
+          : durText(r.end_min - r.start_min),
       })));
     add(sheet, section('Расписание', rows));
   }
@@ -100,17 +108,6 @@ export function buildSheet(day, { parts, scope = 'day', range = null } = {}) {
           .filter(Boolean).join(' · '),
       })));
     add(sheet, section('Спорт', rows));
-  }
-
-  if (want('Напоминания')) {
-    // напоминание — момент с типом; момент с сигналом без типа тоже считается:
-    // так выглядят напоминания, созданные до появления типа
-    const rows = (day.schedule ?? [])
-      .filter(r => r.kind === 'reminder' || (r.end_min === null && r.alarm_mode !== 'none'))
-      .map(r => h('div.prow', tick(),
-        h('span.ptime', { text: adapt.hhmm(r.start_min) }),
-        h('span.ptext', { text: r.title })));
-    add(sheet, section('Напоминания', rows));
   }
 
   if (want('Заметки')) {

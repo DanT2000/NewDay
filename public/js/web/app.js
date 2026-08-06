@@ -41,7 +41,7 @@ const state = {
   modal: null, busy: false, notice: null, noticeBad: false, toast: null,
   rowId: null, rowStart: null, rowEnd: null, rowField: 'start', rowTitle: '', rowAlarm: 'off', rowLeads: ['at'],
   rowKind: 'normal', rowColor: null, rowConflict: 'overlap', rowNote: '',
-  rowRepeat: 'Разово', rowSeriesId: null,
+  rowRepeat: 'Разово', rowSeriesId: null, rowDate: null, rowWasDate: null,
   rowDays: { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
   taskId: null, taskTitle: '', taskCat: 'work',
   mealId: null, mealTitle: '', mealKcal: '', mealMode: 'none', mealField: 'start', mealSched: false,
@@ -1532,16 +1532,10 @@ function settingsScreen() {
       onclick: () => { state.theme = k; render(); api.saveSettings({ theme: k }).catch(fail); },
     })));
 
-  /*
-   * Два размера, а не три. Полуторный на телефоне не оставлял места ни строке
-   * расписания, ни полосе разделов: экран превращался в две карточки и
-   * прокрутку. Крупнее 125 % имеет смысл делать системным увеличением
-   * телефона, а не своим.
-   */
   const scaleSeg = h('div.wsegline');
-  add(scaleSeg, ...[[1, '100%'], [1.25, '125%']].map(([v, label]) =>
+  add(scaleSeg, ...SCALES.map(v =>
     h('button', {
-      type: 'button', text: label, class: state.scale === v ? 'on' : '',
+      type: 'button', text: `${Math.round(v * 100)}%`, class: state.scale === v ? 'on' : '',
       style: { fontSize: `${13 + (v - 1) * 8}px` },
       onclick: () => { state.scale = v; render(); data.saveSettings({ scale: v }).catch(fail); },
     })));
@@ -1752,7 +1746,19 @@ function openRow(r, date = state.date) {
 
   set({
     modal: 'row', rowId: r.id, rowDate: date,
-    rowStart: r.start, rowEnd: r.end ?? r.start + 30, rowField: 'start',
+    /*
+     * Прежний день помним отдельно от открытого. Строку правят и из недельной
+     * сетки, и из месяца — там колонка своя, а открытый день чужой: сравнение с
+     * `state.date` считало правку среды переносом с понедельника, и строка
+     * пересоздавалась. Вместе с ней слетала галочка, терялся повтор и рвалась
+     * связь с приёмом пищи.
+     */
+    rowWasDate: date,
+    /*
+     * Конец у момента считаем от начала и прижимаем к суткам: «напомнить в
+     * 23:50» при переключении на блок давало 24:20, и сервер отказывал.
+     */
+    rowStart: r.start, rowEnd: Math.min(1439, r.end ?? r.start + 30), rowField: 'start',
     rowTitle: r.title, rowAlarm: r.alarm, rowLeads: leadsOf(r),
     rowKind: r.isReminder ? 'reminder' : (r.kind ?? 'normal'),
     rowColor: r.color ?? null, rowConflict: 'overlap', rowNote: r.note ?? '', notice: null,
@@ -1765,8 +1771,8 @@ function openRow(r, date = state.date) {
 /** Новый блок: время либо протянутое, либо предложенное кнопкой. */
 function newRow({ date = state.date, start = 600, end = 660, kind = 'normal' } = {}) {
   set({
-    modal: 'row', rowId: 'new', rowDate: date,
-    rowStart: start, rowEnd: end, rowField: 'start',
+    modal: 'row', rowId: 'new', rowDate: date, rowWasDate: date,
+    rowStart: start, rowEnd: Math.min(1439, end), rowField: 'start',
     rowTitle: '', rowAlarm: kind === 'reminder' ? 'notify' : 'off', rowLeads: ['at'],
     rowKind: kind, rowColor: null, rowConflict: 'overlap', rowNote: '', notice: null,
     rowRepeat: 'Разово', rowSeriesId: null,
@@ -1791,7 +1797,7 @@ function saveRow() {
   }
 
   const date = state.rowDate ?? state.date;
-  const wasDate = state.date;
+  const wasDate = state.rowWasDate ?? state.date;
   const other = state.rowKind === 'reminder' ? null : crossing();
   const way = other ? state.rowConflict : 'overlap';
 
@@ -1815,29 +1821,59 @@ function saveRow() {
 
   /*
    * Правка существующей. Дату строки нельзя поменять на месте — она часть её
-   * адреса, поэтому при переносе строку пересоздаём в нужном дне. Повтор
-   * приводим к выбранному: было разово и стало ежедневно — правило создаём,
-   * было правило и стало «Разово» — убираем.
+   * адреса, поэтому при переносе строку пересоздаём в нужном дне.
    */
   busy((async () => {
     await applyConflict(date, other, way, body.endMin);
+
+    let id = state.rowId;
     if (date !== wasDate) {
+      /*
+       * Сначала создаём в новом дне, потом убираем из старого. Обратный
+       * порядок терял запись целиком, если создание не прошло: в старом дне
+       * её уже нет, в новом ещё нет. Лишняя копия — беда меньшая, её видно и
+       * её можно убрать.
+       */
+      const made = await data.createRow(date, body);
       await data.removeRow(wasDate, state.rowId);
-      await data.createRow(date, body);
+      id = made?.id ?? id;
     } else {
       await data.updateRow(wasDate, state.rowId, body);
     }
 
+    /*
+     * Повтор приводим к выбранному, и это не только про правило — сама строка
+     * должна быть к нему привязана или отвязана.
+     *
+     * Было «Разово», стало «Ежедневно»: одного правила мало. Строка остаётся
+     * ничьей, сервер видит, что повтор в этом дне не материализован, и создаёт
+     * вторую такую же — на экране появлялся близнец.
+     *
+     * Было правило, стало «Разово»: сначала отвязываем строку, потом убираем
+     * правило. Иначе удаление правила забирало с собой и её — «Разово»
+     * означало «удалить», хотя человек просил всего лишь не повторять.
+     */
     const rule = state.rowSeriesId
       ? (store.series ?? []).find(s => s.id === state.rowSeriesId)
       : null;
-    if (!freq && rule) { await data.removeSeries(rule.id); return; }
-    if (!freq) return;
-    if (rule) {
-      await data.updateSeries(rule.id, { freq, startDate: date, ...(byweekday ? { byweekday } : {}) });
+
+    if (!freq) {
+      if (!rule) return;
+      await data.detachRow(date, id);
+      await data.removeSeries(rule.id);
       return;
     }
-    await data.createRepeat({ freq, startDate: date, row: body, byweekday });
+    if (rule) {
+      /*
+       * Начало правила не двигаем: правка вторничного зала в августе не должна
+       * отменять июльские вторники. Меняем только то, о чём спросили, — саму
+       * частоту и дни недели.
+       */
+      await data.updateSeries(rule.id, { freq, ...(byweekday ? { byweekday } : {}) });
+      return;
+    }
+    const made = await data.createRepeat({ freq, startDate: date, row: body, byweekday });
+    if (made?.id) await data.attachRow(date, id, made.id);
   })());
 }
 
@@ -1959,9 +1995,16 @@ function openMeal(m) {
  */
 const mealBlockEnd = () => Math.max(state.mealStart + 5, state.mealEnd);
 
+/*
+ * Пересечение считаем в том дне, который выбран плиткой, а не в открытом.
+ * Иначе предупреждение приходило про чужой день: человек переставлял обед на
+ * завтра, а ему показывали сегодняшний созвон — и наоборот, настоящее
+ * пересечение в завтрашнем дне проходило молча.
+ */
 const mealConflictBlock = () => {
   const end = mealBlockEnd();
-  const other = crossingIn(state.date, state.mealStart, end, state.mealSchedId);
+  const date = state.mealDate ?? state.date;
+  const other = crossingIn(date, state.mealStart, end, state.mealSchedId);
   return other ? conflictCard(other, end, state.mealConflict, k => setIn({ mealConflict: k })) : null;
 };
 
@@ -2012,11 +2055,12 @@ function saveMeal() {
     const other = wantBlock ? crossingIn(date, state.mealStart, end, state.mealSchedId) : null;
     await applyConflict(date, other, state.mealConflict, end);
 
-    if (moved) {
-      if (state.mealSchedId) await data.removeRow(wasDate, state.mealSchedId);
-      await data.removeMeal(wasDate, state.mealId);
-    }
-
+    /*
+     * Порядок при переезде: сначала создать в новом дне, потом убрать из
+     * старого. Обратный порядок терял запись целиком, если создание не прошло —
+     * в старом дне её уже нет, в новом ещё нет, и повторное «Готово» упиралось
+     * в «Запись не найдена» навсегда. Лишняя копия — беда меньшая.
+     */
     const meal = state.mealId === 'new' || moved
       ? await data.createMeal(date, body)
       : await data.updateMeal(date, state.mealId, body);
@@ -2032,6 +2076,11 @@ function saveMeal() {
     } else if (schedId) {
       await data.removeRow(date, schedId);
       await data.updateMeal(date, mealId, { scheduleItemId: null });
+    }
+
+    if (moved) {
+      if (state.mealSchedId) await data.removeRow(wasDate, state.mealSchedId);
+      await data.removeMeal(wasDate, state.mealId);
     }
   })();
 
@@ -2161,6 +2210,13 @@ function openTplRow(index) {
     tplAlarm: r?.alarm ?? 'off',
     tplLeads: r?.leads ?? ['at'],
     tplColor: r?.color ?? null,
+    /*
+     * Тип и комментарий редактор строки шаблона не показывает, но и не теряет:
+     * шаблон пишется набором целиком, и стоило открыть одну строку, как
+     * напоминание в соседней превращалось в обычный блок.
+     */
+    tplKind: r?.kind ?? 'normal',
+    tplNote: r?.note ?? '',
     notice: null,
   });
 }
@@ -2172,8 +2228,11 @@ function saveTplRow() {
   const row = {
     start: state.tplStart, end: state.tplEnd, title,
     alarm: state.tplAlarm, leads: state.tplLeads,
-    // цвет в шаблоне не выбирают, но и не теряют: правка строки его сохраняет
+    // цвет, тип и комментарий в шаблоне не выбирают, но и не теряют: правка
+    // строки их сохраняет
     color: state.tplColor ?? null,
+    kind: state.tplKind ?? 'normal',
+    note: state.tplNote ?? '',
   };
   if (state.tplEdit === 'new') rows.push(row);
   else rows[state.tplEdit] = row;
@@ -2291,6 +2350,14 @@ const footer = (quiet, main, onMain = closeModal) =>
 /** Готовые длительности: от четверти часа до четырёх — как в эталоне. */
 const DURS = [15, 30, 45, 60, 90, 120, 180, 240];
 
+/*
+ * Два размера текста, а не три. Полуторный на телефоне не оставлял места ни
+ * строке расписания, ни полосе разделов: экран превращался в две карточки и
+ * прокрутку. Крупнее 125 % имеет смысл делать системным увеличением телефона,
+ * а не своим.
+ */
+const SCALES = [1, 1.25];
+
 /**
  * Подписи трёх плиток времени правятся на месте.
  *
@@ -2310,10 +2377,6 @@ function paintTiles(start, end) {
   }
 }
 
-function paintRowTiles() {
-  const rs = state.rowStart ?? 600;
-  paintTiles(rs, state.rowEnd ?? rs + 60);
-}
 
 const durLabel = min => {
   const hrs = Math.floor(min / 60);
@@ -2540,7 +2603,9 @@ const BODIES = {
     const setClock = (hv, mv) => {
       const at = hv * 60 + mv;
       if (field === 'end') setIn({ rowEnd: Math.max(rs + 5, at) });
-      else setIn({ rowStart: at, rowEnd: at + dur });
+      // конец прижимаем к суткам: часовой блок с началом в 23:00 давал 24:00,
+      // и сервер отказывал — «конец должен быть от 0 до 1439»
+      else setIn({ rowStart: at, rowEnd: Math.min(1439, at + dur) });
     };
 
     /*
@@ -2962,12 +3027,17 @@ const BODIES = {
      * Переключение на «окно» раздвигает промежуток до двух часов, если он ещё
      * не тронут: окно в полчаса — это не рамка, а то же точное время, и
      * задавать его заново пришлось бы каждому.
+     *
+     * Уходя с окна, снимаем «к концу окна»: чипа для него в других режимах нет,
+     * а сама отметка оставалась в состоянии. Колокольчик горел, уведомление не
+     * приходило никогда, и снять отметку было нечем.
      */
     const setMode = k => setIn(s => ({
       mealMode: k,
       mealEnd: k === 'window' && s.mealEnd - s.mealStart <= 30
         ? Math.min(1439, s.mealStart + 120)
         : s.mealEnd,
+      mealLeads: k === 'window' ? s.mealLeads : s.mealLeads.filter(l => l !== 'end'),
     }));
 
     const modes = h('div.wgrid3');
@@ -3065,6 +3135,19 @@ const BODIES = {
           : null),
       mdayTile,
       state.mealMode === 'none' ? null : mtiles,
+      /*
+       * У точного времени промежуток живёт только в блоке расписания: сам приём
+       * пищи хранит одно время, и режим читается из пары времён — заполнены
+       * оба, значит окно. Поэтому, если блок выключен, честно говорим, где
+       * пропадут выбранные два часа. Раньше подпись молчала, и «2 ч» при
+       * следующем открытии превращались в «30 мин».
+       */
+      state.mealMode === 'exact' && !state.mealSched
+        ? h('div.wclock-cap', {
+          text: 'чтобы это время заняло место в дне, включите «Добавить в расписание»',
+          style: { margin: '0' },
+        })
+        : null,
       state.mealMode === 'none' ? null : mpicker,
       h('div.wrow',
         h('input.wnum', {
@@ -3234,8 +3317,11 @@ const BODIES = {
     // Шаблон почти всегда собирают не с нуля, а из дня, который получился
     const fromDay = h('button.wbtn-dashed', {
       type: 'button', disabled: state.busy || !SCHEDULE.length,
+      // тип, цвет и комментарий берём тоже: без них напоминание уезжало в
+      // шаблон обычным блоком, а цветной день выходил бесцветным
       onclick: () => saveTemplate(SCHEDULE.map(r => ({
         start: r.start, end: r.end, title: r.title, alarm: r.alarm, leads: r.leads,
+        kind: r.isReminder ? 'reminder' : (r.kind ?? 'normal'), note: r.note ?? '', color: r.color ?? null,
       })), 'Шаблон собран из этого дня'),
     });
     add(fromDay, ico('list-dashes', '15px'), h('span', { text: 'Взять из этого дня' }));
@@ -3537,10 +3623,17 @@ async function aiApply(items) {
       if (it.kind === 'task' || (it.kind === 'reminder' && start === null)) {
         await data.createTask(date, adapt.taskToServer({ title: it.title, cat: it.category === 'work' ? 'work' : 'home' }));
       } else {
+        /*
+         * Тип передаём явно. Без него напоминание от помощника приезжало
+         * обычной строкой без конца: в сетке оно рисовалось моментом, а в
+         * списке и в редакторе считалось блоком — и первая же правка молча
+         * приделывала ему конец «плюс полчаса».
+         */
         await data.createRow(date, adapt.rowToServer({
           title: it.title, start: start ?? 0,
           end: it.kind === 'reminder' ? null : toMin(it.end),
-          alarm: it.alarm ?? 'notify', lead: 'at',
+          kind: it.kind === 'reminder' ? 'reminder' : 'normal',
+          alarm: it.alarm ?? 'notify', leads: ['at'],
         }));
       }
       ok += 1;
@@ -3801,7 +3894,12 @@ async function bootstrap() {
     state.date = askedDate() ?? settings.today;
     state.theme = settings.theme ?? 'dark';
     state.color = settings.settings?.accent ?? 'violet';
-    state.scale = settings.settings?.scale ?? 1;
+    /*
+     * Размеров теперь два. Кто успел выбрать полуторный, получал экран,
+     * увеличенный на 150 %, и ни одной подсвеченной кнопки в настройках:
+     * состояние выглядело сломанным. Незнакомое значение приводим к 100 %.
+     */
+    state.scale = SCALES.includes(settings.settings?.scale) ? settings.settings.scale : 1;
     state.sound = settings.settings?.sound ?? 'Рассвет';
     state.notifySound = settings.settings?.notifySound ?? 'Капля';
     /*

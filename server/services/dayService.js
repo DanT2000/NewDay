@@ -183,18 +183,28 @@ function dayService(db, opts = {}) {
     if (src.rev === 0) throw notFound('Исходный день пуст');
     const want = new Set(sections);
 
+    /*
+     * Прежний номер строки → новый. По нему приём пищи находит в копии свой
+     * блок: без этого связь рвалась, и на один обед приходило два уведомления —
+     * одно от блока, второе от приёма пищи, который считал себя ничьим.
+     */
+    const newIdOf = new Map();
+
     const tx = db.transaction(() => {
       days.ensure(user.id, targetDate);
       if (want.has('schedule')) {
         schedule.removeAllForDate(user.id, targetDate);
-        src.schedule.forEach((r, i) => schedule.create(user.id, targetDate, {
-          startMin: r.start_min, endMin: r.end_min, title: r.title, note: r.note,
-          kind: r.kind, alarmMode: r.alarm_mode, alarmProfile: r.alarm_profile,
-          // список сроков и цвет — часть плана; без них копия дня выходила
-          // блёкло-сиреневой и с одним напоминанием вместо трёх
-          remindBeforeMin: r.remind_before_min, remindBefore: r.remind_before_json,
-          color: r.color, done: 0, sortOrder: i,
-        }));
+        src.schedule.forEach((r, i) => {
+          const created = schedule.create(user.id, targetDate, {
+            startMin: r.start_min, endMin: r.end_min, title: r.title, note: r.note,
+            kind: r.kind, alarmMode: r.alarm_mode, alarmProfile: r.alarm_profile,
+            // список сроков и цвет — часть плана; без них копия дня выходила
+            // блёкло-сиреневой и с одним напоминанием вместо трёх
+            remindBeforeMin: r.remind_before_min, remindBefore: r.remind_before_json,
+            color: r.color, done: 0, sortOrder: i,
+          });
+          newIdOf.set(r.id, created.id);
+        });
       }
       if (want.has('tasks')) {
         tasks.removeAllForDate(user.id, targetDate);
@@ -207,8 +217,13 @@ function dayService(db, opts = {}) {
         src.meals.forEach((r, i) => meals.create(user.id, targetDate, {
           slot: r.slot, timeMin: r.time_min, endMin: r.end_min, title: r.title, note: r.note,
           calories: r.calories, remindBefore: r.remind_before_json, done: 0, sortOrder: i,
-          // связь с блоком не копируем: блок в новом дне свой, и ссылка на
-          // чужой означала бы правку чужого дня
+          /*
+           * Связь переводим на блок-копию, а не отбрасываем. Без неё приём
+           * пищи в копии считал себя ничьим, и на один обед приходило два
+           * уведомления: одно от блока, второе от него самого. Если
+           * расписание не копировали, связывать не с чем — тогда пусто.
+           */
+          scheduleItemId: r.schedule_item_id ? (newIdOf.get(r.schedule_item_id) ?? null) : null,
         }));
       }
       if (want.has('sport')) {

@@ -234,6 +234,13 @@ export function toggleHabit(habit, done) {
 export const createRow = (date, body) => api.schedule.create(date, body);
 export const updateRow = (date, id, body) => api.schedule.update(date, id, body);
 export const removeRow = (date, id) => api.schedule.remove(date, id);
+/*
+ * «Повторять» и «не повторять» — это и про саму строку, а не только про
+ * правило. Привязанная строка говорит серверу, что этот день уже достроен;
+ * отвязанная переживает удаление правила и остаётся в дне.
+ */
+export const attachRow = (date, id, seriesId) => api.schedule.setSeries(date, id, seriesId);
+export const detachRow = (date, id) => api.schedule.setSeries(date, id, null);
 /** Сдвиг блока вместе со всем, что начинается позже: способ разойтись при пересечении. */
 export const shiftRows = (date, fromId, minutes) => api.schedule.shift(date, fromId, minutes, true);
 

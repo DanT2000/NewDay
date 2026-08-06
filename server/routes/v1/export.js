@@ -27,7 +27,8 @@ module.exports = function exportRouter({ db }) {
        * график привычки в выгрузку не попадали, а «заменить всё» их стирало.
        */
       scheduleItems: q(`SELECT id, date, start_min, end_min, title, note, done, sort_order, kind,
-                               alarm_mode, alarm_profile, remind_before_min, remind_before_json, color
+                               alarm_mode, alarm_profile, remind_before_min, remind_before_json, color,
+                               series_id
                           FROM schedule_items WHERE user_id = ? ORDER BY date, start_min`),
       tasks: q('SELECT date, bucket, text, done, sort_order, carried_from FROM tasks WHERE user_id = ? ORDER BY date'),
       /*
@@ -46,6 +47,12 @@ module.exports = function exportRouter({ db }) {
                    FROM habits WHERE user_id = ? ORDER BY sort_order`),
       habitLogs: q('SELECT habit_id, date, status, value FROM habit_logs WHERE user_id = ? ORDER BY date'),
       series: q('SELECT id, target, freq, interval, byweekday, start_date, end_date, payload_json, name FROM series WHERE user_id = ?'),
+      /*
+       * Отметки «в этот день повтора нет». Без них восстановление возвращало
+       * удалённые вручную дни: правило достраивало их заново, и человек снова
+       * видел то, что однажды убрал.
+       */
+      seriesOverrides: q('SELECT series_id, date, action FROM series_overrides WHERE user_id = ? ORDER BY date'),
       freeNotes: q('SELECT title, text, created_at, updated_at FROM free_notes WHERE user_id = ? ORDER BY id'),
     };
   };
@@ -77,11 +84,18 @@ module.exports = function exportRouter({ db }) {
       `SELECT date, start_min, end_min, title, note, done, sort_order
          FROM schedule_items WHERE user_id = ? AND date BETWEEN ? AND ?
         ORDER BY date, start_min`).all(uid, from, to);
-    // Окно приёма пищи — это тоже отрезок: без end_min обед 12:00–14:00
-    // уезжал в календарь получасовой точкой
+    /*
+     * Окно приёма пищи — это тоже отрезок: без end_min обед 12:00–14:00 уезжал
+     * в календарь получасовой точкой.
+     *
+     * А приёмы, у которых есть свой блок в расписании, пропускаем: блок уже
+     * выгружен строкой выше, и календарь рисовал два наложенных события с
+     * одним названием и одним временем.
+     */
     const meals = db.prepare(
       `SELECT date, time_min, end_min, title, note, done, sort_order
          FROM meals WHERE user_id = ? AND date BETWEEN ? AND ? AND time_min IS NOT NULL
+          AND schedule_item_id IS NULL
         ORDER BY date, time_min`).all(uid, from, to);
 
     const body = buildIcs({ schedule, meals }, {
@@ -132,18 +146,57 @@ module.exports = function exportRouter({ db }) {
 
       const skip = date => mode === 'merge' && existingDates.has(date);
 
+      /*
+       * Правила кладём раньше строк: строка помнит, каким повтором создана, и
+       * этот номер нужно перевести на новый. Без перевода восстановленная
+       * строка приезжала ничьей, повтор достраивал день ещё раз, и на каждый
+       * вторник выходило по две «Зарядки».
+       *
+       * В режиме «добавить» правило с тем же именем считается тем же самым:
+       * иначе своя же выгрузка удваивала бы шаблон. Безымянные повторы
+       * сравниваем по содержимому — у них имени нет.
+       */
+      const ruleByKey = new Map();
+      if (mode === 'merge') {
+        for (const row of db.prepare('SELECT id, name, freq, start_date, payload_json FROM series WHERE user_id = ?').all(uid)) {
+          ruleByKey.set(row.name ? `name:${row.name}` : `body:${row.freq}|${row.start_date}|${row.payload_json}`, row.id);
+        }
+      }
+      const seriesIdMap = new Map();
+      for (const s of data.series || []) {
+        const key = s.name ? `name:${s.name}` : `body:${s.freq}|${s.start_date}|${s.payload_json}`;
+        const same = ruleByKey.get(key);
+        if (same) { if (s.id) seriesIdMap.set(s.id, same); continue; }
+        const info = db.prepare(`INSERT INTO series
+          (user_id, target, freq, interval, byweekday, start_date, end_date, payload_json, name)
+          VALUES (?,?,?,?,?,?,?,?,?)`).run(
+          uid, s.target ?? 'schedule', s.freq ?? 'daily', s.interval ?? 1,
+          s.byweekday ?? 127, s.start_date ?? null, s.end_date ?? null,
+          s.payload_json ?? '{}', s.name ?? null);
+        ruleByKey.set(key, info.lastInsertRowid);
+        if (s.id) seriesIdMap.set(s.id, info.lastInsertRowid);
+      }
+      for (const o of data.seriesOverrides || []) {
+        const sid = seriesIdMap.get(o.series_id);
+        if (!sid || skip(o.date)) continue;
+        db.prepare(`INSERT INTO series_overrides (user_id, series_id, date, action) VALUES (?,?,?,?)
+                    ON CONFLICT(series_id, date) DO UPDATE SET action = excluded.action`)
+          .run(uid, sid, o.date, o.action ?? 'deleted');
+      }
+
       // старый id блока → новый: по нему приём пищи находит свой блок
       const rowIdMap = new Map();
       for (const r of data.scheduleItems || []) {
         if (skip(r.date)) continue;
         const info = db.prepare(`INSERT INTO schedule_items
           (user_id, date, start_min, end_min, title, note, done, sort_order, kind,
-           alarm_mode, alarm_profile, remind_before_min, remind_before_json, color)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+           alarm_mode, alarm_profile, remind_before_min, remind_before_json, color, series_id)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
           uid, r.date, r.start_min ?? 0, r.end_min ?? null, r.title ?? '', r.note ?? '',
           r.done ?? 0, r.sort_order ?? 0, r.kind ?? 'normal',
           r.alarm_mode ?? 'none', r.alarm_profile ?? 'gentle', r.remind_before_min ?? null,
-          r.remind_before_json ?? null, r.color ?? null);
+          r.remind_before_json ?? null, r.color ?? null,
+          seriesIdMap.get(r.series_id) ?? null);
         if (r.id) rowIdMap.set(r.id, info.lastInsertRowid);
       }
       for (const r of data.tasks || []) {
@@ -210,35 +263,6 @@ module.exports = function exportRouter({ db }) {
         db.prepare(`INSERT OR REPLACE INTO habit_logs (user_id, habit_id, date, status, value)
                     VALUES (?,?,?,?,?)`)
           .run(uid, newId, l.date, l.status ?? 'done', l.value ?? null);
-      }
-
-      /*
-       * Повторы и шаблоны.
-       *
-       * Раньше «заменить всё» их удаляло, а обратно не кладло: восстановление
-       * собственной выгрузки молча стирало и повторяющиеся напоминания, и
-       * общее расписание — то есть ровно то, ради чего копию и делают.
-       *
-       * В режиме «добавить» правило с тем же именем считается тем же самым:
-       * иначе своя же выгрузка удваивала бы шаблон. Безымянные повторы
-       * сравниваем по содержимому — у них имени нет.
-       */
-      const sameRule = new Set();
-      if (mode === 'merge') {
-        for (const row of db.prepare('SELECT name, freq, start_date, payload_json FROM series WHERE user_id = ?').all(uid)) {
-          sameRule.add(row.name ? `name:${row.name}` : `body:${row.freq}|${row.start_date}|${row.payload_json}`);
-        }
-      }
-      for (const s of data.series || []) {
-        const key = s.name ? `name:${s.name}` : `body:${s.freq}|${s.start_date}|${s.payload_json}`;
-        if (sameRule.has(key)) continue;
-        sameRule.add(key);
-        db.prepare(`INSERT INTO series
-          (user_id, target, freq, interval, byweekday, start_date, end_date, payload_json, name)
-          VALUES (?,?,?,?,?,?,?,?,?)`).run(
-          uid, s.target ?? 'schedule', s.freq ?? 'daily', s.interval ?? 1,
-          s.byweekday ?? 127, s.start_date ?? null, s.end_date ?? null,
-          s.payload_json ?? '{}', s.name ?? null);
       }
 
       // Заметки без даты: в режиме «заменить всё» их тоже нужно заменить

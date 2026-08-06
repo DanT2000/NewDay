@@ -119,11 +119,21 @@ function notificationService(db, { push, now = () => Date.now() } = {}) {
 
       for (const before of leadsOf(row, cfg.notifyDefaultBeforeMin)) {
         /*
+         * −1 — «к концу», а не «за минус одну минуту». Так помечает свой срок
+         * приём пищи окном, а в расписание он ставит блок с теми же сроками:
+         * без этой ветки блок звонил бы в начало окна вместо его конца. Без
+         * конца отметке нечего означать.
+         */
+        const atEnd = before === -1;
+        if (atEnd && row.end_min === null) { skipped += 1; continue; }
+        /*
          * Момент считаем вычитанием из начала, а не из минут дня: «за день»
          * и «за неделю» приходятся на другую дату, и вычитание в минутах
          * уводило их в отрицательные числа — такие сроки просто пропадали.
          */
-        const fireAt = startsAt - before * 60000;
+        const fireAt = atEnd
+          ? zonedTimeToUtc(date, row.end_min, user.timezone)
+          : startsAt - before * 60000;
         if (fireAt <= now()) { skipped += 1; continue; }
 
         // тихие часы проверяем по местному времени самого напоминания
@@ -137,9 +147,11 @@ function notificationService(db, { push, now = () => Date.now() } = {}) {
         queue.upsertQueued(user.id, key, fireAt, {
           kind: row.alarm_mode,              // notify | alarm
           title: row.alarm_mode === 'alarm' ? '⏰ Будильник' : 'NewDay',
-          body: before > 0
-            ? `${row.title || 'Без названия'} — через ${humanLead(before)}, в ${formatMinutes(row.start_min)}`
-            : `${row.title || 'Без названия'} — начинается`,
+          body: atEnd
+            ? `${row.title || 'Без названия'} — заканчивается в ${formatMinutes(row.end_min)}`
+            : before > 0
+              ? `${row.title || 'Без названия'} — через ${humanLead(before)}, в ${formatMinutes(row.start_min)}`
+              : `${row.title || 'Без названия'} — начинается`,
           date,
           itemId: row.id,
           startMin: row.start_min,

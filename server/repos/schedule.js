@@ -86,6 +86,32 @@ function scheduleRepo(db) {
     },
 
     /**
+     * Привязать строку к повтору или отвязать (`seriesId: null`).
+     *
+     * Нужно затем, что «повторять» и «не повторять» — это про строку, а не
+     * только про правило. Без привязки сервер считал, что повтор в этом дне
+     * ещё не материализован, и создавал вторую такую же строку. Без отвязки
+     * удаление правила забирало строку с собой, хотя человек просил всего
+     * лишь не повторять её дальше.
+     *
+     * Чужое правило не подходит: id приходит от клиента, и привязка к чужому
+     * повтору означала бы правку чужих дней.
+     */
+    setSeries(userId, id, seriesId) {
+      const row = db.prepare('SELECT id, date FROM schedule_items WHERE id = ? AND user_id = ?')
+        .get(id, userId);
+      if (!row) throw notFound('Строка расписания не найдена');
+      if (seriesId !== null) {
+        const rule = db.prepare('SELECT id FROM series WHERE id = ? AND user_id = ?').get(seriesId, userId);
+        if (!rule) throw notFound('Правило повтора не найдено');
+      }
+      db.prepare("UPDATE schedule_items SET series_id = ?, updated_at = datetime('now') WHERE id = ?")
+        .run(seriesId, id);
+      bumpRev(db, userId, row.date);
+      return db.prepare('SELECT * FROM schedule_items WHERE id = ?').get(id);
+    },
+
+    /**
      * Сдвигает строку на minutes. При cascade — вместе со всеми, что начинаются позже.
      * Сценарий «задержался на обеде на 15 минут».
      */
