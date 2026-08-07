@@ -51,6 +51,16 @@ if ! "$AVDMAN" list avd 2>/dev/null | grep -q "Name: $avd"; then
     -k "system-images;android-${API};google_apis;x86_64" -d pixel_6 --force >/dev/null 2>&1
 fi
 
+# Замки от убитых прогонов.
+#
+# Эмулятор, снятый через taskkill, не успевает убрать за собой
+# `hardware-qemu.ini.lock` и `multiinstance.lock`. Следующий запуск видит их,
+# считает, что этот AVD уже запущен, и молча выходит — в логе остаётся одна
+# строка «поднимаю эмулятор», и кажется, что он просто долго грузится.
+AVD_DIR="${USERPROFILE}/.android/avd/${avd}.avd"
+rm -rf "$AVD_DIR/hardware-qemu.ini.lock" "$AVD_DIR/multiinstance.lock" \
+       "$AVD_DIR/userdata-qemu.img.lock" "$AVD_DIR/snapshot.lock" 2>/dev/null || true
+
 echo "поднимаю эмулятор"
 "$EMU" -avd "$avd" -no-snapshot-save -no-boot-anim -no-audio -gpu swiftshader_indirect >/dev/null 2>&1 &
 "$ADB" wait-for-device
@@ -99,9 +109,32 @@ fi
   echo "APK не встал: $(echo "$out" | tr -d '\r' | tail -1)"
   return 1
 }
-ставим || exit 1
 sdkv=$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')
 echo "на устройстве: Android $("$ADB" shell getprop ro.build.version.release | tr -d '\r') (sdk $sdkv)"
+
+# Сверяем версию с заказанной: проверка уже один раз уверенно отчиталась про
+# Android 14, разговаривая с оставшимся живым Android 16.
+if [ "$sdkv" != "$API" ]; then
+  echo "ПРОВАЛ: подключились не к той версии (просили $API, отвечает $sdkv)"
+  exit 2
+fi
+
+# И что у устройства вообще есть интернет: без него «приложение не видит
+# сервер» ничего не говорит о приложении.
+#
+# Спрашиваем систему, а не пингуем: эмулятор не пропускает ICMP от обычных
+# приложений, и `ping` не проходит даже при живом интернете. Первая версия
+# этой проверки именно так и соврала — объявила, что сети нет, на устройстве,
+# где она была. Система же знает точно: у сети есть признак VALIDATED, если
+# Android сходил наружу и убедился.
+net=$("$ADB" shell "dumpsys connectivity" 2>/dev/null | tr -d '\r' | grep -c "VALIDATED" || true)
+if [ "${net:-0}" -lt 1 ]; then
+  echo "ПРОВАЛ: у эмулятора нет проверенной сети — связь с сервером проверять бессмысленно"
+  exit 2
+fi
+echo "интернет у эмулятора есть"
+
+ставим || exit 1
 
 # ── Мост в вебвью приложения ──
 cdp() {
@@ -112,7 +145,15 @@ cdp() {
   "$ADB" forward tcp:9222 localabstract:webview_devtools_remote_"$pid" >/dev/null 2>&1
   sleep 1
 }
-js() { node tools/webview-eval.js "$1" 2>/dev/null | tail -1; }
+# Значение из вебвью строкой.
+js() {
+  # webview-eval печатает JSON, поэтому строки приходят в кавычках: без их
+  # снятия проверка «непустая строка» проходила на пустой строке `""`.
+  node tools/webview-eval.js "$1" 2>/dev/null | tail -1 | sed 's/^"//; s/"$//'
+}
+
+# То же, но с показом ошибки: когда что-то не выходит, молчание бесполезно
+jsv() { node tools/webview-eval.js "$1" 2>&1 | tail -2; }
 
 start_app() {
   "$ADB" shell am force-stop $PKG >/dev/null 2>&1
@@ -140,9 +181,15 @@ start_app
 
 # Входим тем же путём, что и человек: через форму на странице входа
 js "localStorage.setItem('newday.apiBase', '$BASE')" >/dev/null
+# Сначала проверяем, что из приложения вообще виден сервер: без этого «вход не
+# прошёл» ничего не объясняет — может, дело в сети эмулятора, а не в коде.
+reach=$(js "fetch('$BASE/api/health').then(r => 'здоровье ' + r.status).catch(e => 'сеть недоступна: ' + e.message)")
+проба "сервер виден из приложения" "$(echo "$reach" | grep -q 'здоровье 200' && echo 0 || echo 1)" "$reach"
+
 login_ok=$(js "fetch('$BASE/api/v1/auth/login', { method:'POST', headers:{'Content-Type':'application/json'},
   body: JSON.stringify({ emailOrUsername:'$MAIL', password:'$PASS', issueDeviceToken:true, deviceName:'Проверка', platform:'android' }) })
-  .then(r => r.json()).then(d => { if (d.deviceToken) localStorage.setItem('newday.deviceToken', d.deviceToken); return d.deviceToken ? 'ok' : 'нет токена'; })")
+  .then(r => r.json()).then(d => { if (d.deviceToken) localStorage.setItem('newday.deviceToken', d.deviceToken); return d.deviceToken ? 'ok' : ('ответ без токена: ' + JSON.stringify(d).slice(0, 120)); })
+  .catch(e => 'запрос упал: ' + e.message)")
 проба "вход выдал токен устройства" "$([ "$login_ok" = "ok" ] && echo 0 || echo 1)" "$login_ok"
 
 # открываем веб-версию и даём ей загрузить день
@@ -176,7 +223,7 @@ nodes_off=$(js "document.querySelectorAll('.wroot *').length")
 day_off=$(js "document.querySelector('.wphead-num')?.textContent || document.querySelector('.wtop-num')?.textContent || ''")
 проба "день виден без сети" "$([ -n "$day_off" ] && echo 0 || echo 1)" "«$day_off»"
 banner=$(js "document.querySelector('.wnotice')?.className || 'нет'")
-проба "banner «нет связи» спокойная" "$(echo "$banner" | grep -q calm && echo 0 || echo 1)" "$banner"
+проба "полоса «нет связи» спокойная" "$(echo "$banner" | grep -q calm && echo 0 || echo 1)" "$banner"
 
 clicked=$(js "(() => { const b = [...document.querySelectorAll('.wbtn-dashed')].find(x => x.textContent.includes('Всё расписание'));
   if (!b) return -1; b.click(); return -2; })()")
@@ -193,7 +240,7 @@ cdp
 js "document.dispatchEvent(new Event('visibilitychange'))" >/dev/null
 sleep 5
 banner_back=$(js "document.querySelector('.wnotice')?.className || 'нет'")
-проба "со связью banner уходит" "$([ "$banner_back" = "нет" ] && echo 0 || echo 1)" "$banner_back"
+проба "со связью полоса уходит" "$([ "$banner_back" = "нет" ] && echo 0 || echo 1)" "$banner_back"
 
 echo
 echo "── Итог в APK ──"

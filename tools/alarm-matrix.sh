@@ -132,6 +132,12 @@ for api in "${LIST[@]}"; do
     echo no | "$AVDMAN" create avd -n "$avd" -k "$img" -d pixel_6 --force >/dev/null 2>&1
   fi
 
+  # Замки от убитых прогонов: эмулятор, снятый через taskkill, не успевает
+  # убрать `hardware-qemu.ini.lock` и `multiinstance.lock`, а следующий запуск
+  # видит их, считает AVD занятым и молча выходит.
+  AVD_DIR="${USERPROFILE}/.android/avd/${avd}.avd"
+  rm -rf "$AVD_DIR/hardware-qemu.ini.lock" "$AVD_DIR/multiinstance.lock"          "$AVD_DIR/userdata-qemu.img.lock" "$AVD_DIR/snapshot.lock" 2>/dev/null || true
+
   echo "  поднимаю эмулятор"
   if ! boot_emulator "$avd"; then
     echo "  ПРОВАЛ: эмулятор не загрузился"
