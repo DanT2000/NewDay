@@ -86,7 +86,10 @@ class BindCodeActivity : Activity() {
         val cam = CodeScanner(this) { text -> done(text) }
         scanner = cam
         frame.addView(cam.view)
-        cam.start { why -> hint.text = why }
+        cam.start(
+            onFail = { why -> hint.text = why },
+            onReady = { hint.text = "Ищу код — держите его в рамке" },
+        )
     }
 
     override fun onRequestPermissionsResult(

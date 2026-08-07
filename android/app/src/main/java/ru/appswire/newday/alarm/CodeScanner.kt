@@ -84,8 +84,10 @@ class CodeScanner(
     /**
      * Запуск камеры. [onFail] зовётся, если её нет или в ней отказано — вызвавший
      * должен показать другой путь, а не пустой чёрный прямоугольник.
+     * [onReady] — когда камера действительно открылась: подпись «открываю
+     * камеру» не должна висеть поверх уже живого видоискателя.
      */
-    fun start(onFail: (String) -> Unit) {
+    fun start(onFail: (String) -> Unit, onReady: () -> Unit = {}) {
         if (!hasCamera(context)) { onFail("камеры нет"); return }
         if (!hasPermission(context)) { onFail("нет разрешения на камеру"); return }
 
@@ -110,6 +112,7 @@ class CodeScanner(
                 cameraProvider.bindToLifecycle(
                     this, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis,
                 )
+                onReady()
             } catch (e: Exception) {
                 Log.w("NewDayAlarm", "камера не открылась: " + e.message)
                 onFail("камера не открылась")
