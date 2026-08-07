@@ -773,13 +773,6 @@ async function renderAi() {
   const formErr = errBox();
   const baseUrl = el('input', { type: 'url', value: ai?.baseUrl ?? '', placeholder: 'https://api.example.com/v1', autocomplete: 'off' });
   const model = el('input', { type: 'text', value: ai?.model ?? '', placeholder: 'название модели', autocomplete: 'off' });
-  /*
-   * Распознавание речи — отдельная модель того же подключения: текст
-   * разбирает одна (например gpt-4o-mini), голос расшифровывает другая
-   * (whisper-1). Без этого поля голосовой ввод настраивался только
-   * переменными окружения — то есть никак.
-   */
-  const voiceModel = el('input', { type: 'text', value: ai?.voiceModel ?? '', placeholder: 'whisper-1', autocomplete: 'off' });
   let keySet = Boolean(ai?.keySet);
   const key = el('input', {
     type: 'password', autocomplete: 'new-password',
@@ -789,8 +782,7 @@ async function renderAi() {
   const saveBtn = el('button', { class: 'btn btn-primary', type: 'submit', text: 'Сохранить' });
   const aiForm = el('form', { class: 'stack' },
     group('Адрес сервера ИИ', baseUrl),
-    group('Модель для текста', model),
-    group('Модель для распознавания речи', voiceModel),
+    group('Модель', model),
     group('Ключ API', key),
     formErr,
     el('div', { class: 'adm-actions' }, saveBtn));
@@ -801,11 +793,7 @@ async function renderAi() {
     hideErr(formErr);
     saveBtn.disabled = true;
     try {
-      const body = {
-        baseUrl: baseUrl.value.trim(),
-        model: model.value.trim(),
-        voiceModel: voiceModel.value.trim(),
-      };
+      const body = { baseUrl: baseUrl.value.trim(), model: model.value.trim() };
       // сервер ждёт поле apiKey; пустую строку он читает как «не менять»
       if (key.value) body.apiKey = key.value;
       /*
@@ -848,9 +836,110 @@ async function renderAi() {
     checkBtn.disabled = false;
   });
 
-  out.push(card('Подключение', null,
+  out.push(card('Подключение для текста', null,
     stStack, aiForm,
     el('div', { class: 'adm-check-line' }, checkBtn, checkOut)));
+
+  /*
+   * Распознавание речи — своё подключение.
+   *
+   * Текст и голос часто живут у разных провайдеров: один держит удобную
+   * текстовую модель, другой — whisper. Пустые адрес и ключ означают «то же,
+   * что у текста»: тем, у кого провайдер один, второй раз заполнять нечего.
+   */
+  const vErr = errBox();
+  const vBase = el('input', {
+    type: 'url', value: ai?.voiceOwn ? (ai?.voiceBaseUrl ?? '') : '',
+    placeholder: 'как у текста: ' + (ai?.baseUrl || 'адрес не задан'), autocomplete: 'off',
+  });
+  const vModel = el('input', { type: 'text', value: ai?.voiceModel ?? '', placeholder: 'whisper-1', autocomplete: 'off' });
+  let vKeySet = Boolean(ai?.voiceOwn && ai?.voiceKeySet);
+  const vKey = el('input', {
+    type: 'password', autocomplete: 'new-password',
+    placeholder: vKeySet ? 'Свой ключ задан. Введите новый, чтобы заменить' : 'как у текста',
+  });
+
+  const vSave = el('button', { class: 'btn btn-primary', type: 'submit', text: 'Сохранить' });
+  const vReset = el('button', { class: 'btn', type: 'button', text: 'Вернуть к текстовому' });
+  const vForm = el('form', { class: 'stack' },
+    el('p', { class: 'adm-lead', text: 'Пусто — распознавание пойдёт через то же подключение, что и текст.' }),
+    group('Адрес сервера', vBase),
+    group('Модель распознавания', vModel),
+    group('Ключ API', vKey),
+    vErr,
+    el('div', { class: 'adm-actions' }, vSave, vReset));
+
+  vForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (vSave.disabled) return;
+    hideErr(vErr);
+    vSave.disabled = true;
+    try {
+      const body = { voiceBaseUrl: vBase.value.trim(), voiceModel: vModel.value.trim() };
+      if (vKey.value) body.voiceApiKey = vKey.value;
+      await api('PATCH', '/api/admin/ai', body);
+      if (vKey.value) {
+        vKeySet = true;
+        vKey.value = '';
+        vKey.placeholder = 'Свой ключ задан. Введите новый, чтобы заменить';
+      }
+      toast('Распознавание речи сохранено');
+    } catch (ex) {
+      showErr(vErr, 'Не получилось сохранить: ' + ex.message);
+    }
+    vSave.disabled = false;
+  });
+
+  vReset.addEventListener('click', async () => {
+    hideErr(vErr);
+    vReset.disabled = true;
+    try {
+      // null стирает свои значения: дальше речь идёт тем же путём, что текст
+      await api('PATCH', '/api/admin/ai', { voiceBaseUrl: '', voiceApiKey: null });
+      vBase.value = '';
+      vKey.value = '';
+      vKeySet = false;
+      vKey.placeholder = 'как у текста';
+      toast('Распознавание вернулось к текстовому подключению');
+    } catch (ex) {
+      showErr(vErr, 'Не получилось вернуть: ' + ex.message);
+    }
+    vReset.disabled = false;
+  });
+
+  const vCheckOut = el('span', { class: 'adm-check-out', 'aria-live': 'polite' });
+  const vCheckBtn = el('button', { class: 'btn', type: 'button' },
+    icon('arrows-clockwise', { size: '16px' }), el('span', { text: 'Проверить связь' }));
+  vCheckBtn.addEventListener('click', async () => {
+    if (vCheckBtn.disabled) return;
+    vCheckBtn.disabled = true;
+    vCheckOut.className = 'adm-check-out';
+    vCheckOut.textContent = 'Проверяю…';
+    try {
+      const r = await api('POST', '/api/admin/ai/check', { what: 'voice' });
+      if (r?.ok) {
+        vCheckOut.className = 'adm-check-out ok';
+        vCheckOut.textContent = `Отвечает, задержка ${fmtInt(r.latencyMs)} мс.`;
+      } else {
+        vCheckOut.className = 'adm-check-out bad';
+        vCheckOut.textContent = 'Связи нет: ' + (r?.error || 'сервер не ответил.');
+      }
+    } catch (ex) {
+      vCheckOut.className = 'adm-check-out bad';
+      vCheckOut.textContent = 'Проверка не удалась: ' + ex.message;
+    }
+    vCheckBtn.disabled = false;
+  });
+
+  const vStatus = ai?.voiceReady
+    ? el('div', { class: 'adm-ai-status ok' }, icon('check-circle-fill', { size: '18px' }),
+        el('span', { text: ai?.voiceOwn ? 'Своё подключение настроено.' : 'Работает через текстовое подключение.' }))
+    : el('div', { class: 'adm-ai-status warn' }, icon('warning-circle-fill', { size: '18px' }),
+        el('span', { text: 'Распознавание не настроено: без модели голосовой ввод не заработает.' }));
+
+  out.push(card('Распознавание речи', null,
+    vStatus, vForm,
+    el('div', { class: 'adm-check-line' }, vCheckBtn, vCheckOut)));
 
   // Прокси: список и добавление
   const proxyErr = errBox();
