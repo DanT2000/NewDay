@@ -91,8 +91,19 @@ cdp() {
 # нет. Одна молчаливая неудача здесь превращалась в «экран будильника не
 # поднялся» — провал приложения там, где не сработал стенд.
 wv() {
-  local out i
+  local out i pid
   for i in 1 2 3 4 5 6 7 8 9 10; do
+    # На первой загрузке свежего образа система занята своим (dexopt,
+    # индексация), и свежезапущенное приложение с погасшим экраном — первая
+    # жертва убийцы памяти: pid пропадает через секунды после старта.
+    # Это стенд, а не приложение, поэтому просто поднимаем его снова.
+    pid=$("$ADB" shell pidof $PKG 2>/dev/null | tr -d '\r')
+    if [ -z "$pid" ]; then
+      "$ADB" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1
+      "$ADB" shell wm dismiss-keyguard >/dev/null 2>&1
+      "$ADB" shell am start -n $PKG/.MainActivity >/dev/null 2>&1
+      sleep 4
+    fi
     cdp
     out=$(node tools/webview-eval.js "$1" 2>/dev/null | tail -1)
     [ -n "$out" ] && { echo "$out"; return 0; }
@@ -107,6 +118,7 @@ wv() {
     echo "      сокеты: $("$ADB" shell 'cat /proc/net/unix | grep devtools' 2>/dev/null | tr -d '\r' | tr '\n' ' ')"
     echo "      страницы: $(curl -s --max-time 3 http://127.0.0.1:9222/json/list | head -c 200)"
     echo "      eval: $(node tools/webview-eval.js "$1" 2>&1 | head -2 | tr '\n' ' ')"
+    echo "      кто убил: $("$ADB" logcat -d 2>/dev/null | tr -d '\r' | grep -E 'am_kill|lmkd|Killing.*newday' | tail -3 | tr '\n' ' ')"
   } >&2
   echo ""
   return 1
