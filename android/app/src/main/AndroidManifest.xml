@@ -29,17 +29,31 @@
             showWhenLocked и turnScreenOn поднимают его поверх локскрина,
             excludeFromRecents не даёт смахнуть его из «недавних»,
             singleInstance — открыть вторую копию поверх первой.
+            configChanges обязателен: без него автопереключение тёмной темы
+            «по рассвету» — ровно утреннее время — пересоздаёт экран, и
+            человек, прошедший 28 шагов из 30, начинает считать с нуля.
         -->
         <activity
             android:name=".alarm.AlarmActivity"
             android:exported="false"
             android:launchMode="singleInstance"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:excludeFromRecents="true"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:screenOrientation="portrait"
             android:taskAffinity="ru.appswire.newday.alarm"
             android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen" />
+
+        <!--
+            Привязка кода в настройках. Обычный экран приложения, не поверх
+            локскрина: сюда приходят днём и осознанно.
+        -->
+        <activity
+            android:name=".alarm.BindCodeActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@android:style/Theme.Material.NoActionBar" />
 
         <!-- Держит звук и экран, пока будильник звонит -->
         <service
@@ -114,5 +128,23 @@
         отклоняла запуск с rejectTime в appops.
     -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!--
+        Задачи пробуждения «QR-код» и «шаги».
+
+        Оба разрешения спрашиваются не при установке, а в тот момент, когда
+        человек включает соответствующую задачу: просить камеру у планировщика
+        дня на старте — верный способ получить отказ.
+
+        Камера и шагомер объявлены необязательными (required="false"): без них
+        приложение работает целиком, просто эти две задачи не предлагаются, а
+        уже выбранная задача становится примером.
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    <uses-feature android:name="android.hardware.sensor.stepcounter" android:required="false" />
+    <uses-feature android:name="android.hardware.sensor.stepdetector" android:required="false" />
 
 </manifest>

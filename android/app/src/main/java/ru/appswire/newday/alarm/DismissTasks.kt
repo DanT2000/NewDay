@@ -37,6 +37,32 @@ sealed interface DismissTask {
         override val prompt get() = "Нажмите по порядку: " + sequence.joinToString("  ")
         override fun check(value: String) = value == sequence.joinToString("")
     }
+
+    /**
+     * Найти и отсканировать заранее привязанный код.
+     *
+     * Смысл не в сканировании, а в том, что код наклеен не у кровати: на чайнике,
+     * на двери ванной, на пачке кофе. Чтобы выключить будильник, надо дойти —
+     * а дойдя, уже не ляжешь.
+     *
+     * [expected] — значение, привязанное в настройках. Пусто быть не должно:
+     * без привязанного кода задача не имеет решения, и такую не выдаём вовсе.
+     */
+    data class Qr(val expected: String, val label: String) : DismissTask {
+        override val prompt get() = "Отсканируйте код: " + label
+        override fun check(value: String) = value.trim() == expected
+    }
+
+    /**
+     * Пройти нужное число шагов.
+     *
+     * Считает системный шагомер, а не таймер: пролежать это нельзя, только
+     * встать и пойти.
+     */
+    data class Steps(val target: Int) : DismissTask {
+        override val prompt get() = "Пройдите " + target + " шагов"
+        override fun check(value: String) = (value.trim().toIntOrNull() ?: 0) >= target
+    }
 }
 
 object TaskFactory {
@@ -47,6 +73,40 @@ object TaskFactory {
         "icons" -> icons(difficulty, rnd)
         else -> math(difficulty, rnd)
     }
+
+    /**
+     * Задача нужного вида с учётом того, что вообще возможно на этом телефоне.
+     *
+     * [canScan] и [canCountSteps] приходят от железа: камеры может не быть,
+     * шагомера на многих старых и почти на всех эмуляторах нет. Выдать задачу,
+     * которую нечем решить, — то же самое, что запереть человека наедине с
+     * орущим будильником, поэтому невозможное молча становится математикой.
+     */
+    fun make(
+        type: String,
+        config: DismissConfig,
+        canScan: Boolean = true,
+        canCountSteps: Boolean = true,
+        rnd: Random = Random.Default,
+    ): DismissTask = when (type) {
+        "qr" -> if (canScan && config.qrValue.isNotBlank()) {
+            DismissTask.Qr(config.qrValue, config.qrLabel.ifBlank { "привязанный код" })
+        } else math(config.difficulty, rnd)
+
+        "steps" -> if (canCountSteps) DismissTask.Steps(config.stepsTarget) else math(config.difficulty, rnd)
+
+        else -> make(type, config.difficulty, rnd)
+    }
+
+    /**
+     * Аварийная задача: то, чем будильник выключают, когда основную решить нечем.
+     *
+     * Код отклеился, отсырел, его закрыла коробка; шагомер врёт или человек в
+     * гипсе. Оставить в этом случае только орущий телефон нельзя — но и лёгкий
+     * путь в обход задачи открывать нельзя, иначе им будут пользоваться всегда.
+     * Поэтому выход есть, и он заведомо труднее: математика верхнего уровня.
+     */
+    fun rescue(rnd: Random = Random.Default): DismissTask.Math = math(3, rnd)
 
     /**
      * Три уровня, и они отличаются тем, сколько на это нужно головы:
@@ -91,10 +151,30 @@ object TaskFactory {
         return DismissTask.Icons(pool.shuffled(rnd).take(seqLen), pool)
     }
 
-    /** Набор задач для одного срабатывания. */
-    fun makeSet(config: DismissConfig, rnd: Random = Random.Default): List<DismissTask> =
-        (1..config.count).map {
-            val type = config.types.randomOrNull(rnd) ?: "math"
-            make(type, config.difficulty, rnd)
+    /**
+     * Набор задач для одного срабатывания.
+     *
+     * Виды, которые на этом телефоне не решить, выбрасываются до жеребьёвки, а
+     * не подменяются потом: иначе при «QR + шаги» на телефоне без шагомера
+     * половина подъёмов молча превращалась бы в математику, и человек решил бы,
+     * что настройка не сохраняется.
+     */
+    fun makeSet(
+        config: DismissConfig,
+        canScan: Boolean = true,
+        canCountSteps: Boolean = true,
+        rnd: Random = Random.Default,
+    ): List<DismissTask> {
+        val usable = config.types.filter {
+            when (it) {
+                "qr" -> canScan && config.qrBound
+                "steps" -> canCountSteps
+                else -> true
+            }
         }
+        val pool = usable.ifEmpty { listOf("math") }
+        return (1..config.count).map {
+            make(pool.randomOrNull(rnd) ?: "math", config, canScan, canCountSteps, rnd)
+        }
+    }
 }

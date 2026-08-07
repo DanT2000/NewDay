@@ -12,6 +12,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.GridLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -49,6 +50,13 @@ class AlarmActivity : Activity() {
     private lateinit var capView: TextView
     private lateinit var footView: TextView
 
+    private lateinit var steps: StepCounter
+    private var scanner: CodeScanner? = null
+    private var rescueTimer: CountDownTimer? = null
+    private var rescued = false                       // уже ушли на аварийную задачу
+    private var canScan = false                       // есть камера и разрешение
+    private var canWalk = false                       // есть шагомер и разрешение
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         showOverLockScreen()
@@ -64,7 +72,10 @@ class AlarmActivity : Activity() {
         if (alarm?.isWakeup != true) {
             config = config.copy(count = 1.coerceAtMost(config.count))
         }
-        tasks = TaskFactory.makeSet(config)
+        steps = StepCounter(this)
+        canScan = CodeScanner.hasCamera(this) && CodeScanner.hasPermission(this)
+        canWalk = steps.available
+        tasks = TaskFactory.makeSet(config, canScan, canWalk)
         Log.i("NewDayAlarm", "Экран отключения: будильник=" + id + ", задач=" + tasks.size)
 
         buildUi()
@@ -220,6 +231,7 @@ class AlarmActivity : Activity() {
 
     private fun showTask() {
         timer?.cancel()
+        releaseSensors()
         if (index >= tasks.size) { dismiss(); return }
 
         val task = tasks[index]
@@ -231,8 +243,20 @@ class AlarmActivity : Activity() {
             is DismissTask.Math -> buildMath(task)
             is DismissTask.Code -> buildCode(task)
             is DismissTask.Icons -> buildIcons(task)
+            is DismissTask.Qr -> buildQr(task)
+            is DismissTask.Steps -> buildSteps(task)
         }
-        startTimer()
+
+        /*
+         * Таймер «не уложился — новая задача» к камере и шагам не применяется.
+         *
+         * Он существует, чтобы нельзя было пересидеть будильник, тупо глядя в
+         * экран с примером. Но дойти до чайника и пройти тридцать шагов дольше
+         * тридцати секунд — это норма, а не залипание. Менять задачу на новую
+         * ровно в тот момент, когда человек уже встал и идёт, — издевательство.
+         */
+        if (task is DismissTask.Qr || task is DismissTask.Steps) startRescueTimer()
+        else startTimer()
     }
 
     /**
@@ -365,6 +389,187 @@ class AlarmActivity : Activity() {
     }
 
     /**
+     * Найти и отсканировать привязанный код.
+     *
+     * Весь смысл — в том, что код наклеен не у кровати. Поэтому подпись
+     * называет место: спросонья «где мой код» — вопрос настоящий.
+     */
+    private fun buildQr(task: DismissTask.Qr) {
+        val card = ui.card()
+        card.addView(ui.cap("наведите камеру", Style.FAINT))
+        card.addView(ui.spacer(8))
+        card.addView(ui.title(task.label, 22f))
+        card.addView(ui.spacer(14))
+
+        // Окно видоискателя: квадрат, скруглённый как всё остальное в приложении
+        val frame = FrameLayout(this).apply {
+            background = rounded(Style.RAISE, ui.dp(18))
+            clipToOutline = true
+            layoutParams = LinearLayout.LayoutParams(MATCH, ui.dp(240))
+        }
+        card.addView(frame)
+        card.addView(ui.spacer(10))
+
+        val hint = ui.body("Открываю камеру…", 13f, Style.FAINT)
+        card.addView(hint)
+        stage.addView(card.apply { layoutParams = LinearLayout.LayoutParams(MATCH, WRAP) })
+
+        val cam = CodeScanner(this) { text ->
+            if (task.check(text)) {
+                Log.i("NewDayAlarm", "QR_OK код совпал")
+                next()
+            } else {
+                // Чужой код — частый случай: в кадр попала упаковка или чек.
+                // Сказать об этом надо прямо, иначе выглядит как «не работает».
+                Log.i("NewDayAlarm", "QR_OTHER отсканирован не тот код")
+                hint.text = "Это другой код. Нужен тот, что вы привязали: " + task.label
+                wrong(frame)
+                restartScanner(frame, hint, task)
+            }
+        }
+        scanner = cam
+        frame.addView(cam.view)
+        cam.start { why ->
+            /*
+             * Камеры нет или в ней отказано — ждать нечего: сразу переводим на
+             * математику. Показывать чёрный прямоугольник и надпись «нет
+             * доступа» означало бы оставить человека с орущим телефоном и без
+             * единого способа его выключить.
+             */
+            Log.i("NewDayAlarm", "QR_UNAVAILABLE " + why + " — перехожу на математику")
+            hint.text = why + " — переключаю на пример"
+            hint.postDelayed({ rescue("Камера недоступна") }, 1200)
+        }
+    }
+
+    /** После чужого кода сканер надо поднять заново: он останавливается на находке. */
+    private fun restartScanner(frame: FrameLayout, hint: TextView, task: DismissTask.Qr) {
+        scanner?.stop()
+        frame.removeAllViews()
+        val cam = CodeScanner(this) { text ->
+            if (task.check(text)) next()
+            else { hint.text = "Снова не тот код"; wrong(frame); restartScanner(frame, hint, task) }
+        }
+        scanner = cam
+        frame.addView(cam.view)
+        cam.start { why -> hint.text = why }
+    }
+
+    /**
+     * Пройти нужное число шагов.
+     *
+     * Показываем счётчик и полосу: без обратной связи непонятно, считает ли
+     * телефон вообще, и человек трясёт его вместо того, чтобы идти.
+     */
+    private fun buildSteps(task: DismissTask.Steps) {
+        val card = ui.card()
+        card.addView(ui.cap("пройдите", Style.FAINT))
+        card.addView(ui.spacer(8))
+
+        val counter = ui.mono("0 / " + task.target, 44f, accent)
+        card.addView(counter)
+        card.addView(ui.spacer(14))
+
+        // Полоса заполнения: видно, что шаги считаются, ещё до того как их станет много
+        val bar = View(this).apply {
+            background = rounded(Style.RAISE, ui.dp(8))
+            layoutParams = LinearLayout.LayoutParams(MATCH, ui.dp(14))
+        }
+        val fill = View(this).apply { background = rounded(accent, ui.dp(8)) }
+        val track = FrameLayout(this).apply {
+            addView(bar)
+            addView(fill, FrameLayout.LayoutParams(0, ui.dp(14)))
+            layoutParams = LinearLayout.LayoutParams(MATCH, ui.dp(14))
+        }
+        card.addView(track)
+        card.addView(ui.spacer(12))
+
+        val hint = ui.body("Встаньте и пройдитесь — телефон возьмите с собой", 13f, Style.DIM)
+        card.addView(hint)
+        stage.addView(card.apply { layoutParams = LinearLayout.LayoutParams(MATCH, WRAP) })
+
+        val started = steps.start { n ->
+            runOnUiThread {
+                val done = n.coerceAtMost(task.target)
+                counter.text = done.toString() + " / " + task.target
+                fill.layoutParams = FrameLayout.LayoutParams(
+                    (track.width * done / task.target.coerceAtLeast(1)), ui.dp(14),
+                )
+                fill.requestLayout()
+                if (n >= task.target) {
+                    Log.i("NewDayAlarm", "STEPS_OK пройдено " + n)
+                    next()
+                }
+            }
+        }
+        if (!started) {
+            val why = steps.whyUnavailable().ifBlank { "шагомер недоступен" }
+            Log.i("NewDayAlarm", "STEPS_UNAVAILABLE " + why + " — перехожу на математику")
+            hint.text = why + " — переключаю на пример"
+            hint.postDelayed({ rescue("Шагомер недоступен") }, 1200)
+        }
+    }
+
+    // ── Аварийный выход ──────────────────────────────────────
+
+    /**
+     * Кнопка «не получается» появляется не сразу.
+     *
+     * Появись она с первой секунды — ею бы пользовались всегда, и код на
+     * чайнике не имел бы смысла. Не появись никогда — человек с отклеившимся
+     * кодом остаётся наедине с орущим телефоном. Полторы минуты честных
+     * попыток: достаточно, чтобы понять, что код не читается, и мало, чтобы
+     * стать привычкой.
+     */
+    private fun startRescueTimer() {
+        rescueTimer?.cancel()
+        rescueTimer = object : CountDownTimer(config.rescueAfterSec * 1000L, 1000) {
+            override fun onTick(msLeft: Long) { /* молча: обратный отсчёт тут подсказка сдаться */ }
+            override fun onFinish() {
+                if (rescued || index >= tasks.size) return
+                footView.text = ""
+                stage.addView(
+                    ui.quiet("Не получается — дайте пример") { rescue("Человек попросил сам") }.apply {
+                        layoutParams = LinearLayout.LayoutParams(MATCH, ui.dp(48)).apply {
+                            topMargin = ui.dp(14)
+                        }
+                    },
+                )
+                Log.i("NewDayAlarm", "RESCUE_OFFERED аварийный выход предложен")
+            }
+        }.start()
+    }
+
+    /**
+     * Переход на аварийную задачу.
+     *
+     * Она заведомо труднее основной — математика верхнего уровня, — и это
+     * нарочно: выход есть всегда, но он не должен быть дорогой полегче.
+     */
+    private fun rescue(why: String) {
+        // rescue приходит и из postDelayed: человек мог успеть нажать
+        // «Отложить», и запоздалый вызов на закрытом экране заводил бы
+        // самовозобновляющийся таймер, который уже некому отменить
+        if (isFinishing || isDestroyed) return
+        if (rescued) return
+        rescued = true
+        Log.i("NewDayAlarm", "RESCUE " + why + " — сложный пример вместо задачи")
+        rescueTimer?.cancel()
+        releaseSensors()
+        tasks = tasks.toMutableList().also { it[index] = TaskFactory.rescue() }
+        showTask()
+        footView.text = why
+    }
+
+    /** Камера и датчики отпускаются, как только перестали быть нужны. */
+    private fun releaseSensors() {
+        rescueTimer?.cancel()
+        scanner?.stop()
+        scanner = null
+        if (::steps.isInitialized) steps.stop()
+    }
+
+    /**
      * Не уложился — задача меняется на новую, звук продолжает играть.
      * Так нельзя пересидеть будильник, тупо глядя в экран.
      */
@@ -374,9 +579,19 @@ class AlarmActivity : Activity() {
                 footView.text = "осталось " + (msLeft / 1000) + " с"
             }
             override fun onFinish() {
+                /*
+                 * Замена — только на задачу с вводом, без камеры и шагов.
+                 *
+                 * Этот таймер стоит на math/code/icons, и заменить пример на
+                 * «идите сканировать» посреди решения — значит поменять правила
+                 * на ходу. Хуже того: если человек уже ушёл с QR на аварийный
+                 * пример, замена по таймауту вернула бы ему тот же нечитаемый
+                 * QR — а `rescued` уже истрачен, и выхода бы не осталось.
+                 */
+                val basic = config.types.filter { it in setOf("math", "code", "icons") }
                 tasks = tasks.toMutableList().also {
                     it[index] = TaskFactory.make(
-                        config.types.randomOrNull() ?: "math", config.difficulty,
+                        basic.randomOrNull() ?: "math", config.difficulty,
                     )
                 }
                 footView.text = "время вышло — новая задача"
@@ -395,6 +610,9 @@ class AlarmActivity : Activity() {
 
     private fun next() {
         index += 1
+        // у каждой задачи свой аварийный выход: «не получается» с QR на первой
+        // не должно лишать выхода на второй
+        rescued = false
         showTask()
     }
 
@@ -441,6 +659,9 @@ class AlarmActivity : Activity() {
     override fun onDestroy() {
         Log.i("NewDayAlarm", "Экран отключения закрыт")
         timer?.cancel()
+        // Камера, оставленная включённой, держит железо и жжёт индикатор
+        // камеры — человек справедливо решает, что за ним подсматривают
+        releaseSensors()
         super.onDestroy()
     }
 

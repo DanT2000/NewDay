@@ -44,7 +44,10 @@ object AlarmStore {
     fun find(ctx: Context, id: Long): Alarm? = load(ctx).firstOrNull { it.id == id }
 
     fun saveConfig(ctx: Context, config: DismissConfig) {
-        prefs(ctx).edit().putString(KEY_CONFIG, config.toJson().toString()).apply()
+        // commit, как и у списка: сюда пишется привязанный код, и отложенная
+        // запись, потерянная при выключении питания, съела бы привязку —
+        // утром вместо QR был бы пример, а человек решил бы, что «не сохранилось»
+        prefs(ctx).edit().putString(KEY_CONFIG, config.toJson().toString()).commit()
     }
 
     fun config(ctx: Context): DismissConfig = try {

@@ -30,6 +30,9 @@ export const ALARM_DEFAULTS = {
   alarmVolumeRamp: true,
   alarmGraceEnabled: true,
   alarmGraceSec: 60,
+  alarmStepsTarget: 30,
+  alarmRescueAfterSec: 90,
+  alarmQrLabel: '',
 };
 
 /** Настройки экрана отключения: их задаёт человек в настройках. */
@@ -49,6 +52,14 @@ function dismissConfig(settings = {}) {
     // одной кнопкой, без задач
     graceEnabled: settings.alarmGraceEnabled !== false,
     graceSec: Number(settings.alarmGraceSec ?? ALARM_DEFAULTS.alarmGraceSec),
+    // Сколько шагов и через сколько появится аварийный выход.
+    //
+    // Само значение кода сюда не входит нарочно: оно хранится только на
+    // телефоне и в настройки профиля не уезжает. Отправь мы его здесь — код с
+    // чайника оказался бы на сервере, где ему делать нечего.
+    stepsTarget: Number(settings.alarmStepsTarget ?? ALARM_DEFAULTS.alarmStepsTarget),
+    rescueAfterSec: Number(settings.alarmRescueAfterSec ?? ALARM_DEFAULTS.alarmRescueAfterSec),
+    qrLabel: String(settings.alarmQrLabel ?? ''),
   };
 }
 
@@ -148,4 +159,39 @@ export async function testAlarm(delaySec = 60, profile = 'wakeup') {
 export async function listAlarms() {
   if (!available()) return null;
   try { return await plugin().list(); } catch { return null; }
+}
+
+// ── Задачи пробуждения, которым нужно железо ─────────────────
+
+/**
+ * Что возможно на этом телефоне: камера, шагомер, выданы ли разрешения,
+ * привязан ли код. В браузере — всё выключено: камеру там теоретически найти
+ * можно, но будильника, ради которого стоило бы сканировать, там нет.
+ */
+export async function missionCapabilities() {
+  if (!available()) return null;
+  try { return await plugin().missionCapabilities(); } catch { return null; }
+}
+
+/** Открывает сканер и запоминает прочитанный код на телефоне. */
+export async function bindCode(label = '') {
+  if (!available()) return null;
+  return plugin().bindCode({ label });
+}
+
+export async function unbindCode() {
+  if (!available()) return null;
+  try { return await plugin().unbindCode(); } catch { return null; }
+}
+
+export async function setCodeLabel(label) {
+  if (!available()) return null;
+  try { return await plugin().setCodeLabel({ label }); } catch { return null; }
+}
+
+/** Спрашивает разрешение на камеру или на распознавание активности. */
+export async function requestMissionPermission(what) {
+  if (!available()) return { granted: false };
+  try { return await plugin().requestMissionPermission({ what }); }
+  catch { return { granted: false }; }
 }

@@ -58,7 +58,7 @@ data class Alarm(
  * громкость идёт вверх, и появляются задачи.
  */
 data class DismissConfig(
-    val types: List<String>,   // math | code | icons
+    val types: List<String>,   // math | code | icons | qr | steps
     val count: Int,
     val difficulty: Int,       // 1..3
     val timeoutSec: Int,
@@ -67,9 +67,18 @@ data class DismissConfig(
     val volumeRamp: Boolean,
     val graceEnabled: Boolean,
     val graceSec: Int,
+    // Код, привязанный в настройках: что именно должно быть отсканировано.
+    // Хранится значение кода, а не картинка, — сверять надо содержимое.
+    val qrValue: String,
+    val qrLabel: String,       // «на чайнике» — чтобы спросонья вспомнить, куда идти
+    val stepsTarget: Int,
+    val rescueAfterSec: Int,   // через сколько появится аварийный выход
 ) {
     /** Сколько длится мягкое начало на самом деле: выключенное окно — это ноль. */
     val effectiveGraceSec get() = if (graceEnabled) graceSec else 0
+
+    /** Есть ли к чему идти со сканером. */
+    val qrBound get() = qrValue.isNotBlank()
 
     fun toJson(): JSONObject = JSONObject().apply {
         put("types", JSONArray(types))
@@ -81,6 +90,10 @@ data class DismissConfig(
         put("volumeRamp", volumeRamp)
         put("graceEnabled", graceEnabled)
         put("graceSec", graceSec)
+        put("qrValue", qrValue)
+        put("qrLabel", qrLabel)
+        put("stepsTarget", stepsTarget)
+        put("rescueAfterSec", rescueAfterSec)
     }
 
     companion object {
@@ -88,6 +101,7 @@ data class DismissConfig(
             types = listOf("math", "code", "icons"), count = 1, difficulty = 1,
             timeoutSec = 30, snoozeAllowed = true, snoozeMinutes = 5, volumeRamp = true,
             graceEnabled = true, graceSec = 60,
+            qrValue = "", qrLabel = "", stepsTarget = 30, rescueAfterSec = 90,
         )
 
         fun fromJson(o: JSONObject?): DismissConfig {
@@ -107,6 +121,20 @@ data class DismissConfig(
                 // до 15 минут: дольше — это уже не «успеть выключить»,
                 // а будильник, который звонит впустую
                 graceSec = o.optInt("graceSec", DEFAULT.graceSec).coerceIn(5, 900),
+                qrValue = o.optString("qrValue", DEFAULT.qrValue),
+                qrLabel = o.optString("qrLabel", DEFAULT.qrLabel),
+                // 10 шагов — это дойти до тумбочки, 200 — уже наказание.
+                stepsTarget = o.optInt("stepsTarget", DEFAULT.stepsTarget).coerceIn(10, 200),
+                /*
+                 * Аварийный выход появляется не сразу.
+                 *
+                 * Появись он с первой секунды, им бы пользовались всегда, и код
+                 * на чайнике не имел бы смысла. Появись он никогда — человек с
+                 * отклеившимся кодом остаётся наедине с орущим телефоном.
+                 * Полторы минуты честных попыток — достаточно, чтобы понять,
+                 * что код не читается, и мало, чтобы стать привычкой.
+                 */
+                rescueAfterSec = o.optInt("rescueAfterSec", DEFAULT.rescueAfterSec).coerceIn(30, 300),
             )
         }
     }

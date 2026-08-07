@@ -71,6 +71,8 @@ const state = {
   accName: '', passOld: '', passNew: '', passNew2: '',
   // что разрешено будильнику на этом телефоне; в браузере остаётся null
   alarmPerms: null,
+  // есть ли камера и шагомер и привязан ли код; в браузере тоже null
+  missionCaps: null,
   // секрет токена живёт только пока открыта шторка: сервер его не помнит
   tokenShown: null,
   pairCode: null,
@@ -323,7 +325,9 @@ function act(job, okText) {
   state.busy = true;
   state.notice = null;
   render();
-  return Promise.resolve(job)
+  // и промис, и функция: Promise.resolve(fn) резолвится самой функцией,
+  // не вызывая её, — кнопка отчитывалась «готово», не сделав ничего
+  return Promise.resolve(typeof job === 'function' ? job() : job)
     .then(() => { state.busy = false; if (okText) note(okText); else render(); })
     .catch(e => { state.busy = false; fail(e); });
 }
@@ -354,6 +358,8 @@ async function reload() {
        */
       if (native.available()) {
         jobs.push(native.checkPermissions().then(p => { state.alarmPerms = p; }).catch(() => null));
+        // то же самое про камеру, шагомер и привязанный код
+        jobs.push(native.missionCapabilities().then(c => { state.missionCaps = c; }).catch(() => null));
       }
     }
     /*
@@ -1709,8 +1715,11 @@ function alarmPanel() {
   const save = patch => data.saveSettings(patch).then(() => {
     render();
     // на телефоне настройка должна подействовать сразу, а не с очередной
-    // синхронизацией: человек проверяет будильник тут же
-    native.pushAlarmConfig?.(s.alarmProfile).catch(() => {});
+    // синхронизацией: человек проверяет будильник тут же. Уезжает весь
+    // профиль: pushAlarmConfig читает profile.settings, и что-либо меньшее
+    // он молча превращал бы в значения по умолчанию, затирая на телефоне
+    // только что сохранённое
+    native.pushAlarmConfig?.(store.settings).catch(() => {});
   }).catch(fail);
 
   const panel = h('div.wpanel', cap('будильник'));
@@ -1754,8 +1763,10 @@ function alarmPanel() {
       }));
 
     // ── Задача ──
+    // фолбэк — из native.ALARM_DEFAULTS: пока набор не сохранён, экран должен
+    // показывать ровно то, что телефон выдаст на самом деле, а не своё мнение
     const types = Array.isArray(s.alarmTaskTypes) && s.alarmTaskTypes.length
-      ? s.alarmTaskTypes : ['math'];
+      ? s.alarmTaskTypes : native.ALARM_DEFAULTS.alarmTaskTypes;
     const taskRow = h('div.wwrap');
     add(taskRow, ...ALARM_TASKS.map(t => sheetChip(t.label, types.includes(t.k), () => {
       const next = types.includes(t.k) ? types.filter(x => x !== t.k) : [...types, t.k];
@@ -1765,9 +1776,13 @@ function alarmPanel() {
     add(panel, h('div.wpanel-label', { text: 'Задача пробуждения' }), taskRow,
       h('div.wclock-cap', {
         text: 'QR-код и шаги работают только на телефоне: камеры и датчика шагов в браузере нет. '
-          + 'Если код потерялся или идти некуда, будильник сам предложит математику',
+          + 'Если код потерялся или идти некуда, будильник через полторы минуты сам предложит '
+          + 'пример — сложный, чтобы этим не пользовались вместо задачи',
         style: { marginTop: '8px' },
       }));
+
+    if (types.includes('qr')) add(panel, ...qrRows(s, save));
+    if (types.includes('steps')) add(panel, ...stepsRows(s, save));
 
     if (types.includes('math')) {
       const lvlSeg = h('div.wsegline');
@@ -1846,12 +1861,150 @@ function alarmPanel() {
   return panel;
 }
 
+/**
+ * Настройка задачи «QR-код».
+ *
+ * Привязать код можно только с телефона — камеры в браузере для этого нет.
+ * Но увидеть, что код уже привязан и куда наклеен, полезно и с компьютера:
+ * человек может править настройки там и должен понимать, что его ждёт утром.
+ */
+function qrRows(s, save) {
+  const caps = state.missionCaps;
+  const rows = [h('div.wpanel-label', { text: 'Код', style: { marginTop: '14px' } })];
+
+  if (!native.available()) {
+    rows.push(h('div.wclock-cap', {
+      text: 'Привязать код можно в приложении на телефоне: нужна камера. '
+        + (s.alarmQrLabel ? `Сейчас привязан код — ${s.alarmQrLabel}.` : 'Пока не привязан.'),
+      style: { margin: '0' },
+    }));
+    return rows;
+  }
+
+  if (!caps) {
+    rows.push(h('div.wclock-cap', { text: 'Смотрю…', style: { margin: '0' } }));
+    return rows;
+  }
+  if (!caps.camera) {
+    rows.push(h('div.wclock-cap', {
+      text: 'На этом телефоне нет камеры — эта задача станет примером.',
+      style: { margin: '0' },
+    }));
+    return rows;
+  }
+
+  const bound = Boolean(caps.qrBound);
+  rows.push(h('div.wperm', { class: bound ? 'ok' : '' },
+    ico(bound ? 'check-circle-fill' : 'warning-circle-fill', '18px',
+      bound ? 'wperm-ok' : 'wperm-bad'),
+    h('div.wperm-body',
+      h('div.wperm-title', { text: bound ? 'Код привязан' : 'Код не привязан' }),
+      h('div.wperm-hint', {
+        text: bound
+          ? (caps.qrLabel || s.alarmQrLabel || 'место не подписано')
+          : 'без кода задача станет примером — сканировать будет нечего',
+      })),
+    h('button.wbtn-line', {
+      type: 'button', text: bound ? 'Заново' : 'Привязать',
+      onclick: () => act(async () => {
+        const res = await native.bindCode(s.alarmQrLabel || '');
+        await refreshMissionCaps();
+        // note, не set({ notice }): notice живёт в шторке, а панель — экран
+        if (res?.bound) note('Код привязан');
+      }),
+    })));
+
+  /*
+   * Подпись места — не украшение.
+   *
+   * В шесть утра «отсканируйте код» без уточнения вызывает единственный вопрос:
+   * какой и где. Поэтому подпись показывается прямо на экране будильника.
+   */
+  rows.push(h('label.wfield', { style: { marginTop: '10px' } },
+    h('span.wfield-cap', { text: 'Где наклеен' }),
+    h('input.winput', {
+      type: 'text', value: s.alarmQrLabel ?? '', placeholder: 'на чайнике', maxLength: 60,
+      onchange: e => {
+        const label = e.target.value.trim();
+        native.setCodeLabel(label).catch(() => {});
+        save({ alarmQrLabel: label });
+      },
+    })));
+
+  if (bound) {
+    rows.push(h('div.wrow', { style: { marginTop: '10px' } },
+      h('button.wbtn-line', {
+        type: 'button', text: 'Отвязать код',
+        onclick: () => act(async () => {
+          await native.unbindCode();
+          await refreshMissionCaps();
+          note('Код отвязан');
+        }),
+      })));
+  }
+  return rows;
+}
+
+/** Настройка задачи «шаги»: сколько идти и есть ли чем считать. */
+function stepsRows(s, save) {
+  const caps = state.missionCaps;
+  const target = Number(s.alarmStepsTarget ?? 30);
+  const rows = [h('div.wpanel-label', { text: 'Сколько шагов', style: { marginTop: '14px' } })];
+
+  const seg = h('div.wsegline');
+  add(seg, ...[10, 20, 30, 50].map(v => h('button', {
+    type: 'button', text: String(v), class: target === v ? 'on' : '',
+    onclick: () => save({ alarmStepsTarget: v }),
+  })));
+  rows.push(seg);
+
+  if (!native.available()) {
+    rows.push(h('div.wclock-cap', {
+      text: 'Шаги считает телефон: в браузере датчика нет.',
+      style: { marginTop: '8px' },
+    }));
+    return rows;
+  }
+  if (!caps) return rows;
+
+  if (!caps.stepSensor) {
+    rows.push(h('div.wclock-cap', {
+      text: 'На этом телефоне нет шагомера — эта задача станет примером.',
+      style: { marginTop: '8px' },
+    }));
+    return rows;
+  }
+  if (!caps.stepsGranted) {
+    rows.push(h('div.wperm',
+      ico('warning-circle-fill', '18px', 'wperm-bad'),
+      h('div.wperm-body',
+        h('div.wperm-title', { text: 'Нет доступа к распознаванию активности' }),
+        h('div.wperm-hint', { text: 'без него шаги не посчитать, и задача станет примером' })),
+      h('button.wbtn-line', {
+        type: 'button', text: 'Разрешить',
+        onclick: () => act(async () => {
+          await native.requestMissionPermission('steps');
+          await refreshMissionCaps();
+        }),
+      })));
+  }
+  return rows;
+}
+
 /** Заново спросить у телефона, что разрешено. */
 function refreshAlarmPerms() {
   if (!native.available()) return Promise.resolve();
   return native.checkPermissions()
     .then(p => { state.alarmPerms = p; render(); })
     .catch(fail);
+}
+
+/** Заново спросить, что телефон умеет: камера, шагомер, привязанный код. */
+function refreshMissionCaps() {
+  if (!native.available()) return Promise.resolve();
+  return native.missionCapabilities()
+    .then(c => { state.missionCaps = c; render(); })
+    .catch(() => null);
 }
 
 /**
@@ -1888,7 +2041,11 @@ function openLink(kind, label) {
  */
 function logOut() {
   data.forgetLocal();
-  return api.POST('/auth/logout').finally(() => { location.href = '/login.html'; });
+  // токен устройства стирается после ответа сервера: запрос на выход сам
+  // ходит с этим токеном, и сервер по нему же его отзывает. Сотри раньше —
+  // отзывать было бы нечем, и токен остался бы жив на сервере
+  return api.POST('/auth/logout')
+    .finally(() => { api.setDeviceToken(null); location.href = '/login.html'; });
 }
 
 // ── Помощник ─────────────────────────────────────────────────
@@ -4440,6 +4597,10 @@ addEventListener('mouseup', () => {
  */
 async function bootstrap() {
   api.setUnauthorizedHandler(() => {
+    // протухший токен устройства стираем, как это делает и обработчик по
+    // умолчанию: иначе точка входа продолжала бы верить, что человек вошёл,
+    // и гоняла бы его по кругу web → login
+    if (api.isNative()) api.setDeviceToken(null);
     location.href = `/login.html?next=${encodeURIComponent(location.pathname)}`;
   });
 
