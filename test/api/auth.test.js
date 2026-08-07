@@ -147,3 +147,43 @@ test('неаутентифицированный запрос к /api/v1 даё�
     assert.strictEqual((await res.json()).error.code, 'UNAUTHORIZED');
   } finally { await srv.close(); }
 });
+
+/*
+ * Регистрация из приложения.
+ *
+ * Приложение работает кросс-доменно, где cookie не проходят, и без токена
+ * устройства человек, только что зарегистрировавшийся, упирался в «не вошли»
+ * при первом же запросе — приходилось входить заново тем же паролем.
+ */
+test('регистрация из приложения выдаёт токен устройства', async () => {
+  const srv = await startTestServer();               // без SMTP: подтверждать нечем
+  try {
+    const res = await post(srv.url, '/api/v1/auth/register', {
+      email: 'phone@b.ru', password: 'secret12',
+      issueDeviceToken: true, deviceName: 'Android', platform: 'android',
+    });
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.strictEqual(body.needsVerification, false);
+    assert.match(String(body.deviceToken), /^ndd_/);
+
+    // токеном сразу можно читать свои данные — иначе он бесполезен
+    const me = await fetch(`${srv.url}/api/v1/auth/me`, {
+      headers: { Authorization: `Bearer ${body.deviceToken}` },
+    });
+    assert.strictEqual(me.status, 200);
+  } finally { await srv.close(); }
+});
+
+test('пока почта не подтверждена, токен устройства не выдаётся', async () => {
+  const srv = await startTestServer({ env: SMTP_ON });
+  try {
+    const res = await post(srv.url, '/api/v1/auth/register', {
+      email: 'wait@b.ru', password: 'secret12', issueDeviceToken: true, platform: 'android',
+    });
+    const body = await res.json();
+    assert.strictEqual(body.needsVerification, true);
+    // ключ от аккаунта до подтверждения выдавать не за что
+    assert.strictEqual(body.deviceToken, undefined);
+  } finally { await srv.close(); }
+});

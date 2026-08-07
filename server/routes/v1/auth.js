@@ -63,10 +63,29 @@ module.exports = function authRouter({ db, config, mailer, auth }) {
       req.session.userId = user.id;
     }
 
+    /*
+     * Токен устройства — сразу при регистрации, как и при входе.
+     *
+     * Приложение работает кросс-доменно, где cookie не проходят. Раньше токен
+     * выдавался только на входе, и человек, зарегистрировавшийся из приложения,
+     * оказывался «вошедшим» по сессии, которой у него нет: первый же запрос
+     * упирался в «не вошли».
+     *
+     * Когда почту надо подтвердить, токен не выдаём: до подтверждения входа
+     * нет, и выдавать ключ от аккаунта не за что.
+     */
+    let deviceToken = null;
+    if (req.body.issueDeviceToken && !mailer.enabled) {
+      const name = v.str(req.body.deviceName, { max: 80, field: 'устройство' }) || 'Приложение';
+      const platform = v.str(req.body.platform, { max: 40, field: 'платформа' });
+      deviceToken = devices.issueToken(user.id, { deviceName: name, platform });
+    }
+
     res.json({
       success: true,
       needsVerification: mailer.enabled,
       user: publicUser(user),
+      ...(deviceToken ? { deviceToken } : {}),
     });
   }));
 

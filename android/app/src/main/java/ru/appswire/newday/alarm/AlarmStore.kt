@@ -21,10 +21,18 @@ object AlarmStore {
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
+    /**
+     * Список будильников пишем сразу на диск, а не отложенно.
+     *
+     * `apply()` возвращает управление до записи, и телефон, выключенный или
+     * убитый в этот момент, теряет список — а значит и будильник. Для сотни
+     * байт раз в несколько минут `commit()` ничего не стоит, зато после
+     * выключения питания список на месте и будильник восстанавливается.
+     */
     fun save(ctx: Context, alarms: List<Alarm>) {
         val arr = JSONArray()
         alarms.forEach { arr.put(it.toJson()) }
-        prefs(ctx).edit().putString(KEY_ALARMS, arr.toString()).apply()
+        prefs(ctx).edit().putString(KEY_ALARMS, arr.toString()).commit()
     }
 
     fun load(ctx: Context): List<Alarm> = try {
@@ -82,7 +90,7 @@ object AlarmStore {
         if (fired.contains(key)) return
         fired.add(key)
         // держим сотню последних: список не должен расти бесконечно
-        prefs(ctx).edit().putStringSet(KEY_FIRED, fired.takeLast(100).toSet()).apply()
+        prefs(ctx).edit().putStringSet(KEY_FIRED, fired.takeLast(100).toSet()).commit()
     }
 
     fun hasFired(ctx: Context, id: Long, fireAt: Long): Boolean =

@@ -19,6 +19,10 @@ from PIL import Image, ImageDraw, ImageFilter
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / 'public' / 'icons'
+# Большие версии знака — исходники, а не то, что раздаётся. В public/ они
+# никуда не подключались, но попадали и в кеш браузера, и внутрь APK: два
+# мегабайта, которые никто не открывает.
+BRAND = ROOT / 'brand'
 
 # Что делаем из знака. Имена — те, что уже ждут разметка и манифест.
 SIZES = {
@@ -102,9 +106,10 @@ def main():
           f'({radius / side * 100:.1f}% стороны)')
 
     OUT.mkdir(parents=True, exist_ok=True)
+    BRAND.mkdir(parents=True, exist_ok=True)
     for name, src in (('dark', dark), ('light', light)):
         tile = rounded(src.crop(box), radius)
-        big = OUT / f'logo-{name}-1024.png'
+        big = BRAND / f'logo-{name}-1024.png'
         tile.resize((1024, 1024), Image.LANCZOS).save(big)
         print('  ', big.relative_to(ROOT))
 

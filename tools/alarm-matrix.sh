@@ -83,12 +83,27 @@ boot_emulator() {
   return 1
 }
 
+# Гасим всё, что осталось от прошлого прогона.
 stop_emulator() {
+  # `adb emu kill` гасит только тот, к которому подключён adb. Сценарий с
+  # выключением телефона поднимает эмулятор сам, и после него их бывает два:
+  # следующая версия видела «more than one device» и не запускалась вовсе.
   "$ADB" emu kill >/dev/null 2>&1
-  sleep 5
-  # эмулятор иногда не гасится по emu kill — добиваем по имени процесса
+  sleep 3
   taskkill //F //IM qemu-system-x86_64.exe >/dev/null 2>&1 || true
+  taskkill //F //IM emulator.exe >/dev/null 2>&1 || true
   sleep 2
+  # adb помнит устройства, которых уже нет: перезапуск сервера чистит список
+  "$ADB" kill-server >/dev/null 2>&1
+  sleep 1
+  "$ADB" start-server >/dev/null 2>&1
+  local waited=0
+  while [ "$waited" -lt 40 ]; do
+    [ -z "$("$ADB" devices | grep 'emulator-')" ] && return 0
+    sleep 2
+    waited=$((waited + 2))
+  done
+  echo "  предупреждение: эмулятор всё ещё в списке устройств"
 }
 
 IFS=',' read -ra LIST <<< "$APIS"
@@ -128,6 +143,17 @@ for api in "${LIST[@]}"; do
   ver=$("$ADB" shell getprop ro.build.version.release 2>/dev/null | tr -d '\r')
   sdkv=$("$ADB" shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r')
   echo "  на устройстве: Android $ver (sdk $sdkv)"
+
+  # Сверяем версию с заказанной. Один раз уже случилось: от прошлого прогона
+  # остался живой эмулятор, adb подключился к нему, и отчёт уверенно сообщил
+  # «Android 12L» про Android 14. Отчёт, который врёт про версию, хуже
+  # отсутствующего — на него ведь смотрят, чтобы решить, где чинить.
+  if [ "$sdkv" != "$api" ]; then
+    echo "  ПРОВАЛ: подключились не к той версии (просили $api, отвечает $sdkv)"
+    echo "$human|—|—|не та версия ($sdkv)" >> "$REPORT"
+    stop_emulator
+    continue
+  fi
 
   echo "  ставлю приложение"
   "$ADB" install -r -g "$APK" >/dev/null 2>&1 || {
