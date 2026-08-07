@@ -13,6 +13,7 @@
 
 const { appSettingsRepo } = require('../repos/appSettings');
 const { aiUsageRepo } = require('../repos/aiUsage');
+const { createAiFetch } = require('../lib/aiFetch');
 
 const CHAT_TIMEOUT_MS = 90_000;
 const VOICE_TIMEOUT_MS = 180_000;
@@ -83,7 +84,16 @@ const SYSTEM = {
 function aiService(db, { env = process.env, fetchImpl, now = () => Date.now() } = {}) {
   const settings = appSettingsRepo(db, { env });
   const usage = aiUsageRepo(db);
-  const doFetch = fetchImpl || ((...a) => fetch(...a));
+  // Прокси-перебор живёт внутри: пока прокси не заданы, это тот же
+  // fetchImpl или глобальный fetch, что и раньше
+  const doFetch = createAiFetch(db, { fetchImpl });
+
+  /**
+   * Последняя ошибка провайдера — для админки. Владелец, глядя на «не
+   * работает», должен видеть последнюю причину, а не идти в логи.
+   */
+  let lastError = null;
+  const remember = message => { lastError = { message, at: new Date().toISOString() }; return message; };
 
   /** Что показывать интерфейсу: есть ли смысл в кнопке помощника. */
   const status = () => {
@@ -122,7 +132,7 @@ function aiService(db, { env = process.env, fetchImpl, now = () => Date.now() } 
       const ms = now() - started;
 
       if (!res.ok || body?.error) {
-        const error = reason(res.status, body);
+        const error = remember(reason(res.status, body));
         usage.add({ userId, kind, model, ok: false, ms });
         return { ok: false, error };
       }
@@ -143,7 +153,7 @@ function aiService(db, { env = process.env, fetchImpl, now = () => Date.now() } 
       usage.add({ userId, kind, model, ok: false, ms });
       return {
         ok: false, ms,
-        error: e.name === 'TimeoutError' ? 'Модель не ответила вовремя' : 'Не удалось соединиться с моделью',
+        error: remember(e.name === 'TimeoutError' ? 'Модель не ответила вовремя' : 'Не удалось соединиться с моделью'),
       };
     }
   }
@@ -239,7 +249,7 @@ function aiService(db, { env = process.env, fetchImpl, now = () => Date.now() } 
 
       if (!res.ok || body?.error) {
         usage.add({ userId, kind: 'transcribe', model: cfg.voiceModel, ok: false, ms });
-        return { ok: false, error: reason(res.status, body) };
+        return { ok: false, error: remember(reason(res.status, body)) };
       }
 
       const text = String(body?.text ?? '').trim();
@@ -256,12 +266,15 @@ function aiService(db, { env = process.env, fetchImpl, now = () => Date.now() } 
       usage.add({ userId, kind: 'transcribe', model: cfg.voiceModel, ok: false, ms });
       return {
         ok: false, ms,
-        error: e.name === 'TimeoutError' ? 'Распознавание не успело' : 'Не удалось отправить запись',
+        error: remember(e.name === 'TimeoutError' ? 'Распознавание не успело' : 'Не удалось отправить запись'),
       };
     }
   }
 
-  return { status, chat, parse, improve, transcribe, usage, settings, SYSTEM };
+  return {
+    status, chat, parse, improve, transcribe, usage, settings, SYSTEM,
+    lastError: () => lastError,
+  };
 }
 
 // ── Мелочи ───────────────────────────────────────────────────

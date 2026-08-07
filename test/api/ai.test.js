@@ -122,7 +122,9 @@ test('без подключения помощник честно говорит
   try {
     assert.deepStrictEqual(
       await getJson(s.url, s.cookie, '/api/v1/ai/status'),
-      { ready: false, voice: false, model: '' },
+      // Помимо подключения статус говорит про доступ этого человека:
+      // рубильник, тариф и остаток дневного лимита
+      { ready: false, voice: false, model: '', enabled: true, tier: 'unlimited', usedToday: 0, dailyLimit: null },
     );
     const r = await api(s.url, s.cookie, 'POST', '/api/v1/ai/parse', { text: 'что-нибудь' }, {}, true);
     assert.strictEqual(r.status, 503);

@@ -1,0 +1,234 @@
+/* ============================================================
+   NewDay — страница администратора.
+
+   Кнопки, карточки, поля и тосты берутся из components.css,
+   карточка входа — из auth.css. Здесь только то, чего в приложении
+   нет: боковая навигация, таблица пользователей, столбики статистики,
+   переключатели и список прокси.
+   ============================================================ */
+
+/* ── Экран входа ──────────────────────────────────────────────
+   Та же карточка, что на /login.html, только по центру страницы,
+   которая в остальное время живёт раскладкой с шапкой. */
+.adm-gate {
+  display: grid; place-items: center;
+  min-height: 100dvh; padding: var(--s-5);
+}
+
+/* Нейтральная заметка на карточке входа: «вы вышли» — не ошибка,
+   и красный тон здесь читался бы как упрёк */
+.adm-note {
+  padding: var(--s-3); border-radius: var(--r-md);
+  background: var(--surface-2); color: var(--ink-2);
+  font: var(--t-small);
+}
+
+/* ── Каркас: шапка, навигация слева, содержимое ───────────── */
+.adm {
+  display: grid;
+  grid-template-rows: var(--header-h) 1fr;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 100dvh;
+}
+
+.adm-body {
+  width: 100%; max-width: var(--content-max);
+  margin: 0 auto; padding: var(--s-5);
+  display: grid; grid-template-columns: 216px minmax(0, 1fr);
+  gap: var(--s-5); align-items: start;
+  /* Лишняя высота не растягивает ряды: иначе на коротком разделе
+     содержимое сползало к середине экрана */
+  align-content: start;
+}
+
+.adm-nav {
+  display: grid; gap: 2px;
+  position: sticky; top: calc(var(--header-h) + var(--s-5));
+}
+.adm-nav button {
+  display: flex; align-items: center; gap: var(--s-2);
+  padding: 9px var(--s-3); border-radius: var(--r-md);
+  font: var(--t-body-md); color: var(--ink-2); text-align: left;
+  transition: background var(--dur-fast), color var(--dur-fast);
+  white-space: nowrap;
+}
+.adm-nav button:hover { background: var(--surface-2); color: var(--ink); }
+.adm-nav button[aria-current="true"] { background: var(--accent-soft); color: var(--accent); }
+
+.adm-main { display: grid; gap: var(--s-4); min-width: 0; }
+
+/* На узком экране навигация — прокручиваемая строка под шапкой:
+   колонка слева съела бы половину и без того узкой страницы */
+@media (max-width: 900px) {
+  .adm-body { grid-template-columns: minmax(0, 1fr); padding: var(--s-3); gap: var(--s-3); }
+  .adm-nav {
+    position: static;
+    display: flex; gap: 4px;
+    overflow-x: auto; scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .adm-nav::-webkit-scrollbar { display: none; }
+  .adm-nav button { flex: none; padding: 7px var(--s-3); }
+}
+
+/* ── Обзор: карточки чисел ────────────────────────────────── */
+.adm-stats {
+  display: grid; gap: var(--s-3);
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+.adm-stat {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
+  padding: var(--s-4);
+  display: grid; gap: var(--s-1); align-content: start;
+}
+.adm-stat-num {
+  font: 600 26px/1.1 var(--font-mono);
+  letter-spacing: -.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Обзор: столбики по дням. Тот же рисунок, что у привычек
+   (.wbar в components.css): дорожка во всю высоту, заливка от
+   нижней кромки, скруглённый верх                             */
+.adm-chart {
+  display: flex; align-items: flex-end; gap: 6px;
+  padding-top: var(--s-2); min-width: 0;
+}
+.adm-bar {
+  flex: 1 1 0; min-width: 0; max-width: 48px;
+  display: grid; gap: 4px; justify-items: center;
+}
+.adm-bar-v { font: var(--t-micro); font-family: var(--font-mono); color: var(--ink-2); }
+.adm-vbar {
+  width: 100%; max-width: 34px; height: 84px;
+  background: var(--ring-track); border-radius: var(--r-sm);
+  display: flex; align-items: flex-end; overflow: hidden;
+}
+.adm-vbar i {
+  display: block; width: 100%;
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
+  background: var(--accent);
+  transition: height var(--dur-slow) var(--ease);
+}
+.adm-bar-l { font: var(--t-micro); color: var(--ink-3); }
+
+/* ── Обзор: состояние сервера ─────────────────────────────── */
+.adm-kv-row {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--s-4); padding: 7px 0;
+}
+.adm-kv-row + .adm-kv-row { border-top: 1px solid var(--hairline); }
+.adm-kv-row > span { color: var(--ink-3); font: var(--t-small); }
+.adm-kv-row > b { font: var(--t-body-md); text-align: right; word-break: break-word; }
+.adm-kv-row > b.ok { color: var(--c-success); }
+.adm-kv-row > b.bad { color: var(--c-danger); }
+
+/* ── Таблица пользователей ────────────────────────────────────
+   На 360 px таблица не влезает по определению — прокручивается
+   внутри карточки, страница вбок не ездит. */
+.adm-scroll { overflow-x: auto; }
+.adm-table { width: 100%; min-width: 640px; border-collapse: collapse; font: var(--t-body); }
+.adm-table th {
+  font: var(--t-section); text-transform: uppercase;
+  letter-spacing: var(--track-caps); color: var(--ink-3);
+  text-align: left; white-space: nowrap;
+  padding: var(--s-2) var(--s-3);
+  border-bottom: 1px solid var(--hairline);
+}
+.adm-table td {
+  padding: var(--s-2) var(--s-3);
+  border-bottom: 1px solid var(--hairline);
+  vertical-align: middle;
+}
+.adm-table tr:last-child td { border-bottom: 0; }
+.adm-table select.field { width: auto; min-width: 138px; height: 32px; }
+.adm-user { display: grid; gap: 1px; min-width: 0; }
+.adm-user b { font: var(--t-body-md); }
+.adm-user span { font: var(--t-small); color: var(--ink-3); }
+
+/* ── Приглашения ──────────────────────────────────────────── */
+.adm-invite { display: grid; gap: var(--s-2); padding: var(--s-3) var(--s-2); }
+.adm-invite + .adm-invite { border-top: 1px solid var(--hairline); }
+.adm-invite-hd { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+.adm-invite-code { font: 600 15px/1 var(--font-mono); letter-spacing: .04em; }
+.adm-invite-url { font: var(--t-small); color: var(--ink-3); word-break: break-all; }
+.adm-invite-btns { display: flex; gap: var(--s-2); flex-wrap: wrap; }
+.adm-invite.off .adm-invite-code { color: var(--ink-3); text-decoration: line-through; }
+
+.pill.ok { background: var(--c-success-soft); color: var(--c-success); }
+.pill.bad { background: var(--c-danger-soft); color: var(--c-danger); }
+
+/* Строка формы: поля в ряд, на узком экране переносятся */
+.adm-form-row { display: flex; gap: var(--s-3); flex-wrap: wrap; align-items: flex-end; }
+/* Предел ширины — чтобы селект на широком экране не расползался
+   на полкарточки; на узком поля всё равно переносятся */
+.adm-form-row .form-group { flex: 1 1 150px; min-width: 0; max-width: 280px; }
+.adm-form-row .form-group.w-s { flex: 0 1 130px; }
+.adm-form-row > .btn { flex: none; height: 40px; }
+/* Селекты в формах — той же высоты, что поля из auth.css */
+.form-group select {
+  width: 100%; height: 40px; padding: 0 var(--s-2);
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--hairline-firm); border-radius: var(--r-md);
+}
+.form-group select:focus { border-color: var(--c-day); outline: none; }
+
+/* ── Переключатель ────────────────────────────────────────── */
+.adm-switch {
+  position: relative; flex: none;
+  width: 44px; height: 26px; border-radius: var(--r-pill);
+  background: var(--surface-3);
+  border: 1px solid var(--hairline-firm);
+  transition: background var(--dur-fast), border-color var(--dur-fast);
+}
+.adm-switch::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(16, 24, 40, .3);
+  transition: transform var(--dur) var(--ease);
+}
+.adm-switch[aria-checked="true"] { background: var(--accent); border-color: var(--accent); }
+.adm-switch[aria-checked="true"]::after { transform: translateX(18px); }
+.adm-switch[disabled] { opacity: .55; }
+
+/* Строка настройки: подпись с объяснением слева, переключатель справа */
+.adm-setrow {
+  display: flex; align-items: center; gap: var(--s-4);
+  padding: var(--s-2) 0;
+}
+.adm-setrow + .adm-setrow { border-top: 1px solid var(--hairline); }
+.adm-setrow-t { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
+.adm-setrow-t b { font: var(--t-body-md); }
+.adm-setrow-t span { font: var(--t-small); color: var(--ink-3); }
+
+/* ── Помощник ─────────────────────────────────────────────── */
+.adm-ai-status { display: flex; align-items: flex-start; gap: var(--s-2); font: var(--t-body-md); }
+.adm-ai-status svg { margin-top: 2px; }
+.adm-ai-status.ok { color: var(--c-success); }
+.adm-ai-status.warn { color: var(--c-warn); }
+.adm-check-line { display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; }
+.adm-check-out:not(:empty) { font: var(--t-small); }
+.adm-check-out.ok { color: var(--c-success); }
+.adm-check-out.bad { color: var(--c-danger); }
+
+.adm-proxy {
+  display: flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-2) 0; min-width: 0;
+}
+.adm-proxy + .adm-proxy { border-top: 1px solid var(--hairline); }
+.adm-proxy .mono { overflow-wrap: anywhere; }
+.adm-proxy-login { font: var(--t-small); color: var(--ink-3); }
+.adm-proxy .icon-btn { margin-left: auto; }
+.adm-proxy .icon-btn:hover { color: var(--c-danger); }
+
+/* ── Мелочи ───────────────────────────────────────────────── */
+.adm-lead { font: var(--t-small); color: var(--ink-3); line-height: 1.5; }
+.adm-actions { display: flex; gap: var(--s-2); flex-wrap: wrap; align-items: center; }
+
+/* На совсем узком экране кнопкам в карточках можно во всю ширину */
+@media (max-width: 420px) {
+  .adm-form-row > .btn { flex: 1 1 100%; }
+}

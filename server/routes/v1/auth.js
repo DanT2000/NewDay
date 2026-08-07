@@ -5,6 +5,9 @@ const v = require('../../lib/validate');
 const { hashToken, randomHex } = require('../../lib/secrets');
 const { usersRepo, publicUser } = require('../../repos/users');
 const { devicesRepo } = require('../../repos/devices');
+const { invitesRepo } = require('../../repos/invites');
+const { appSettingsRepo } = require('../../repos/appSettings');
+const { panelSettings } = require('../../repos/panelSettings');
 const { generateSecret, formatToken } = require('../../lib/secrets');
 const { verifyEmailMessage, resetPasswordMessage } = require('../../lib/mailer');
 const { rateLimit } = require('../../middleware/rateLimit');
@@ -16,6 +19,8 @@ module.exports = function authRouter({ db, config, mailer, auth }) {
   const router = express.Router();
   const users = usersRepo(db);
   const devices = devicesRepo(db);
+  const invites = invitesRepo(db);
+  const panel = panelSettings(appSettingsRepo(db));
 
   const limiter = rateLimit({ max: 10 });
   const claimLimiter = rateLimit({ max: 20 });
@@ -39,22 +44,56 @@ module.exports = function authRouter({ db, config, mailer, auth }) {
     return row;
   }
 
+  // ── GET /config ───────────────────────────────────────────────────
+  /**
+   * Что видно до входа. Страница входа по registrationOpen решает,
+   * показывать ли «Зарегистрироваться», — без этого человек упирался бы
+   * в отказ уже после заполнения формы.
+   */
+  router.get('/config', (_req, res) => {
+    res.json({ registrationOpen: panel.registrationOpen(), aiEnabled: panel.aiSwitchOn() });
+  });
+
   // ── POST /register ────────────────────────────────────────────────
   router.post('/register', limiter, wrap(async (req, res) => {
     const email = v.email(req.body.email);
     const password = v.password(req.body.password);
+    const inviteCode = v.str(req.body.invite, { max: 100, field: 'приглашение' });
 
     if (users.findByEmail(email)) {
       throw badRequest('Этот адрес уже зарегистрирован');
     }
 
+    const closed = !panel.registrationOpen();
+    if (closed && !inviteCode) {
+      throw new ApiError(403, 'INVITE_REQUIRED',
+        'Регистрация по приглашениям — попросите ссылку у администратора');
+    }
+
     // Без SMTP подтверждать нечем — впускаем сразу, иначе self-host не поднимется.
     const verified = mailer.enabled ? 0 : 1;
-    const user = users.create({
-      email,
-      passwordHash: bcrypt.hashSync(password, 10),
-      emailVerified: verified,
-    });
+
+    /*
+     * Трата кода и создание аккаунта — одной транзакцией: код, потраченный
+     * на регистрацию, которая не состоялась, — это украденное приглашение.
+     * При открытой регистрации присланный код тоже тратится и применяет
+     * свой тариф, а мёртвый — просто игнорируется: валить регистрацию,
+     * которая и без кода прошла бы, не за что.
+     */
+    let user;
+    db.transaction(() => {
+      const invite = inviteCode ? invites.spend(inviteCode) : null;
+      if (closed && !invite) {
+        throw new ApiError(403, 'INVITE_REQUIRED',
+          'Регистрация по приглашениям — попросите ссылку у администратора');
+      }
+      user = users.create({
+        email,
+        passwordHash: bcrypt.hashSync(password, 10),
+        emailVerified: verified,
+      });
+      if (invite?.ai_tier) user = users.setAiTier(user.id, invite.ai_tier);
+    })();
 
     if (mailer.enabled) {
       const token = issueEmailToken(user.id, 'verify', VERIFY_TTL_MS);

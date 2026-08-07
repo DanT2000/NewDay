@@ -18,16 +18,20 @@ const { wrap, ApiError, badRequest } = require('../../lib/errors');
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 const MAX_TEXT = 20000;
 
-module.exports = function aiRouter({ ai }) {
+module.exports = function aiRouter({ ai, access }) {
   const router = express.Router();
 
-  router.get('/status', wrap((_req, res) => res.json(ai.status())));
+  // Статус дополняется личным: подключён ли помощник вообще — и доступен
+  // ли он именно этому человеку (рубильник, тариф, остаток лимита)
+  router.get('/status', wrap((req, res) =>
+    res.json({ ...ai.status(), ...access.statusFor(req.user) })));
 
   /** Разобрать сказанное в дела, расписание и напоминания. */
   router.post('/parse', wrap(async (req, res) => {
     const text = String(req.body?.text ?? '').trim();
     if (!text) throw badRequest('Нет текста');
     if (text.length > MAX_TEXT) throw badRequest('Слишком длинный текст');
+    access.gate(req.user);
     ready(ai);
 
     const r = await ai.parse({
@@ -38,6 +42,7 @@ module.exports = function aiRouter({ ai }) {
       history: asHistory(req.body?.history),
     });
     if (!r.ok) throw failed(r.error);
+    access.note(req.user);   // лимит тратят только удачные обращения
     res.json(r);
   }));
 
@@ -46,10 +51,12 @@ module.exports = function aiRouter({ ai }) {
     const text = String(req.body?.text ?? '').trim();
     if (!text) throw badRequest('Нет текста');
     if (text.length > MAX_TEXT) throw badRequest('Слишком длинный текст');
+    access.gate(req.user);
     ready(ai);
 
     const r = await ai.improve({ userId: req.user.id, text });
     if (!r.ok) throw failed(r.error);
+    access.note(req.user);
     res.json(r);
   }));
 
@@ -58,6 +65,7 @@ module.exports = function aiRouter({ ai }) {
    * а хранить чужие голоса на сервере — лишняя ответственность.
    */
   router.post('/transcribe', wrap(async (req, res) => {
+    access.gate(req.user);
     if (!ai.status().voice) {
       throw new ApiError(503, 'AI_OFF', 'Распознавание речи не подключено');
     }
@@ -72,6 +80,7 @@ module.exports = function aiRouter({ ai }) {
       language: form.fields.language || 'ru',
     });
     if (!r.ok) throw failed(r.error);
+    access.note(req.user);
     res.json(r);
   }));
 

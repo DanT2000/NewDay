@@ -8,6 +8,7 @@ const MIGRATIONS = [
   require('./007-color-window'),
   require('./008-food-plan'),
   require('./009-user-sounds'),
+  require('./010-admin-panel'),
 ];
 
 function currentVersion(db) {

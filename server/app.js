@@ -21,6 +21,7 @@ const settingsRouter = require('./routes/v1/settings');
 const notesRouter = require('./routes/v1/notes');
 const soundsRouter = require('./routes/v1/sounds');
 const adminRouter = require('./routes/v1/admin');
+const adminPanelRouter = require('./routes/adminPanel');
 const aiRouter = require('./routes/v1/ai');
 const exportRouter = require('./routes/v1/export');
 const openapiRouter = require('./routes/v1/openapi');
@@ -29,6 +30,7 @@ const legacyRouter = require('./routes/legacy');
 const { apkStore } = require('./services/apkStore');
 const { updateService } = require('./services/updateService');
 const { aiService } = require('./services/aiService');
+const { aiAccess } = require('./services/aiAccess');
 
 /**
  * `fetchImpl` подменяется в тестах: настоящий провайдер в них ходить не
@@ -80,6 +82,10 @@ function createApp({ db, config, fetchImpl, env = process.env }) {
   const ai = aiService(db, { env, fetchImpl });
   app.locals.ai = ai;
 
+  // Рубильник и тарифы помощника: кто и сколько может его тратить
+  const access = aiAccess(db);
+  app.locals.aiAccess = access;
+
   app.use('/api/health', healthRouter(db, { ai, push, mailer }));
   // Спецификация и документация доступны без входа
   app.use('/api/v1', openapiRouter({ config }));
@@ -92,6 +98,14 @@ function createApp({ db, config, fetchImpl, env = process.env }) {
    * открывает в браузере телефона, где сессии этого сайта нет.
    */
   app.use('/api/v1/app', appVersionRouter({ config, store, update }));
+
+  /**
+   * Панель администратора — до общих требований аутентификации: у неё
+   * свой вход по паролю экземпляра, пользовательская сессия не нужна.
+   * Ниже по цепочке /api перекрыт auth.requireAuth, поэтому позже её
+   * подключать нельзя — login отвечал бы 401 раньше, чем его увидит панель.
+   */
+  app.use('/api/admin', adminPanelRouter({ db, config, ai, access, push }));
 
   // Старые пути — до конца этапа 2, пока фронтенд не переписан.
   app.use('/api/auth', authRouter({ db, config, mailer, auth }));
@@ -141,7 +155,7 @@ function createApp({ db, config, fetchImpl, env = process.env }) {
   app.use('/api/v1/series', seriesRouter({ db }));
   app.use('/api/v1/push', pushRouter({ db, push }));
 
-  app.use('/api/v1/ai', aiRouter({ ai }));
+  app.use('/api/v1/ai', aiRouter({ ai, access }));
   app.use('/api/v1/notes', notesRouter({ db }));
   app.use('/api/v1/sounds', soundsRouter({ db, config }));
   app.use('/api/v1/admin', adminRouter({ db, config, ai }));
@@ -153,6 +167,8 @@ function createApp({ db, config, fetchImpl, env = process.env }) {
   });
 
   app.get('/pair', (_req, res) => res.sendFile(path.join(__dirname, '../public/pair.html')));
+  // админка живёт по короткому пути: /admin вводится руками, а не по ссылке
+  app.get('/admin', (_req, res) => res.sendFile(path.join(__dirname, '../public/admin.html')));
   /*
    * Заголовки кеша.
    *

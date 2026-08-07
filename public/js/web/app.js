@@ -471,8 +471,14 @@ function sideBar() {
   });
   add(themeBtn, ico(dark() ? 'moon' : 'sun', '16px'), h('span', { text: dark() ? 'Тёмная тема' : 'Светлая тема' }));
 
-  const ai = h('button.wbtn-ai', { type: 'button', onclick: () => openAi() });
-  add(ai, ico('sparkle-fill', '17px'), h('span', { text: 'Помощник' }));
+  /*
+   * Кнопки помощника нет, когда его нет: администратор выключил ИИ или
+   * этому аккаунту он не разрешён. Кнопка, ведущая в отказ, хуже отсутствия.
+   */
+  const ai = aiAllowed()
+    ? h('button.wbtn-ai', { type: 'button', onclick: () => openAi() })
+    : null;
+  if (ai) add(ai, ico('sparkle-fill', '17px'), h('span', { text: 'Помощник' }));
 
   return h('aside.wside',
     /*
@@ -984,14 +990,28 @@ function todayScreen() {
 const PHONE_MAX = 720;
 const isPhone = () => matchMedia(`(max-width: ${PHONE_MAX}px)`).matches;
 
+/**
+ * Разрешён ли помощник этому аккаунту. Пока статус не пришёл, верим ready:
+ * прятать кнопку на секунду загрузки и возвращать — это мигание.
+ */
+function aiAllowed() {
+  const a = store.ai ?? {};
+  if (!a.ready) return false;
+  if (a.enabled === false) return false;
+  if (a.tier === 'off') return false;
+  return true;
+}
+
 /** Шапка дня: день недели, число, стрелки, календарь и помощник. */
 function phoneDayHead() {
   const cur = dayOf();
-  const ai = h('button.wpbtn.wpbtn-ai', {
-    type: 'button', title: 'Помощник', 'aria-label': 'Помощник',
-    onclick: () => openAi(),
-  });
-  add(ai, ico('sparkle-fill', '17px'));
+  const ai = aiAllowed()
+    ? h('button.wpbtn.wpbtn-ai', {
+      type: 'button', title: 'Помощник', 'aria-label': 'Помощник',
+      onclick: () => openAi(),
+    })
+    : null;
+  if (ai) add(ai, ico('sparkle-fill', '17px'));
 
   const cal = h('button.wpbtn.wpbtn-accent', {
     type: 'button', title: 'Выбрать день', 'aria-label': 'Выбрать день',

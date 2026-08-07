@@ -41,6 +41,13 @@ function usersRepo(db) {
       db.prepare("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?")
         .run(passwordHash, id);
     },
+    /** Тариф помощника меняет администратор — или приглашение при регистрации. */
+    setAiTier(id, tier) {
+      const r = db.prepare("UPDATE users SET ai_tier = ?, updated_at = datetime('now') WHERE id = ?")
+        .run(tier, id);
+      if (r.changes === 0) throw notFound('Пользователь не найден');
+      return self.findById(id);
+    },
     bindEmail(id, email) {
       db.prepare("UPDATE users SET email = ?, updated_at = datetime('now') WHERE id = ?")
         .run(String(email).toLowerCase(), id);

@@ -42,7 +42,7 @@
       <button type="submit" class="btn btn-primary btn-block">Войти</button>
     </form>
 
-    <p class="auth-footer">Нет аккаунта? <a href="/register.html">Зарегистрироваться</a></p>
+    <p class="auth-footer" id="reg-link">Нет аккаунта? <a href="/register.html">Зарегистрироваться</a></p>
     <p class="auth-footer"><a href="/reset.html">Забыли пароль?</a></p>
     <!--
       Ссылка на приложение — только в браузере. Внутри самого приложения
@@ -75,6 +75,22 @@
   </script>
 
   <script>
+    /*
+     * Ссылка «Зарегистрироваться» — только когда регистрация открыта.
+     * Администратор может закрыть её и впускать по приглашениям; вести
+     * человека на форму, которая откажет после заполнения, — издевательство.
+     * Ответа не дождались — ссылку не трогаем: без сети хуже не делаем.
+     */
+    (() => {
+      // в приложении API живёт на сервере, а не на localhost вебвью
+      const cfgBase = window.Capacitor?.isNativePlatform?.()
+        ? (localStorage.getItem('newday.apiBase') || 'https://newday.appswire.ru').replace(/\/+$/, '')
+        : '';
+      fetch(cfgBase + '/api/v1/auth/config').then(r => r.json()).then(c => {
+        if (c && c.registrationOpen === false) document.getElementById('reg-link')?.remove();
+      }).catch(() => {});
+    })();
+
     // Поле адреса сервера нужно только в приложении: на сайте адрес и так известен,
     // а на self-host человек указывает свой
     if (window.Capacitor?.isNativePlatform?.()) {
