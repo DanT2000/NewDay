@@ -20,7 +20,7 @@
 <body class="auth-page">
   <div class="auth-card">
     <div class="auth-logo">
-      <img class="auth-logo-icon" src="/icons/logo-256.png" alt="NewDay" width="88" height="88">
+      <img class="auth-logo-icon" src="/icons/logo-light-256.png" alt="NewDay" width="88" height="88">
       <h1 class="auth-logo-title">NewDay</h1>
       <p class="auth-logo-sub">Личный планировщик</p>
     </div>
@@ -85,6 +85,12 @@
 
     document.getElementById('login-form').addEventListener('submit', async e => {
       e.preventDefault();
+      // кнопка занята, пока запрос в пути: на медленной сети каждое повторное
+      // нажатие входило бы ещё раз и плодило токены устройства — список
+      // «Устройства» зарастал бы дублями «Android»
+      const btn = e.target.querySelector('button[type="submit"]');
+      if (btn?.disabled) return;
+      if (btn) btn.disabled = true;
       const errEl = document.getElementById('error-msg');
       errEl.style.display = 'none';
 
@@ -120,6 +126,7 @@
           ? 'Не получилось связаться с сервером. Проверьте адрес и интернет: ' + base
           : 'Не получилось связаться с сервером. Проверьте интернет и попробуйте снова';
         errEl.style.display = 'block';
+        if (btn) btn.disabled = false;
         return;
       }
 
@@ -132,6 +139,7 @@
         // сервер отвечает { error: { code, message } }
         errEl.textContent = data.error?.message || data.error || 'Ошибка входа';
         errEl.style.display = 'block';
+        if (btn) btn.disabled = false;
       }
     });
   </script>

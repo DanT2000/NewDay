@@ -63,11 +63,18 @@ module.exports = function healthRouter(db, { ai, push, mailer } = {}) {
     let queue = null;
     if (dbWritable) {
       try {
+        /*
+         * failed_at IS NULL — как у планировщика: он берёт в работу только
+         * такие строки. Уведомление, окончательно упавшее на мёртвой
+         * подписке, навсегда остаётся без sent_at, и без этого условия одна
+         * протухшая браузерная подписка держала бы 503 до суток — ложная
+         * ночная тревога на живом сервере.
+         */
         const row = db.prepare(`
           SELECT COUNT(*) AS waiting,
                  MIN(fire_at_utc) AS oldest
             FROM notification_queue
-           WHERE sent_at IS NULL
+           WHERE sent_at IS NULL AND failed_at IS NULL
         `).get();
         const oldest = row?.oldest ? new Date(row.oldest).getTime() : null;
         const lateMs = oldest ? Date.now() - oldest : 0;

@@ -175,6 +175,32 @@ test('регистрация из приложения выдаёт токен �
   } finally { await srv.close(); }
 });
 
+/*
+ * Выход гасит то, чем вошли.
+ *
+ * В приложении сессии нет — там токен устройства, и logout, рушивший только
+ * сессию, был пустышкой: человек «выходил», открывал приложение и снова был
+ * в аккаунте. Отдал телефон — отдал аккаунт.
+ */
+test('выход с токеном устройства отзывает этот токен', async () => {
+  const srv = await startTestServer();
+  try {
+    const reg = await post(srv.url, '/api/v1/auth/register', {
+      email: 'exit@b.ru', password: 'secret12',
+      issueDeviceToken: true, deviceName: 'Android', platform: 'android',
+    });
+    const { deviceToken } = await reg.json();
+    const auth = { Authorization: `Bearer ${deviceToken}` };
+
+    const out = await fetch(`${srv.url}/api/v1/auth/logout`, { method: 'POST', headers: auth });
+    assert.strictEqual(out.status, 200);
+
+    // токен мёртв: тот же запрос, который до выхода проходил, теперь 401
+    const me = await fetch(`${srv.url}/api/v1/auth/me`, { headers: auth });
+    assert.strictEqual(me.status, 401);
+  } finally { await srv.close(); }
+});
+
 test('пока почта не подтверждена, токен устройства не выдаётся', async () => {
   const srv = await startTestServer({ env: SMTP_ON });
   try {

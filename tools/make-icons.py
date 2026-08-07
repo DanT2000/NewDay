@@ -19,12 +19,22 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 `--android-only` нужен затем, что источники у иконок разные.
 
 Иконка запуска на телефоне — светлая: на рабочем столе Android она соседствует
-с чужими значками, и тёмная плашка среди них выглядит дырой. А `logo-256.png` в
-вебе стоит на тёмных страницах входа, и светлый вариант там был бы белым
-пятном. Поэтому одна команда правит только нативные иконки, не задевая веб.
+с чужими значками, и тёмная плашка среди них выглядит дырой. Страницы входа в
+вебе берут светлый вариант в разметке, а тёмная тема подменяет его через CSS.
+Поэтому одна команда правит только нативные иконки, не задевая веб.
+
+`--night <тёмный.png>` добавляет ночной экран запуска: на телефоне с тёмной
+темой светлый сплеш, за которым идёт тёмная страница входа, читается как «две
+разные картинки». Иконку запуска ночной вариант не трогает — она остаётся
+светлой всегда.
 """
 ANDROID_ONLY = '--android-only' in sys.argv
-args = [a for a in sys.argv[1:] if not a.startswith('--')]
+NIGHT_SRC = None
+if '--night' in sys.argv:
+    i = sys.argv.index('--night')
+    if i + 1 < len(sys.argv):
+        NIGHT_SRC = sys.argv[i + 1]
+args = [a for a in sys.argv[1:] if not a.startswith('--') and a != NIGHT_SRC]
 SRC = args[0] if args else os.path.join(ROOT, 'brand-icon.png')
 
 WEB = os.path.join(ROOT, 'public', 'icons')
@@ -158,6 +168,45 @@ def main():
                     save(splash, os.path.join(ANDROID, f'drawable-{orient}-{density}', 'splash.png'))
         # иконка для системного экрана запуска: холст 288dp, содержимое в центре
         save(inset(src, 576, 0.62), os.path.join(ANDROID, 'drawable/splash_icon.png'))
+
+        # цвет фона системного экрана запуска — отдельным именем: он не может
+        # делить имя с ic_launcher_background, иначе ночной вариант затемнил бы
+        # и иконку запуска, а она остаётся светлой всегда
+        def write_color(dirname, color):
+            path = os.path.join(ANDROID, dirname, 'splash_background.xml')
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n'
+                        f'    <color name="splash_background">'
+                        f'#{color[0]:02X}{color[1]:02X}{color[2]:02X}</color>\n'
+                        '</resources>\n')
+            print('  ', os.path.relpath(path, ROOT))
+        write_color('values', bg)
+
+        """
+        Ночной экран запуска.
+
+        На телефоне с тёмной темой светлый сплеш, за которым открывается тёмная
+        страница, читается как «две разные картинки». Android сам выбирает
+        ресурсы с уточнителем -night, когда тема тёмная, — кладём туда тёмный
+        вариант того же логотипа. Порядок уточнителей в имени каталога жёсткий:
+        ориентация раньше ночного режима, ночной режим раньше плотности.
+        """
+        if NIGHT_SRC:
+            if not os.path.exists(NIGHT_SRC):
+                sys.exit(f'Не найден ночной исходник: {NIGHT_SRC}')
+            night = load(NIGHT_SRC)
+            nbg = edge_color(night)
+            print(f'Ночной фон из иконки: #{nbg[0]:02X}{nbg[1]:02X}{nbg[2]:02X}')
+            write_color('values-night', nbg)
+            nsplash = inset(night, 960, 0.35, nbg)
+            save(nsplash, os.path.join(ANDROID, 'drawable-night/splash.png'))
+            for orient in ('port', 'land'):
+                for density in ANDROID_MIPMAP:
+                    save(nsplash, os.path.join(
+                        ANDROID, f'drawable-{orient}-night-{density}', 'splash.png'))
+            save(inset(night, 576, 0.62),
+                 os.path.join(ANDROID, 'drawable-night/splash_icon.png'))
     else:
         print('Каталог android/ не найден — пропускаю нативные иконки')
 

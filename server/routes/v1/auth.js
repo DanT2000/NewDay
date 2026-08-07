@@ -146,7 +146,23 @@ module.exports = function authRouter({ db, config, mailer, auth }) {
   }));
 
   // ── POST /logout ──────────────────────────────────────────────────
+  /*
+   * Выход гасит то, чем человек вошёл.
+   *
+   * В приложении сессии нет — там живёт токен устройства, и раньше logout
+   * рушил только сессию: человек выходил, открывал приложение — и снова был
+   * в аккаунте, потому что токен оставался живым. «Отдал телефон — отдал
+   * аккаунт». Токен опознаётся по Bearer-заголовку этого же запроса.
+   */
   router.post('/logout', (req, res) => {
+    const header = req.get('authorization') || '';
+    const bearer = header.startsWith('Bearer ') ? header.slice(7).trim() : null;
+    if (bearer) {
+      const asDevice = devices.authenticate(bearer);
+      if (asDevice) {
+        try { devices.revoke(asDevice.userId, asDevice.deviceId); } catch { /* уже отозван */ }
+      }
+    }
     req.session.destroy(() => res.json({ success: true }));
   });
 

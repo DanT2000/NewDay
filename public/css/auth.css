@@ -14,6 +14,18 @@
 }
 .auth-logo { display: grid; justify-items: center; gap: var(--s-1); margin-bottom: var(--s-6); }
 .auth-logo-icon { width: 72px; height: 72px; border-radius: 18px; }
+/*
+ * Логотип следует за темой, как и всё остальное.
+ *
+ * В разметке стоит светлый вариант, тёмная тема подменяет его здесь. Тема
+ * выставляется в <head> до первой отрисовки, поэтому подмена происходит до
+ * того, как страница показана, — мигания светлым логотипом нет. Раньше на
+ * всех страницах входа стоял тёмный логотип независимо от темы: на светлой
+ * теме — тёмная плитка, и она же «вторая картинка» после светлого сплеша.
+ */
+[data-theme="dark"] .auth-logo-icon,
+[data-theme="dark"] .boot-logo { content: url("/icons/logo-dark-256.png"); }
+.boot-logo { border-radius: 16px; }
 .auth-logo-title { font: var(--t-display); letter-spacing: var(--track-tight); }
 .auth-logo-sub { font: var(--t-small); color: var(--ink-3); }
 

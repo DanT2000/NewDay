@@ -160,6 +160,9 @@ export async function loadRange(date, view) {
   try {
     store.range = await api.GET(`/days/range?from=${from}&to=${to}`);
     keep(`range.${from}.${to}`, store.range);
+    // связь есть — полоса «нет связи» должна уйти и с экрана недели,
+    // а не ждать, пока человек переключит экран
+    store.offline = false;
     return store.range;
   } catch (e) {
     if (e?.status === 401) throw e;
@@ -202,6 +205,7 @@ export async function loadNotes() {
     const rows = await api.GET('/notes');
     store.notes = Array.isArray(rows) ? rows : (rows.days ?? []);
     keep('notes', store.notes);
+    store.offline = false;
     return store.notes;
   } catch (e) {
     if (e?.status === 401) throw e;

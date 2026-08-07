@@ -20,7 +20,7 @@
 <body class="auth-page">
   <div class="auth-card">
     <div class="auth-logo">
-      <img class="auth-logo-icon" src="/icons/logo-256.png" alt="NewDay" width="88" height="88">
+      <img class="auth-logo-icon" src="/icons/logo-light-256.png" alt="NewDay" width="88" height="88">
       <h1 class="auth-logo-title">NewDay</h1>
       <p class="auth-logo-sub">Создать аккаунт</p>
     </div>
@@ -75,8 +75,17 @@
 
     document.getElementById('register-form').addEventListener('submit', async e => {
       e.preventDefault();
+      // кнопка занята на время запроса: повторное нажатие на медленной сети
+      // регистрировало бы дважды и плодило токены устройства
+      const btn = e.target.querySelector('button[type="submit"]');
+      if (btn?.disabled) return;
+      if (btn) btn.disabled = true;
       const errEl = document.getElementById('error-msg');
-      const show = text => { errEl.textContent = text; errEl.style.display = 'block'; };
+      const show = text => {
+        errEl.textContent = text;
+        errEl.style.display = 'block';
+        if (btn) btn.disabled = false;
+      };
       errEl.style.display = 'none';
 
       const email = document.getElementById('username').value.trim();

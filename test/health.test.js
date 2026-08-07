@@ -87,3 +87,45 @@ test('без VAPID-ключей признак уведомлений честн
     await srv.close();
   }
 });
+
+/*
+ * Ложной тревоги от окончательно неудавшихся уведомлений быть не должно.
+ *
+ * Уведомление, трижды упавшее на мёртвой подписке, навсегда остаётся без
+ * sent_at — но планировщик такие больше не берёт, и «очередь стоит» они не
+ * означают. Без учёта failed_at одна протухшая браузерная подписка держала
+ * бы 503 на живом сервере до суток — ночная ложная тревога у наблюдалки.
+ */
+test('окончательно неудавшееся уведомление не валит здоровье', async () => {
+  const srv = await startTestServer({
+    env: {
+      VAPID_PUBLIC_KEY: 'BK4HJB_Mb9Uz9H66xlas5-RELrPKhXeVSSe9h9hz33S6VvVCEJ0j9nLPXt4H8pRZmqBl4uCq3iC7QZlYfHmMPBw',
+      VAPID_PRIVATE_KEY: 'Zx3nJ0KQ0uS1cQ8k9Yy0oJ1n2Z3a4B5c6D7e8F9g0hI',
+      VAPID_SUBJECT: 'mailto:test@example.com',
+    },
+  });
+  try {
+    srv.db.prepare(
+      "INSERT INTO users (username, email, password_hash, email_verified) VALUES ('q', 'q@b.ru', 'x', 1)",
+    ).run();
+    const userId = srv.db.prepare("SELECT id FROM users WHERE email = 'q@b.ru'").get().id;
+    // час просроченное и окончательно неудавшееся: sent_at пуст, failed_at стоит
+    srv.db.prepare(`
+      INSERT INTO notification_queue (user_id, dedupe_key, fire_at_utc, payload_json, failed_at, attempts)
+      VALUES (?, 'k1', ?, '{}', datetime('now'), 3)
+    `).run(userId, Date.now() - 60 * 60 * 1000);
+
+    const res = await fetch(`${srv.url}/api/health`);
+    assert.strictEqual(res.status, 200, 'упавшее навсегда — не «очередь стоит»');
+
+    // а честно ждущее и просроченное — ловится
+    srv.db.prepare(`
+      INSERT INTO notification_queue (user_id, dedupe_key, fire_at_utc, payload_json)
+      VALUES (?, 'k2', ?, '{}')
+    `).run(userId, Date.now() - 60 * 60 * 1000);
+    const res2 = await fetch(`${srv.url}/api/health`);
+    assert.strictEqual(res2.status, 503, 'застрявшую очередь видно как раньше');
+  } finally {
+    await srv.close();
+  }
+});
