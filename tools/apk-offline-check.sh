@@ -62,7 +62,7 @@ rm -rf "$AVD_DIR/hardware-qemu.ini.lock" "$AVD_DIR/multiinstance.lock" \
        "$AVD_DIR/userdata-qemu.img.lock" "$AVD_DIR/snapshot.lock" 2>/dev/null || true
 
 echo "поднимаю эмулятор"
-"$EMU" -avd "$avd" -no-snapshot-save -no-boot-anim -no-audio -gpu swiftshader_indirect >/dev/null 2>&1 &
+"$EMU" -avd "$avd" -no-snapshot-save -no-boot-anim -no-audio -gpu swiftshader_indirect -dns-server 8.8.8.8,1.1.1.1 >/dev/null 2>&1 &
 "$ADB" wait-for-device
 waited=0
 until [ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; do
@@ -132,7 +132,18 @@ if [ "${net:-0}" -lt 1 ]; then
   echo "ПРОВАЛ: у эмулятора нет проверенной сети — связь с сервером проверять бессмысленно"
   exit 2
 fi
-echo "интернет у эмулятора есть"
+# И что имя сервера разрешается. Признака VALIDATED мало: сеть бывает
+# «проверенной», а нужный домен не разрешается — эмулятор берёт DNS у хоста, и
+# один раз он честно отвечал «unknown host» на наш адрес. Тогда «приложение не
+# видит сервер» — это про стенд, а не про приложение, и сказать надо именно так.
+host=${BASE#*://}
+host=${host%%/*}
+dns=$("$ADB" shell "ping -c 1 -W 2 $host" 2>&1 | tr -d '\r' | grep -c "unknown host" || true)
+if [ "${dns:-0}" -gt 0 ]; then
+  echo "ПРОВАЛ: эмулятор не разрешает имя $host — это ограничение стенда, не приложения"
+  exit 2
+fi
+echo "интернет есть, имя $host разрешается"
 
 ставим || exit 1
 
@@ -155,12 +166,22 @@ js() {
 # То же, но с показом ошибки: когда что-то не выходит, молчание бесполезно
 jsv() { node tools/webview-eval.js "$1" 2>&1 | tail -2; }
 
+# Запуск приложения с ожиданием вебвью.
 start_app() {
   "$ADB" shell am force-stop $PKG >/dev/null 2>&1
   sleep 1
   "$ADB" shell am start -n $PKG/.MainActivity >/dev/null 2>&1
-  sleep 8
-  cdp
+  # Фиксированной паузы мало: без сети запуск идёт другим путём и занимает
+  # другое время. Ждём, пока вебвью действительно ответит, — иначе проверка
+  # читает пустоту и объявляет, что экран не собрался, хотя он ещё грузится.
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 3
+    cdp || continue
+    [ -n "$(js 'location.href')" ] && return 0
+  done
+  echo "  вебвью не отвечает: приложение живо? pid=$("$ADB" shell pidof $PKG | tr -d '\r')"
+  return 1
 }
 
 сеть() {
@@ -210,6 +231,20 @@ echo "── Без сети ──"
 сеть off
 online=$(js "navigator.onLine")
 echo "  navigator.onLine: $online"
+
+# Сеть должна быть погашена на самом деле.
+#
+# `navigator.onLine` в эмуляторе остаётся true и после `svc wifi disable` —
+# верить ему нельзя. Если сеть на деле жива, вся эта часть проверяет не офлайн,
+# а обычную работу со связью и радостно рапортует об успехе. Спрашиваем прямо:
+# доходит ли запрос до сервера. Дошёл — проверка недостоверна, и надо сказать
+# это, а не выдать зелёный итог.
+still=$(js "fetch('$BASE/api/health', { cache: 'no-store' }).then(() => 'дошёл').catch(() => 'не дошёл')")
+if [ "$still" = "дошёл" ]; then
+  echo "ПРОВАЛ: сеть не погасла — запрос всё ещё доходит до сервера, офлайн проверить нечем"
+  exit 2
+fi
+echo "  сеть погашена: запрос до сервера не доходит"
 
 # Перезапускаем приложение целиком: именно так человек открывает его в метро
 start_app

@@ -30,16 +30,38 @@
     <div class="spinner" role="status" aria-label="Загрузка"></div>
   </div>
   <script type="module">
-    // Куда идти дальше, решает наличие рабочей авторизации.
-    // В приложении база и токен лежат локально, на сайте — cookie-сессия.
-    import { me } from '/js/api.js';
-    try {
-      await me();
-      // В приложении остаются прежние экраны: веб-версия рисована под
-      // компьютер, и переводить на неё телефон надо отдельно и осознанно
-      location.replace(globalThis.Capacitor?.isNativePlatform?.() ? '/now.html' : '/web.html');
-    } catch {
-      location.replace('/login.html');
+    /*
+     * Куда идти дальше.
+     *
+     * Раньше здесь всегда ждали ответа сервера, и без сети ответа не было —
+     * человека уводило на страницу входа. В приложении это ровно то, чего
+     * быть не должно: в метро вместо своего дня показывалась форма входа,
+     * хотя день лежал на устройстве.
+     *
+     * Сначала смотрим на то, что известно и без сети: токен устройства или
+     * сохранённая копия. Есть — открываем день сразу, веб-версия сама покажет
+     * спокойную полосу «нет связи» и подхватит свежее, когда связь появится.
+     * Нет — только тогда спрашиваем сервер.
+     *
+     * Ведём в веб-версию и на телефоне тоже: прежние экраны остались от
+     * времён, когда она была рисована только под компьютер. Теперь у неё своя
+     * телефонная раскладка, и держать два интерфейса значит чинить каждую
+     * правку дважды.
+     */
+    import { me, deviceToken } from '/js/api.js';
+
+    const known = Boolean(deviceToken())
+      || Boolean(localStorage.getItem('newday.local.settings'));
+
+    if (known) {
+      location.replace('/web.html');
+    } else {
+      try {
+        await me();
+        location.replace('/web.html');
+      } catch {
+        location.replace('/login.html');
+      }
     }
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/service-worker.js').catch(() => {});
   </script>

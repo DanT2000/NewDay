@@ -67,7 +67,7 @@ echo "версия|успешно|провалено|итог" > "$REPORT"
 
 boot_emulator() {
   local avd=$1 waited=0
-  "$EMU" -avd "$avd" -no-snapshot-save -no-boot-anim -no-audio -gpu swiftshader_indirect \
+  "$EMU" -avd "$avd" -no-snapshot-save -no-boot-anim -no-audio -gpu swiftshader_indirect -dns-server 8.8.8.8,1.1.1.1 \
     >/dev/null 2>&1 &
   "$ADB" wait-for-device
   while [ "$waited" -lt 300 ]; do

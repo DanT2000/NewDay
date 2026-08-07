@@ -101,17 +101,33 @@
         ...(native ? { issueDeviceToken: true, deviceName: 'Android', platform: 'android' } : {}),
       };
 
-      const res = await fetch(base + '/api/v1/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+      /*
+       * Отказ сети ловим и называем. Без этого fetch падал молча: обработчик
+       * обрывался, и на экране не появлялось ничего — человек нажимал «Войти»
+       * и получал тишину, не понимая даже, нажалась ли кнопка.
+       */
+      let res;
+      let data = {};
+      try {
+        res = await fetch(base + '/api/v1/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        data = await res.json().catch(() => ({}));
+      } catch {
+        errEl.textContent = native
+          ? 'Не получилось связаться с сервером. Проверьте адрес и интернет: ' + base
+          : 'Не получилось связаться с сервером. Проверьте интернет и попробуйте снова';
+        errEl.style.display = 'block';
+        return;
+      }
 
-      const data = await res.json().catch(() => ({}));
       if (res.ok) {
         // в приложении сессии нет — живём на токене устройства
         if (data.deviceToken) localStorage.setItem('newday.deviceToken', data.deviceToken);
-        window.location.replace(globalThis.Capacitor?.isNativePlatform?.() ? '/now.html' : '/web.html');
+        // одна веб-версия на всё: на телефоне она сама раскладывается иначе
+        window.location.replace('/web.html');
       } else {
         // сервер отвечает { error: { code, message } }
         errEl.textContent = data.error?.message || data.error || 'Ошибка входа';
