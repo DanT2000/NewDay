@@ -11,8 +11,8 @@
  * Ходим через https-proxy-agent (он уже в node_modules у web-push):
  * пакета undici с его ProxyAgent в проекте нет, а тянуть новую зависимость
  * ради туннеля не хочется. CONNECT-туннель покрывает http- и https-прокси;
- * socks5 этот агент не умеет, поэтому такие записи здесь пропускаются,
- * а админка честно отказывает при их создании.
+ * для socks5 — socks-proxy-agent, соседний пакет того же автора с тем же
+ * интерфейсом агента, так что перебор прокси одинаков для всех типов.
  *
  * Когда прокси не заданы, работает переданный fetchImpl или глобальный
  * fetch — ровно как раньше, тесты с поддельным провайдером ничего не
@@ -22,6 +22,7 @@
 const http = require('node:http');
 const https = require('node:https');
 const { HttpsProxyAgent } = require('https-proxy-agent');
+const { SocksProxyAgent } = require('socks-proxy-agent');
 const { aiProxiesRepo } = require('../repos/aiProxies');
 
 /** Через сколько снова пробовать прокси, который не ответил. */
@@ -33,9 +34,7 @@ function createAiFetch(db, { fetchImpl, now = () => Date.now() } = {}) {
   const failedUntil = new Map();   // id прокси → до какого времени он считается сбойным
 
   async function aiFetch(url, init = {}) {
-    const candidates = repo.alive().filter(
-      p => p.type !== 'socks5' && (failedUntil.get(p.id) ?? 0) <= now(),
-    );
+    const candidates = repo.alive().filter(p => (failedUntil.get(p.id) ?? 0) <= now());
 
     for (const p of candidates) {
       try {
@@ -70,7 +69,11 @@ async function viaProxy(p, url, init) {
   const cred = p.login
     ? `${encodeURIComponent(p.login)}:${encodeURIComponent(p.password || '')}@`
     : '';
-  const agent = new HttpsProxyAgent(`${p.type}://${cred}${p.host}:${p.port}`);
+  // socks5h, а не socks5: имена должны резолвиться на прокси. Локальный DNS
+  // может не знать провайдера вовсе — сети, где нужен SOCKS, обычно такие.
+  const agent = p.type === 'socks5'
+    ? new SocksProxyAgent(`socks5h://${cred}${p.host}:${p.port}`)
+    : new HttpsProxyAgent(`${p.type}://${cred}${p.host}:${p.port}`);
 
   const target = new URL(url);
   const lib = target.protocol === 'http:' ? http : https;

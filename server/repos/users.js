@@ -48,6 +48,25 @@ function usersRepo(db) {
       if (r.changes === 0) throw notFound('Пользователь не найден');
       return self.findById(id);
     },
+    /**
+     * Закрыть доступ. COALESCE — повторная блокировка не сдвигает отметку:
+     * от неё считается срок автоочистки, и каждый лишний клик в админке
+     * не должен дарить аккаунту ещё 60 дней жизни.
+     */
+    block(id) {
+      const r = db.prepare(
+        "UPDATE users SET blocked_at = COALESCE(blocked_at, datetime('now')), updated_at = datetime('now') WHERE id = ?",
+      ).run(id);
+      if (r.changes === 0) throw notFound('Пользователь не найден');
+      return self.findById(id);
+    },
+    unblock(id) {
+      const r = db.prepare(
+        "UPDATE users SET blocked_at = NULL, updated_at = datetime('now') WHERE id = ?",
+      ).run(id);
+      if (r.changes === 0) throw notFound('Пользователь не найден');
+      return self.findById(id);
+    },
     bindEmail(id, email) {
       db.prepare("UPDATE users SET email = ?, updated_at = datetime('now') WHERE id = ?")
         .run(String(email).toLowerCase(), id);

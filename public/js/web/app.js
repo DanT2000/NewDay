@@ -1629,28 +1629,52 @@ function devicesHint() {
   return `${n} ${word}`;
 }
 
+/*
+ * На телефоне разделы открываются переходом с «назад»: экран один, и это
+ * привычный мессенджерный ход. На компьютере места хватает на оба —
+ * список слева, открытый раздел справа, и нажатие просто меняет правую
+ * часть. Переход туда-обратно на большом экране был бы лишним кликом.
+ */
 function settingsScreen() {
   const page = SET_PAGES[state.setPage] ? state.setPage : null;
-  if (page) return settingsPage(page);
 
+  if (isPhone()) {
+    if (page) return settingsPage(page);
+    return h('div',
+      h('div.whead-title', { text: 'Настройки', style: { marginBottom: '18px' } }),
+      h('div.wsettings', settingsMaster(null)));
+  }
+
+  const cur = page ?? 'account';
+  const bodies = {
+    account: accountPanel,
+    look: lookPanel,
+    alarm: alarmPanel,
+    sounds: soundsPanel,
+    day: dayPanel,
+    data: dataPanel,
+    devices: devicesPanel,
+  };
+  return h('div',
+    h('div.whead-title', { text: 'Настройки', style: { marginBottom: '18px' } }),
+    h('div.wset-cols',
+      settingsMaster(cur),
+      h('div.wset-detail', bodies[cur]())));
+}
+
+/** Оглавление настроек; cur — подсвеченный раздел (на телефоне null). */
+function settingsMaster(cur) {
   const list = h('div.wpanel-list');
   add(list, ...Object.entries(SET_PAGES).map(([k, p]) => {
     const row = h('button.wrow-link', {
-      type: 'button',
+      type: 'button', class: cur === k ? 'on' : '',
       onclick: () => set({ setPage: k }),
     });
     add(row, ico(p.icon, '17px'), h('span', { text: p.title }),
       h('span.wrow-link-val', { text: p.hint() }), ico('caret-right', '14px'));
     return row;
   }));
-
-  const out = h('button.wrow-link.wrow-danger', { type: 'button', onclick: () => logOut() });
-  add(out, ico('sign-out', '17px'), h('span', { text: 'Выйти из аккаунта' }),
-    h('span.wrow-link-val', { text: '' }), ico('caret-right', '14px'));
-
-  return h('div',
-    h('div.whead-title', { text: 'Настройки', style: { marginBottom: '18px' } }),
-    h('div.wsettings', list, h('div.wpanel-list', out)));
+  return list;
 }
 
 /** Один раздел настроек: шапка с «назад» и своя панель. */
@@ -1843,9 +1867,9 @@ function accountPanel() {
     { icon: 'user', label: 'Имя', value: userName(), go: openAccount },
     { icon: 'envelope-simple', label: 'Почта', value: store.user?.email ?? '—', go: openAccount },
     { icon: 'lock-simple', label: 'Пароль', value: 'сменить', go: openAccount },
-    // соседи по смыслу: у персонажа живёт всё «про меня и мои устройства»
+    // устройства — «про меня», им место у персонажа; разделы дня и оформления
+    // живут в общем списке и здесь не дублируются
     { icon: 'devices', label: 'Устройства', value: devicesHint(), go: () => set({ setPage: 'devices' }) },
-    { icon: 'fork-knife', label: 'День и питание', value: '', go: () => set({ setPage: 'day' }) },
   ];
   add(account, ...accountRows.map(r => {
     const row = h('button.wrow-link', { type: 'button', onclick: r.go });
@@ -1853,6 +1877,12 @@ function accountPanel() {
       h('span.wrow-link-val', { text: r.value }), ico('caret-right', '14px'));
     return row;
   }));
+
+  // выход — часть аккаунта, а не общий пункт настроек: выходят из аккаунта
+  const out = h('button.wrow-link.wrow-danger', { type: 'button', onclick: () => logOut() });
+  add(out, ico('sign-out', '17px'), h('span', { text: 'Выйти из аккаунта' }),
+    h('span.wrow-link-val', { text: '' }), ico('caret-right', '14px'));
+  add(account, out);
   return account;
 }
 

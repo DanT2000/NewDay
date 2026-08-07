@@ -110,6 +110,32 @@ test('просроченный код не принимается', async () => 
   } finally { await s.close(); }
 });
 
+test('вход из приложения: голое «Android» заменяется моделью, в списке виден адрес', async () => {
+  const s = await loggedIn();
+  try {
+    const ua = 'Mozilla/5.0 (Linux; Android 14; Pixel 7 Build/UP1A.231005.007; wv) '
+      + 'AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0.0.0 Mobile Safari/537.36';
+    const login = await post(s.url, '/api/v1/auth/login', {
+      emailOrUsername: 'user@example.com', password: 'secret12',
+      issueDeviceToken: true, deviceName: 'Android', platform: 'android',
+    }, { 'User-Agent': ua });
+    assert.strictEqual(login.status, 200);
+    const { deviceToken } = await login.json();
+    assert.ok(deviceToken);
+
+    // Адрес пишется при обращении с токеном устройства, не при выдаче
+    const me = await fetch(`${s.url}/api/v1/auth/me`, {
+      headers: { Authorization: `Bearer ${deviceToken}` },
+    });
+    assert.strictEqual(me.status, 200);
+
+    const list = await getJson(s.url, s.cookie, '/api/v1/devices');
+    const dev = list.find(d => d.name === 'Pixel 7');
+    assert.ok(dev, 'голое «Android» заменилось моделью из User-Agent');
+    assert.match(String(dev.lastIp), /127\.0\.0\.1/, 'после запроса известен адрес устройства');
+  } finally { await s.close(); }
+});
+
 test('отзыв устройства убивает токен немедленно', async () => {
   const s = await loggedIn();
   try {

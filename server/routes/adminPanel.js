@@ -27,6 +27,7 @@ const { invitesRepo } = require('../repos/invites');
 const { aiProxiesRepo, publicProxy } = require('../repos/aiProxies');
 const { usersRepo } = require('../repos/users');
 const { TIERS } = require('../services/aiAccess');
+const { deleteAfterOf } = require('../services/userCleanup');
 
 /** Сессия админа живёт 12 часов: панель — не то, чему стоит быть открытым месяц. */
 const ADMIN_TTL_MS = 12 * 60 * 60 * 1000;
@@ -35,7 +36,7 @@ const ADMIN_TTL_MS = 12 * 60 * 60 * 1000;
 const FAIL_LIMIT = 5;
 const FAIL_WINDOW_MS = 15 * 60 * 1000;
 
-module.exports = function adminPanelRouter({ db, config, ai, access, push }) {
+module.exports = function adminPanelRouter({ db, config, ai, access, push, cleanup }) {
   const router = express.Router();
   const settings = appSettingsRepo(db);
   const panel = panelSettings(settings);
@@ -120,13 +121,21 @@ module.exports = function adminPanelRouter({ db, config, ai, access, push }) {
 
   // ── Флаги экземпляра ───────────────────────────────────────
 
-  const flags = () => ({ registrationOpen: panel.registrationOpen(), aiEnabled: panel.aiSwitchOn() });
+  const flags = () => ({
+    registrationOpen: panel.registrationOpen(),
+    aiEnabled: panel.aiSwitchOn(),
+    defaultAiTier: panel.defaultAiTier(),
+  });
 
   router.get('/settings', wrap((_req, res) => res.json(flags())));
 
   router.patch('/settings', wrap((req, res) => {
     if (req.body?.registrationOpen !== undefined) panel.setRegistrationOpen(Boolean(req.body.registrationOpen));
     if (req.body?.aiEnabled !== undefined) panel.setAiSwitch(Boolean(req.body.aiEnabled));
+    // Тариф новичка без приглашения; код приглашения этот выбор перекрывает
+    if (req.body?.defaultAiTier !== undefined) {
+      panel.setDefaultAiTier(v.oneOf(req.body.defaultAiTier, TIERS, { field: 'тариф' }));
+    }
     res.json(flags());
   }));
 
@@ -167,7 +176,7 @@ module.exports = function adminPanelRouter({ db, config, ai, access, push }) {
     // last_seen_at обновляют только устройства (приложение); человек,
     // живущий в браузере, здесь честно показывается как null
     const rows = db.prepare(`
-      SELECT u.id, u.email, u.display_name, u.created_at, u.timezone, u.ai_tier,
+      SELECT u.id, u.email, u.display_name, u.created_at, u.timezone, u.ai_tier, u.blocked_at,
              (SELECT MAX(d.last_seen_at) FROM devices d WHERE d.user_id = u.id) AS last_seen
         FROM users u ORDER BY u.id
     `).all();
@@ -179,6 +188,10 @@ module.exports = function adminPanelRouter({ db, config, ai, access, push }) {
       lastSeen: u.last_seen || null,
       aiTier: u.ai_tier,
       aiUsedToday: access.usedToday({ id: u.id, timezone: u.timezone }),
+      blockedAt: u.blocked_at || null,
+      // Когда заблокированного удалит автоочистка — чтобы админка могла
+      // показать «исчезнет такого-то числа», не зная про 60 дней
+      deleteAfter: deleteAfterOf(u.blocked_at),
     })));
   }));
 
@@ -187,6 +200,34 @@ module.exports = function adminPanelRouter({ db, config, ai, access, push }) {
     const tier = v.oneOf(req.body?.aiTier, TIERS, { field: 'тариф' });
     const u = users.setAiTier(id, tier);
     res.json({ id: u.id, aiTier: u.ai_tier });
+  }));
+
+  // ── Двухступенчатое удаление: блокировка → окончательное удаление ──
+
+  router.post('/users/:id/block', wrap((req, res) => {
+    const id = v.int(req.params.id, { min: 1, field: 'id' });
+    const u = users.block(id);
+    res.json({ id: u.id, blockedAt: u.blocked_at, deleteAfter: deleteAfterOf(u.blocked_at) });
+  }));
+
+  router.post('/users/:id/unblock', wrap((req, res) => {
+    const id = v.int(req.params.id, { min: 1, field: 'id' });
+    const u = users.unblock(id);
+    res.json({ id: u.id, blockedAt: null, deleteAfter: null });
+  }));
+
+  router.delete('/users/:id', wrap((req, res) => {
+    const id = v.int(req.params.id, { min: 1, field: 'id' });
+    const u = users.findById(id);
+    if (!u) throw notFound('Пользователь не найден');
+    // Стереть можно только уже заблокированного: блокировка обратима,
+    // удаление — нет, и между ними обязан стоять отдельный осознанный шаг
+    if (!u.blocked_at) {
+      throw new ApiError(400, 'NOT_BLOCKED',
+        'Сначала закройте доступ — окончательное удаление необратимо');
+    }
+    cleanup.deleteUser(id);
+    res.json({ ok: true });
   }));
 
   // ── ИИ: подключение и прокси ───────────────────────────────
@@ -233,9 +274,6 @@ module.exports = function adminPanelRouter({ db, config, ai, access, push }) {
 
   router.post('/ai/proxies', wrap((req, res) => {
     const type = v.oneOf(req.body?.type, ['http', 'https', 'socks5'], { field: 'тип' });
-    // Тип socks5 знаем, но ходить через него пока нечем (см. lib/aiFetch) —
-    // лучше отказать сразу, чем молча принять неработающий прокси
-    if (type === 'socks5') throw new ApiError(400, 'SOCKS_LATER', 'SOCKS появится позже');
     const host = v.str(req.body?.host, { max: 200, field: 'хост' });
     if (!host) throw badRequest('Укажите хост прокси');
     const port = v.int(req.body?.port, { min: 1, max: 65535, field: 'порт' });

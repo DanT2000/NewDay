@@ -10,6 +10,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 const { post, api, getJson, extractCookie, today } = require('../helpers/client');
 const { startTestServer } = require('../helpers/server');
 
@@ -192,6 +194,139 @@ test('при открытой регистрации код не обязате�
   } finally { await s.close(); }
 });
 
+test('тариф по умолчанию применяется при регистрации, приглашение его перекрывает', async () => {
+  const s = await startTestServer();
+  try {
+    const admin = await adminLogin(s.url);
+
+    const patched = await api(s.url, admin.cookie, 'PATCH', '/api/admin/settings', { defaultAiTier: 'limited' });
+    assert.strictEqual(patched.defaultAiTier, 'limited');
+    const settings = await getJson(s.url, admin.cookie, '/api/admin/settings');
+    assert.strictEqual(settings.defaultAiTier, 'limited');
+
+    // Мусорный тариф — русский отказ, настройка не портится
+    const bad = await api(s.url, admin.cookie, 'PATCH', '/api/admin/settings',
+      { defaultAiTier: 'vip' }, {}, true);
+    assert.strictEqual(bad.status, 400);
+
+    // Регистрация без приглашения получает умолчание
+    await makeUser(s.url, 'obychnyj@example.com');
+    const plain = s.db.prepare('SELECT ai_tier FROM users WHERE email = ?').get('obychnyj@example.com');
+    assert.strictEqual(plain.ai_tier, 'limited');
+
+    // Код приглашения сильнее умолчания: его выдают лично
+    const inv = await api(s.url, admin.cookie, 'POST', '/api/admin/invites', { aiTier: 'unlimited' });
+    await makeUser(s.url, 'po-kodu@example.com', 'secret12', { invite: inv.code });
+    const invited = s.db.prepare('SELECT ai_tier FROM users WHERE email = ?').get('po-kodu@example.com');
+    assert.strictEqual(invited.ai_tier, 'unlimited');
+  } finally { await s.close(); }
+});
+
+// ── Блокировка и удаление пользователя ───────────────────────
+
+test('блокировка закрывает запросы и вход, разблокировка возвращает всё как было', async () => {
+  const s = await startTestServer();
+  try {
+    const userCookie = await makeUser(s.url);
+    const admin = await adminLogin(s.url);
+    const me = (await getJson(s.url, admin.cookie, '/api/admin/users'))
+      .find(u => u.email === 'user@example.com');
+
+    const blocked = await api(s.url, admin.cookie, 'POST', `/api/admin/users/${me.id}/block`, {});
+    assert.ok(blocked.blockedAt, 'отметка блокировки возвращается сразу');
+    assert.ok(blocked.deleteAfter > blocked.blockedAt, 'срок удаления — позже блокировки');
+
+    // Сессия жива, но дверь закрыта — 403, а не 401
+    const denied = await api(s.url, userCookie, 'GET', '/api/v1/auth/me', undefined, {}, true);
+    assert.strictEqual(denied.status, 403);
+    assert.strictEqual((await denied.json()).error.code, 'ACCOUNT_BLOCKED');
+
+    // Верный пароль — тем же отказом
+    const login = await post(s.url, '/api/v1/auth/login',
+      { emailOrUsername: 'user@example.com', password: 'secret12' });
+    assert.strictEqual(login.status, 403);
+    assert.strictEqual((await login.json()).error.code, 'ACCOUNT_BLOCKED');
+
+    // Админ видит и отметку, и дату будущего удаления
+    const listed = (await getJson(s.url, admin.cookie, '/api/admin/users')).find(u => u.id === me.id);
+    assert.ok(listed.blockedAt);
+    assert.strictEqual(listed.deleteAfter > listed.blockedAt, true);
+
+    // Разблокировка: старая сессия снова работает — токены никто не отзывал
+    await api(s.url, admin.cookie, 'POST', `/api/admin/users/${me.id}/unblock`, {});
+    const back = await api(s.url, userCookie, 'GET', '/api/v1/auth/me', undefined, {}, true);
+    assert.strictEqual(back.status, 200);
+    const relisted = (await getJson(s.url, admin.cookie, '/api/admin/users')).find(u => u.id === me.id);
+    assert.strictEqual(relisted.blockedAt, null);
+    assert.strictEqual(relisted.deleteAfter, null);
+  } finally { await s.close(); }
+});
+
+test('удаление: без блокировки отказ, после — человек исчезает вместе с данными', async () => {
+  const s = await startTestServer();
+  try {
+    const userCookie = await makeUser(s.url);
+    const admin = await adminLogin(s.url);
+    const me = (await getJson(s.url, admin.cookie, '/api/admin/users'))
+      .find(u => u.email === 'user@example.com');
+
+    // Данные: строка расписания и звук — у звука есть файл вне базы
+    await api(s.url, userCookie, 'POST', `/api/v1/days/${today()}/schedule`,
+      { startMin: 540, title: 'дело' });
+    const soundId = s.db.prepare(
+      'INSERT INTO user_sounds (user_id, name, mime, ext, size_bytes) VALUES (?,?,?,?,?)',
+    ).run(me.id, 'звук', 'audio/mpeg', 'mp3', 3).lastInsertRowid;
+    const soundDir = path.join(s.config.soundsDir, String(me.id));
+    fs.mkdirSync(soundDir, { recursive: true });
+    fs.writeFileSync(path.join(soundDir, `${soundId}.mp3`), 'mp3');
+
+    // Незаблокированного стереть нельзя: между кликами обязан стоять шаг
+    const early = await api(s.url, admin.cookie, 'DELETE', `/api/admin/users/${me.id}`, undefined, {}, true);
+    assert.strictEqual(early.status, 400);
+    assert.match((await early.json()).error.message, /закройте доступ/);
+
+    await api(s.url, admin.cookie, 'POST', `/api/admin/users/${me.id}/block`, {});
+    await api(s.url, admin.cookie, 'DELETE', `/api/admin/users/${me.id}`);
+
+    const count = t => s.db.prepare(`SELECT COUNT(*) AS c FROM ${t} WHERE user_id = ?`).get(me.id).c;
+    assert.strictEqual(s.db.prepare('SELECT COUNT(*) AS c FROM users WHERE id = ?').get(me.id).c, 0);
+    assert.strictEqual(count('schedule_items'), 0, 'расписание уходит каскадом');
+    assert.strictEqual(count('user_sounds'), 0, 'метаданные звуков уходят каскадом');
+    assert.strictEqual(count('devices'), 0, 'устройства уходят каскадом');
+    assert.strictEqual(fs.existsSync(soundDir), false, 'файлы звуков стёрты с диска');
+
+    // Живая сессия удалённого отвечает 401: человека больше нет
+    const gone = await api(s.url, userCookie, 'GET', '/api/v1/auth/me', undefined, {}, true);
+    assert.strictEqual(gone.status, 401);
+  } finally { await s.close(); }
+});
+
+test('автоочистка стирает заблокированного 61 день назад и не трогает вчерашнего', async () => {
+  const s = await startTestServer();
+  try {
+    const admin = await adminLogin(s.url);
+    await makeUser(s.url, 'davno@example.com');
+    await makeUser(s.url, 'vchera@example.com');
+    const list = await getJson(s.url, admin.cookie, '/api/admin/users');
+    const old = list.find(u => u.email === 'davno@example.com');
+    const fresh = list.find(u => u.email === 'vchera@example.com');
+
+    await api(s.url, admin.cookie, 'POST', `/api/admin/users/${old.id}/block`, {});
+    await api(s.url, admin.cookie, 'POST', `/api/admin/users/${fresh.id}/block`, {});
+    // Время блокировки подставляем прямо в базу: ждать 61 день тест не будет
+    s.db.prepare("UPDATE users SET blocked_at = datetime('now', '-61 days') WHERE id = ?").run(old.id);
+    s.db.prepare("UPDATE users SET blocked_at = datetime('now', '-1 day') WHERE id = ?").run(fresh.id);
+
+    const purged = s.app.locals.userCleanup.purgeExpired();
+    assert.strictEqual(purged, 1, 'под очистку попадает ровно один');
+    assert.strictEqual(
+      s.db.prepare('SELECT COUNT(*) AS c FROM users WHERE id = ?').get(old.id).c, 0);
+    assert.strictEqual(
+      s.db.prepare('SELECT COUNT(*) AS c FROM users WHERE id = ?').get(fresh.id).c, 1,
+      'вчерашняя блокировка ещё ждёт свои 60 дней');
+  } finally { await s.close(); }
+});
+
 // ── Рубильник и тарифы помощника ─────────────────────────────
 
 test('рубильник и тариф off закрывают помощника, limited упирается в 429', async () => {
@@ -242,7 +377,7 @@ test('рубильник и тариф off закрывают помощника
 
 // ── Подключение ИИ и прокси ──────────────────────────────────
 
-test('панель ИИ: ключ не отдаётся, socks5 честно откладывается, мёртвый прокси не мешает', async () => {
+test('панель ИИ: ключ не отдаётся, socks5 принимается, мёртвые прокси не мешают', async () => {
   const s = await startTestServer({ fetchImpl: fakeProvider() });
   try {
     const userCookie = await makeUser(s.url);
@@ -254,28 +389,29 @@ test('панель ИИ: ключ не отдаётся, socks5 честно о�
     assert.strictEqual(overview.ready, true);
     assert.ok(!JSON.stringify(overview).includes('sk-panel-test'), 'ключ наружу не отдаётся');
 
-    const socks = await api(s.url, admin.cookie, 'POST', '/api/admin/ai/proxies',
-      { type: 'socks5', host: 'proxy.test', port: 1080 }, {}, true);
-    assert.strictEqual(socks.status, 400);
-    assert.match((await socks.json()).error.message, /SOCKS/);
-
     // Порт 9 — заведомо мёртвый: клиент должен пометить прокси и дойти
-    // до провайдера напрямую, а не сломать помощника
+    // до провайдера напрямую, а не сломать помощника. socks5 — полноправный
+    // тип наравне с http, отказа «появится позже» больше нет.
+    const socks = await api(s.url, admin.cookie, 'POST', '/api/admin/ai/proxies',
+      { type: 'socks5', host: '127.0.0.1', port: 9, login: 'l', password: 'p' });
+    assert.strictEqual(socks.type, 'socks5');
+    assert.strictEqual(socks.active, true);
     const dead = await api(s.url, admin.cookie, 'POST', '/api/admin/ai/proxies',
       { type: 'http', host: '127.0.0.1', port: 9, login: 'l', password: 'p' });
     assert.strictEqual(dead.active, true);
 
     const withProxy = await getJson(s.url, admin.cookie, '/api/admin/ai');
-    assert.strictEqual(withProxy.proxies.length, 1);
+    assert.strictEqual(withProxy.proxies.length, 2);
     assert.ok(!JSON.stringify(withProxy).includes('"p"'), 'пароль прокси наружу не отдаётся');
 
     const parsed = await api(s.url, userCookie, 'POST', '/api/v1/ai/parse', { text: 'дела' }, {}, true);
-    assert.strictEqual(parsed.status, 200, 'мёртвый прокси не должен убивать помощника');
+    assert.strictEqual(parsed.status, 200, 'мёртвые прокси не должны убивать помощника');
 
     // Выключение и удаление
     const off = await api(s.url, admin.cookie, 'PATCH', `/api/admin/ai/proxies/${dead.id}`, { active: false });
     assert.strictEqual(off.active, false);
     await api(s.url, admin.cookie, 'DELETE', `/api/admin/ai/proxies/${dead.id}`);
+    await api(s.url, admin.cookie, 'DELETE', `/api/admin/ai/proxies/${socks.id}`);
     const clean = await getJson(s.url, admin.cookie, '/api/admin/ai');
     assert.strictEqual(clean.proxies.length, 0);
   } finally { await s.close(); }

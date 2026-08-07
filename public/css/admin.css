@@ -232,3 +232,24 @@
 @media (max-width: 420px) {
   .adm-form-row > .btn { flex: 1 1 100%; }
 }
+
+/* ── Тосты — в стиле приложения ───────────────────────────── */
+
+/*
+ * Базовый тост инвертирован (тёмная плашка на светлом, белая на тёмном) —
+ * в админке на тёмной теме он выглядел белым чужаком. Здесь тост — обычная
+ * карточка приложения: поверхность, волосяная рамка, своя тень.
+ */
+.toast {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--hairline-firm);
+}
+.toast.error {
+  background: var(--surface);
+  color: var(--c-danger);
+  border-color: var(--c-danger);
+}
+
+/* Действия над пользователем: кнопки в строку, на узком — переносом */
+.adm-user-actions { display: flex; gap: var(--s-2); align-items: center; flex-wrap: wrap; }

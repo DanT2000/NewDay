@@ -1508,7 +1508,16 @@ select.winput { appearance: auto; cursor: pointer; }
 
 /* ── Фото профиля и предпросмотр звука ─────────────────────── */
 
-.wuser { border: 0; background: none; text-align: left; cursor: pointer; }
+/*
+ * color: inherit обязателен: у кнопки свой цвет текста от браузера (чёрный),
+ * и имя на тёмной теме при наведении читалось чёрным пятном. Наведение —
+ * серый прямоугольник и акцентное имя, как у остальных кнопок колонки.
+ */
+.wuser {
+  border: 0; background: none; text-align: left; cursor: pointer;
+  color: inherit; border-radius: 12px; padding: 6px 8px;
+}
+.wuser:hover { background: var(--raise); }
 .wuser:hover .wuser-name { color: var(--accent); }
 .wuser-pic {
   width: 30px; height: 30px; border-radius: 9px;
@@ -1531,6 +1540,19 @@ select.winput { appearance: auto; cursor: pointer; }
   color: var(--dim); cursor: pointer;
 }
 .wplay.on { color: var(--accent); border-color: var(--accent); }
+
+/* ── Настройки на компьютере: список слева, раздел справа ──── */
+
+.wset-cols {
+  display: grid; grid-template-columns: 300px minmax(0, 1fr);
+  gap: 18px; align-items: start;
+}
+.wset-cols .wrow-link.on {
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+  border-radius: 12px;
+}
+.wset-detail { min-width: 0; }
 
 /* ── Раздел настроек: дорога назад ─────────────────────────── */
 

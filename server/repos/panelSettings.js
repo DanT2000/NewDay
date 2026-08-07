@@ -21,6 +21,18 @@ function panelSettings(settings) {
     registrationOpen: () => settings.get('registrationOpen') !== '0',
     setRegistrationOpen: v => settings.set('registrationOpen', v ? '1' : '0'),
 
+    /**
+     * Тариф помощника для новичка без приглашения. Умолчание 'unlimited' —
+     * то же, что у колонки users.ai_tier: сервер без этого ключа продолжает
+     * вести себя как раньше. Значение проверяет роут (v.oneOf по TIERS);
+     * здесь только страховка от мусора в базе — мусор читается как умолчание.
+     */
+    defaultAiTier: () => {
+      const t = settings.get('defaultAiTier');
+      return t === 'off' || t === 'limited' || t === 'unlimited' ? t : 'unlimited';
+    },
+    setDefaultAiTier: t => settings.set('defaultAiTier', t),
+
     aiSwitchOn: () => settings.get('aiAccessEnabled') !== '0',
     setAiSwitch: v => settings.set('aiAccessEnabled', v ? '1' : '0'),
 

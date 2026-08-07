@@ -5,9 +5,14 @@ const {
 
 const PAIR_TTL_MS = 2 * 60 * 1000;
 const LAST_SEEN_THROTTLE_MS = 60 * 1000;
-const lastSeenCache = new Map();
 
 function devicesRepo(db) {
+  /*
+   * Троттлинг last_seen — на экземпляр репозитория, а не на модуль:
+   * общий на процесс кеш ключуется по id устройства и путал устройства
+   * разных баз, когда в одном процессе живут несколько экземпляров (тесты).
+   */
+  const lastSeenCache = new Map();
   const self = {
     /** Показывается на компьютере авторизованному пользователю. */
     createPairCode(userId) {
@@ -67,8 +72,10 @@ function devicesRepo(db) {
     },
 
     list(userId) {
+      // last_ip отдаётся как lastIp: остальные поля исторически в snake_case,
+      // их читает готовый клиент, а новое поле не обязано наследовать ошибку
       return db.prepare(`
-        SELECT id, name, platform, last_seen_at, created_at
+        SELECT id, name, platform, last_seen_at, last_ip AS lastIp, created_at
           FROM devices WHERE user_id = ? AND revoked_at IS NULL
          ORDER BY created_at DESC
       `).all(userId);
@@ -82,7 +89,7 @@ function devicesRepo(db) {
     },
 
     /** Возвращает { userId, deviceId } или null. Устройство всегда имеет права на запись. */
-    authenticate(raw) {
+    authenticate(raw, ip) {
       const parsed = parseToken(raw);
       if (!parsed || parsed.kind !== 'ndd') return null;
 
@@ -95,7 +102,12 @@ function devicesRepo(db) {
       const now = Date.now();
       if ((lastSeenCache.get(row.id) ?? 0) + LAST_SEEN_THROTTLE_MS < now) {
         lastSeenCache.set(row.id, now);
-        db.prepare("UPDATE devices SET last_seen_at = datetime('now') WHERE id = ?").run(row.id);
+        // Адрес пишем той же троттленной рукой: он меняется не чаще, чем
+        // человек ходит по сетям. COALESCE — вызовы без ip (logout) не
+        // затирают последний известный адрес.
+        db.prepare(
+          "UPDATE devices SET last_seen_at = datetime('now'), last_ip = COALESCE(?, last_ip) WHERE id = ?"
+        ).run(ip ?? null, row.id);
       }
       return { userId: row.user_id, deviceId: row.id };
     },

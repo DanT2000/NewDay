@@ -498,6 +498,68 @@ async function renderUsers() {
       sel.disabled = false;
     });
 
+    /*
+     * Удаление — двумя шагами и с паузой. Первый шаг лишь закрывает доступ:
+     * данные человека целы, и передумать можно кнопкой «Вернуть». Насовсем —
+     * только после блокировки, отдельным нажатием; а кто заблокирован и
+     * забыт — удалится сам через 60 дней.
+     */
+    const actions = el('td', { class: 'adm-user-actions' });
+    const redraw = () => {
+      actions.replaceChildren();
+      if (!u.blockedAt) {
+        const block = el('button', { class: 'btn btn-sm btn-danger', type: 'button', text: 'Закрыть доступ' });
+        block.addEventListener('click', async () => {
+          hideErr(err);
+          block.disabled = true;
+          try {
+            await api('POST', `/api/admin/users/${encodeURIComponent(u.id)}/block`);
+            u.blockedAt = new Date().toISOString();
+            toast(`Доступ закрыт: ${u.email || 'пользователь'}`);
+            redraw();
+          } catch (ex) {
+            showErr(err, 'Не получилось закрыть доступ: ' + ex.message);
+            block.disabled = false;
+          }
+        });
+        actions.append(block);
+        return;
+      }
+      const till = u.deleteAfter ? `, удалится сам ${fmtDate(u.deleteAfter)}` : '';
+      const unblock = el('button', { class: 'btn btn-sm', type: 'button', text: 'Вернуть доступ' });
+      unblock.addEventListener('click', async () => {
+        hideErr(err);
+        unblock.disabled = true;
+        try {
+          await api('POST', `/api/admin/users/${encodeURIComponent(u.id)}/unblock`);
+          u.blockedAt = null;
+          u.deleteAfter = null;
+          toast('Доступ возвращён');
+          redraw();
+        } catch (ex) {
+          showErr(err, 'Не получилось вернуть доступ: ' + ex.message);
+          unblock.disabled = false;
+        }
+      });
+      const kill = el('button', { class: 'btn btn-sm btn-danger', type: 'button', text: 'Удалить окончательно' });
+      kill.addEventListener('click', async () => {
+        hideErr(err);
+        kill.disabled = true;
+        try {
+          await api('DELETE', `/api/admin/users/${encodeURIComponent(u.id)}`);
+          toast('Пользователь и его данные удалены');
+          kill.closest('tr')?.remove();
+        } catch (ex) {
+          showErr(err, 'Не получилось удалить: ' + ex.message);
+          kill.disabled = false;
+        }
+      });
+      actions.append(
+        el('span', { class: 'pill bad', text: 'доступ закрыт' + till }),
+        unblock, kill);
+    };
+    redraw();
+
     tbody.append(el('tr', {},
       el('td', {}, el('div', { class: 'adm-user' },
         el('b', { text: u.email || '—' }),
@@ -505,7 +567,8 @@ async function renderUsers() {
       el('td', { text: fmtDate(u.createdAt) }),
       el('td', { text: u.lastSeen ? fmtDateTime(u.lastSeen) : '—' }),
       el('td', { class: 'mono', text: fmtInt(u.aiUsedToday) }),
-      el('td', {}, sel)));
+      el('td', {}, sel),
+      actions));
   }
 
   const table = el('div', { class: 'adm-scroll' },
@@ -515,7 +578,8 @@ async function renderUsers() {
         el('th', { text: 'Зарегистрирован' }),
         el('th', { text: 'Был в сети' }),
         el('th', { text: 'ИИ сегодня' }),
-        el('th', { text: 'Тариф ИИ' }))),
+        el('th', { text: 'Тариф ИИ' }),
+        el('th', { text: '' }))),
       tbody));
 
   return [card('Пользователи', el('span', { class: 'pill', text: fmtInt(users.length) }), err, table)];
@@ -709,6 +773,13 @@ async function renderAi() {
   const formErr = errBox();
   const baseUrl = el('input', { type: 'url', value: ai?.baseUrl ?? '', placeholder: 'https://api.example.com/v1', autocomplete: 'off' });
   const model = el('input', { type: 'text', value: ai?.model ?? '', placeholder: 'название модели', autocomplete: 'off' });
+  /*
+   * Распознавание речи — отдельная модель того же подключения: текст
+   * разбирает одна (например gpt-4o-mini), голос расшифровывает другая
+   * (whisper-1). Без этого поля голосовой ввод настраивался только
+   * переменными окружения — то есть никак.
+   */
+  const voiceModel = el('input', { type: 'text', value: ai?.voiceModel ?? '', placeholder: 'whisper-1', autocomplete: 'off' });
   let keySet = Boolean(ai?.keySet);
   const key = el('input', {
     type: 'password', autocomplete: 'new-password',
@@ -718,7 +789,8 @@ async function renderAi() {
   const saveBtn = el('button', { class: 'btn btn-primary', type: 'submit', text: 'Сохранить' });
   const aiForm = el('form', { class: 'stack' },
     group('Адрес сервера ИИ', baseUrl),
-    group('Модель', model),
+    group('Модель для текста', model),
+    group('Модель для распознавания речи', voiceModel),
     group('Ключ API', key),
     formErr,
     el('div', { class: 'adm-actions' }, saveBtn));
@@ -729,9 +801,19 @@ async function renderAi() {
     hideErr(formErr);
     saveBtn.disabled = true;
     try {
-      const body = { baseUrl: baseUrl.value.trim(), model: model.value.trim() };
+      const body = {
+        baseUrl: baseUrl.value.trim(),
+        model: model.value.trim(),
+        voiceModel: voiceModel.value.trim(),
+      };
       // сервер ждёт поле apiKey; пустую строку он читает как «не менять»
       if (key.value) body.apiKey = key.value;
+      /*
+       * Заполненное подключение включается само. Без этого адрес, ключ и
+       * модель сохранялись, а «подключение не готово» продолжало гореть —
+       * из-за внутреннего флага, о котором человек знать не обязан.
+       */
+      if (body.baseUrl && body.model && (key.value || keySet)) body.enabled = true;
       await api('PATCH', '/api/admin/ai', body);
       if (key.value) { keySet = true; key.value = ''; key.placeholder = 'Ключ задан. Введите новый, чтобы заменить'; }
       toast('Настройки помощника сохранены');
@@ -877,11 +959,34 @@ async function renderSettings() {
     }
   }, 'Регистрация открыта');
 
+  /*
+   * Тариф ИИ новым пользователям. Открытая регистрация не означает щедрый
+   * ИИ: у кого-то ключ платный, и «всем безлимит» стоил бы денег каждому
+   * незнакомцу. Приглашение перекрывает это значение своим тарифом.
+   */
+  const tierErr = errBox();
+  const tierSel = tierSelect(settings?.defaultAiTier ?? 'unlimited');
+  tierSel.addEventListener('change', async () => {
+    hideErr(tierErr);
+    tierSel.disabled = true;
+    try {
+      await api('PATCH', '/api/admin/settings', { defaultAiTier: tierSel.value });
+      toast('Тариф для новых сохранён');
+    } catch (ex) {
+      showErr(tierErr, 'Не получилось сохранить: ' + ex.message);
+    }
+    tierSel.disabled = false;
+  });
+
   const regCard = card('Регистрация', null,
     setRow('Регистрация открыта',
       'Когда закрыта, новые люди попадают в NewDay только по приглашению.',
       regSwitch),
-    regErr);
+    regErr,
+    setRow('Тариф ИИ новым пользователям',
+      'Достаётся каждому, кто регистрируется сам. Приглашение выдаёт свой тариф и перекрывает этот.',
+      tierSel),
+    tierErr);
 
   // Смена пароля администратора
   const passErr = errBox();

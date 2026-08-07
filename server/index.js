@@ -59,6 +59,24 @@ if (app.locals.push.enabled) {
   console.log('NewDay push disabled: не заданы VAPID_PUBLIC_KEY и VAPID_PRIVATE_KEY');
 }
 
+/**
+ * Автоочистка заблокированных. Вторая ступень удаления аккаунта: тех, кому
+ * администратор закрыл доступ дольше 60 дней назад (BLOCKED_RETENTION_DAYS
+ * в services/userCleanup), стираем насовсем. Раз в сутки достаточно — срок
+ * меряется днями, и лишний день никому ничего не меняет.
+ */
+const purgeBlocked = () => {
+  try {
+    const n = app.locals.userCleanup.purgeExpired();
+    if (n) console.log(`NewDay: автоочистка удалила заблокированных: ${n}`);
+  } catch (e) {
+    console.error('[newday] автоочистка заблокированных:', e.message);
+  }
+};
+purgeBlocked();   // и сразу при старте: сервер мог проспать не один «раз в сутки»
+const purgeTimer = setInterval(purgeBlocked, 24 * 60 * 60 * 1000);
+purgeTimer.unref?.();
+
 // Порт берём из фактически открытого сокета: при PORT=0 система выбирает его
 // сама, и запись «порт 0» в логе бесполезна
 const server = app.listen(config.port, '0.0.0.0', () => {

@@ -25,7 +25,8 @@ function createAuthMiddleware(db) {
       if (asToken) {
         return { userId: asToken.userId, kind: 'token', scope: asToken.scope, id: asToken.tokenId };
       }
-      const asDevice = devices.authenticate(bearer);
+      // ip — чтобы в списке устройств было видно, откуда оно приходило
+      const asDevice = devices.authenticate(bearer, req.ip);
       if (asDevice) {
         return { userId: asDevice.userId, kind: 'device', scope: 'write', id: asDevice.deviceId };
       }
@@ -44,6 +45,15 @@ function createAuthMiddleware(db) {
 
     const user = users.findById(auth.userId);
     if (!user) return next(unauthorized());
+    /*
+     * Блокировка — первая ступень удаления аккаунта (см. миграцию 011).
+     * Сессии и токены при ней нарочно не отзываются: блокировка обратима,
+     * и после снятия человек должен вернуться на свои устройства без
+     * повторной привязки. Дверь закрывается здесь, а не в хранилищах.
+     */
+    if (user.blocked_at) {
+      return next(new ApiError(403, 'ACCOUNT_BLOCKED', 'Доступ закрыт администратором'));
+    }
     if (user.email_verified !== 1) {
       return next(new ApiError(403, 'EMAIL_NOT_VERIFIED',
         'Подтвердите адрес почты, чтобы продолжить'));

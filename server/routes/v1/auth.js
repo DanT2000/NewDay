@@ -9,6 +9,7 @@ const { invitesRepo } = require('../../repos/invites');
 const { appSettingsRepo } = require('../../repos/appSettings');
 const { panelSettings } = require('../../repos/panelSettings');
 const { generateSecret, formatToken } = require('../../lib/secrets');
+const { deviceNameFrom } = require('../../lib/deviceName');
 const { verifyEmailMessage, resetPasswordMessage } = require('../../lib/mailer');
 const { rateLimit } = require('../../middleware/rateLimit');
 
@@ -92,7 +93,9 @@ module.exports = function authRouter({ db, config, mailer, auth }) {
         passwordHash: bcrypt.hashSync(password, 10),
         emailVerified: verified,
       });
-      if (invite?.ai_tier) user = users.setAiTier(user.id, invite.ai_tier);
+      // Тариф новичка: код приглашения сильнее общего умолчания — код выдают
+      // лично, и владелец в нём уже решил, сколько помощника этому человеку
+      user = users.setAiTier(user.id, invite?.ai_tier || panel.defaultAiTier());
     })();
 
     if (mailer.enabled) {
@@ -115,7 +118,10 @@ module.exports = function authRouter({ db, config, mailer, auth }) {
      */
     let deviceToken = null;
     if (req.body.issueDeviceToken && !mailer.enabled) {
-      const name = v.str(req.body.deviceName, { max: 80, field: 'устройство' }) || 'Приложение';
+      // Пустое имя и голое «Android» пытаемся заменить моделью из User-Agent
+      const name = deviceNameFrom(
+        v.str(req.body.deviceName, { max: 80, field: 'устройство' }), req.get('user-agent'),
+      ) || 'Приложение';
       const platform = v.str(req.body.platform, { max: 40, field: 'платформа' });
       deviceToken = devices.issueToken(user.id, { deviceName: name, platform });
     }
@@ -161,6 +167,11 @@ module.exports = function authRouter({ db, config, mailer, auth }) {
     if (!user || !bcrypt.compareSync(password, user.password_hash)) {
       throw unauthorized('Неверная почта или пароль');
     }
+    // Тот же отказ, что и на запросах по живой сессии (middleware/auth):
+    // верный пароль не должен открывать дверь, которую закрыл администратор
+    if (user.blocked_at) {
+      throw new ApiError(403, 'ACCOUNT_BLOCKED', 'Доступ закрыт администратором');
+    }
     if (user.email_verified !== 1) {
       throw new ApiError(403, 'EMAIL_NOT_VERIFIED',
         'Подтвердите адрес почты — письмо отправлено при регистрации');
@@ -172,7 +183,10 @@ module.exports = function authRouter({ db, config, mailer, auth }) {
     // поэтому по запросу отдаём device-токен вместо опоры на сессию.
     let deviceToken = null;
     if (req.body.issueDeviceToken) {
-      const name = v.str(req.body.deviceName, { max: 80, field: 'устройство' }) || 'Приложение';
+      // Пустое имя и голое «Android» пытаемся заменить моделью из User-Agent
+      const name = deviceNameFrom(
+        v.str(req.body.deviceName, { max: 80, field: 'устройство' }), req.get('user-agent'),
+      ) || 'Приложение';
       const platform = v.str(req.body.platform, { max: 40, field: 'платформа' });
       deviceToken = devices.issueToken(user.id, { deviceName: name, platform });
     }

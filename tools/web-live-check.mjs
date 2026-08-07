@@ -285,8 +285,9 @@ const открытьРаздел = async title => {
     .find(r => r.textContent.includes(${JSON.stringify(title)})).click()`);
   await wait(500);
 };
+// на компьютере раздел открывается сбоку и «назад» нет — тогда это no-op
 const назадВОглавление = async () => {
-  await js(`document.querySelector('.wset-back').click()`);
+  await js(`document.querySelector('.wset-back')?.click()`);
   await wait(400);
 };
 
@@ -383,26 +384,32 @@ await nav('Настройки');
 await waitFor('Boolean(document.querySelector(".wsettings"))');
 await wait(700);
 /*
- * Настройки — разделами, как в мессенджерах: оглавление из семи строк плюс
- * выход. Одной простынёй они прыгали при каждом переключении, и нужный пункт
- * приходилось искать заново.
+ * Настройки — разделами. На компьютере список слева, открытый раздел справа
+ * (master-detail); на телефоне — переходами. Оглавление из семи строк, выход
+ * живёт внутри «Аккаунта»: выходят из аккаунта, а не из настроек.
  */
-проба('в настройках семь разделов и выход',
-  (await js(`[...document.querySelectorAll('.wsettings .wrow-link')].map(e => e.querySelector('span').textContent).join(',')`))
-    === 'Аккаунт,Оформление,Будильник,Звуки,День и питание,Данные,Устройства,Выйти из аккаунта',
-  await js(`[...document.querySelectorAll('.wsettings .wrow-link')].map(e => e.querySelector('span').textContent).join(',')`));
+const оглавление = `[...document.querySelectorAll('.wset-cols > .wpanel-list .wrow-link, .wsettings > .wpanel-list .wrow-link')]
+  .map(e => e.querySelector('span').textContent).join(',')`;
+проба('в настройках семь разделов',
+  (await js(оглавление)) === 'Аккаунт,Оформление,Будильник,Звуки,День и питание,Данные,Устройства',
+  await js(оглавление));
+проба('на компьютере раздел открыт сбоку, без перехода',
+  await js(`Boolean(document.querySelector('.wset-cols .wset-detail')) && !document.querySelector('.wset-back')`));
+проба('выход — внутри аккаунта',
+  await js(`[...document.querySelectorAll('.wset-detail .wrow-link')]
+    .some(r => r.textContent.includes('Выйти из аккаунта'))`));
 await открытьРаздел('Будильник');
 проба('в панели будильника сказано, что он звонит на телефоне',
-  await js(`[...document.querySelectorAll('.wsettings .wpanel-note')]
+  await js(`[...document.querySelectorAll('.wpanel-note')]
     .some(e => e.textContent.includes('звонит на телефоне'))`));
 проба('в браузере вместо разрешений — объяснение, что они на телефоне',
-  await js(`[...document.querySelectorAll('.wsettings .wclock-cap')]
+  await js(`[...document.querySelectorAll('.wclock-cap')]
     .some(e => e.textContent.includes('проверяются в приложении'))`));
 // описания задач видны в продвинутом режиме — включаем его
 await js(`[...document.querySelectorAll('.wsegline button')].find(b => b.textContent === 'Продвинутый').click()`);
 await wait(800);
 проба('у задач пробуждения есть описания',
-  await js(`[...document.querySelectorAll('.wsettings .wrow-sw-hint')]
+  await js(`[...document.querySelectorAll('.wrow-sw-hint')]
     .some(e => e.textContent.includes('шагомер'))`));
 проба('нарастание громкости настраивается',
   await js(`[...document.querySelectorAll('.wsegline button')]
@@ -1199,7 +1206,8 @@ await js(`(async () => { const list = await (await fetch('/api/v1/tokens')).json
   for (const t of list) await fetch('/api/v1/tokens/' + t.id, { method: 'DELETE' }); })()`, true);
 await js(`document.querySelector('.wmodal-x')?.click()`);
 await waitFor('!document.querySelector(".wveil")');
-await js(`[...document.querySelectorAll('.wrow-link')][0].click()`);
+await js(`[...document.querySelectorAll('.wrow-link')]
+  .find(r => r.querySelector('span')?.textContent === 'Имя').click()`);
 await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Аккаунт'`);
 await wait(900);
 
