@@ -126,7 +126,8 @@ test('закрытая регистрация: без кода отказ, с к
 
     const inv = await api(s.url, admin.cookie, 'POST', '/api/admin/invites', { aiTier: 'limited' });
     assert.ok(inv.code);
-    assert.strictEqual(inv.url, `${s.config.appUrl}/register.html?invite=${inv.code}`);
+    // адрес — с того хоста, где открыта админка, а не из APP_URL
+    assert.strictEqual(inv.url, `${s.url}/register.html?invite=${inv.code}`);
 
     await makeUser(s.url, 'gost@example.com', 'secret12', { invite: inv.code });
     const row = s.db.prepare('SELECT ai_tier FROM users WHERE email = ?').get('gost@example.com');
@@ -455,4 +456,39 @@ test('статистика: люди, расход помощника по дн�
     assert.strictEqual(stats.health.dbWritable, true);
     assert.ok(stats.health.schemaVersion >= 10, 'схема должна быть накатана целиком');
   } finally { await s.close(); }
+});
+
+/*
+ * Развёртывание «в два клика» проверяется здесь же.
+ *
+ * Оба сценария ловились руками на свежем контейнере: сервер отвечал «ок»,
+ * а пользоваться им было нельзя.
+ */
+test('по обычному HTTP вход работает: сессия не помечена secure', async () => {
+  const srv = await startTestServer({ env: { NODE_ENV: 'production' } });
+  try {
+    const res = await post(srv.url, '/api/admin/login', { password: 'newday' });
+    assert.strictEqual(res.status, 200);
+    const cookie = res.headers.get('set-cookie');
+    assert.ok(cookie, 'Set-Cookie должен прийти — иначе войти нечем');
+    assert.ok(!/;\s*Secure/i.test(cookie),
+      'на голом HTTP secure-cookie не доедет до браузера');
+  } finally { await srv.close(); }
+});
+
+test('ссылка приглашения ведёт на тот адрес, по которому открыта админка', async () => {
+  // APP_URL нарочно чужой: свежий сервер поднимают без него,
+  // и ссылка на localhost отправила бы приглашённого в никуда
+  const srv = await startTestServer({ env: { APP_URL: 'http://localhost:3000' } });
+  try {
+    const { cookie: jar } = await adminLogin(srv.url);
+    const res = await fetch(`${srv.url}/api/admin/invites`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: jar },
+      body: JSON.stringify({ uses: 1 }),
+    });
+    const body = await res.json();
+    assert.ok(body.url.startsWith(srv.url), `ссылка ${body.url} не с этого сервера`);
+    assert.ok(body.url.includes('/register.html?invite='));
+  } finally { await srv.close(); }
 });

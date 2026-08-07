@@ -141,13 +141,25 @@ module.exports = function adminPanelRouter({ db, config, ai, access, push, clean
 
   // ── Приглашения ────────────────────────────────────────────
 
-  const inviteUrl = code => `${config.appUrl}/register.html?invite=${code}`;
+  /*
+   * Адрес приглашения — тот, по которому админ сюда пришёл, а APP_URL лишь
+   * запасной. Без этого свежеразвёрнутый сервер выдавал ссылки на
+   * http://localhost:3000: скопировать такую и отправить человеку значит
+   * отправить его в никуда. APP_URL остаётся источником истины для писем,
+   * которые уходят без запроса.
+   */
+  const inviteUrl = (code, req) => {
+    const base = req?.get('host')
+      ? `${req.protocol}://${req.get('host')}`
+      : config.appUrl;
+    return `${base}/register.html?invite=${code}`;
+  };
 
-  router.get('/invites', wrap((_req, res) => {
+  router.get('/invites', wrap((req, res) => {
     res.json(invites.list().map(i => ({
       id: i.id,
       code: i.code,
-      url: inviteUrl(i.code),
+      url: inviteUrl(i.code, req),
       uses: i.uses_limit,
       used: i.used_count,
       aiTier: i.ai_tier,
@@ -160,7 +172,7 @@ module.exports = function adminPanelRouter({ db, config, ai, access, push, clean
     const uses = v.int(req.body?.uses ?? 1, { min: 1, max: 1000, field: 'число использований' });
     const aiTier = v.oneOf(req.body?.aiTier, TIERS, { field: 'тариф', fallback: 'limited' });
     const row = invites.create({ usesLimit: uses, aiTier });
-    res.json({ id: row.id, code: row.code, url: inviteUrl(row.code) });
+    res.json({ id: row.id, code: row.code, url: inviteUrl(row.code, req) });
   }));
 
   router.delete('/invites/:id', wrap((req, res) => {

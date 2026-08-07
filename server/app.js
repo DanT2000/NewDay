@@ -56,7 +56,19 @@ function createApp({ db, config, fetchImpl, env = process.env }) {
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: config.nodeEnv === 'production',
+      /*
+       * 'auto', а не «в проде всегда secure».
+       *
+       * Помеченная secure cookie не ставится по обычному HTTP вовсе — и
+       * человек, поднявший контейнер у себя (docker compose up, порт 3000,
+       * никакого TLS), не мог ни войти, ни открыть админку: сервер отвечал
+       * «ок», но Set-Cookie не приходил. Выглядело как поломка входа.
+       *
+       * 'auto' смотрит на само соединение: за обратным прокси с TLS
+       * (trust proxy + X-Forwarded-Proto) cookie остаётся защищённой, а на
+       * голом HTTP просто работает.
+       */
+      secure: config.nodeEnv === 'production' ? 'auto' : false,
       sameSite: 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000,
     },
