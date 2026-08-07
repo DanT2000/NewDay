@@ -35,6 +35,9 @@ const WANTED = {
     'moon', 'music-note-simple', 'note', 'pencil-simple', 'plus', 'printer', 'puzzle-piece',
     'qr-code', 'scan', 'shuffle', 'sign-in', 'sneaker-move', 'stack-simple',
     'sun', 'sun-horizon', 'trash', 'user', 'wifi-high', 'x',
+    // разделы настроек и шторка звуков
+    'paint-brush', 'speaker-high', 'fork-knife', 'database', 'devices',
+    'stop', 'waveform',
   ],
   // fill — активный раздел в боковой колонке. Нужен для каждой иконки NAV:
   // без него активный пункт оставался без значка вовсе

@@ -6,7 +6,7 @@
  * сказать, что связи нет.
  */
 
-const VERSION = 'newday-653e307f83ac';
+const VERSION = 'newday-391521420555';
 const SHELL = [
   // Веб-версия: с неё начинается браузер, и офлайн она должна открываться
   '/web.html', '/css/web.css',

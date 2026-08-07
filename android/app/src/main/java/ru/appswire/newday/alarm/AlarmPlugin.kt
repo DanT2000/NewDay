@@ -4,11 +4,13 @@ import android.app.AlarmManager
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.result.ActivityResult
+import androidx.core.view.WindowInsetsControllerCompat
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -319,6 +321,50 @@ class AlarmPlugin : Plugin() {
         call.resolve(JSObject().put("granted", granted).put("what", what))
     }
 
+    /**
+     * Красит системные полосы — статусбар и полосу жестов — под тему приложения.
+     *
+     * Стартовые цвета задаёт styles.xml, но он следует за темой телефона,
+     * а человек может выбрать в приложении противоположную — тогда полосы
+     * остаются чужого цвета. Веб-часть зовёт этот метод при каждой смене
+     * темы, и полосы догоняют её.
+     */
+    @PluginMethod
+    fun setSystemBars(call: PluginCall) {
+        // Активности может не быть: вызов пришёл, когда она уже разрушена или
+        // ещё не поднялась. Это не ошибка — следующая смена темы докрасит,
+        // поэтому отвечаем честным «не применилось», а не отказом.
+        val act = activity ?: run {
+            call.resolve(JSObject().put("applied", false))
+            return
+        }
+        val raw = call.getString("color") ?: ""
+        val color = try {
+            Color.parseColor(raw)
+        } catch (e: Exception) {
+            // parseColor на пустую строку кидает не IllegalArgument, а выход
+            // за границы строки — поэтому ловим шире, чем хотелось бы
+            call.reject("Ожидался цвет вида #rrggbb, пришло: «$raw»")
+            return
+        }
+        val dark = call.getBoolean("dark") ?: false
+        // Окно можно трогать только с главного потока,
+        // а вызовы плагина приходят с потока моста
+        act.runOnUiThread {
+            val window = act.window
+            window.statusBarColor = color
+            window.navigationBarColor = color
+            // Значки: тёмные на светлом фоне и наоборот. Compat сам знает,
+            // с какого API какая полоса умеет тёмные значки, — где не умеет,
+            // просто ничего не делает
+            WindowInsetsControllerCompat(window, window.decorView).apply {
+                isAppearanceLightStatusBars = !dark
+                isAppearanceLightNavigationBars = !dark
+            }
+            call.resolve(JSObject().put("applied", true))
+        }
+    }
+
     @PluginMethod
     fun stopAlarm(call: PluginCall) {
         context.startService(
@@ -326,6 +372,48 @@ class AlarmPlugin : Plugin() {
         )
         call.resolve()
     }
+
+    /**
+     * Кладёт свой звук будильника на устройство.
+     *
+     * Будильник звонит из только что поднятого процесса, часто без сети —
+     * тянуть файл с сервера в этот момент нечем и неоткуда. Поэтому веб-часть
+     * при выборе своего звука заранее привозит его сюда целиком, base64 через
+     * мост: десять мегабайт — это терпимые ~13 МБ строки на один раз.
+     */
+    @PluginMethod
+    fun saveSound(call: PluginCall) {
+        val file = call.getString("file")?.takeIf { it.isNotBlank() && !it.contains('/') && !it.contains("..") }
+            ?: run { call.reject("Нужно имя файла без пути"); return }
+        val base64 = call.getString("base64") ?: run { call.reject("Пустой файл"); return }
+        try {
+            val bytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
+            val dir = java.io.File(filesDirOf(), "sounds").apply { mkdirs() }
+            java.io.File(dir, file).writeBytes(bytes)
+            call.resolve(JSObject().put("saved", true).put("sizeBytes", bytes.size))
+        } catch (e: Exception) {
+            call.reject("Звук не сохранился: " + e.message)
+        }
+    }
+
+    /** Есть ли такой свой звук на устройстве — чтобы не возить 10 МБ зря. */
+    @PluginMethod
+    fun hasSound(call: PluginCall) {
+        val file = call.getString("file")?.takeIf { it.isNotBlank() && !it.contains('/') && !it.contains("..") }
+            ?: run { call.reject("Нужно имя файла без пути"); return }
+        val f = java.io.File(java.io.File(filesDirOf(), "sounds"), file)
+        call.resolve(JSObject().put("exists", f.isFile))
+    }
+
+    @PluginMethod
+    fun removeSound(call: PluginCall) {
+        val file = call.getString("file")?.takeIf { it.isNotBlank() && !it.contains('/') && !it.contains("..") }
+            ?: run { call.reject("Нужно имя файла без пути"); return }
+        val f = java.io.File(java.io.File(filesDirOf(), "sounds"), file)
+        call.resolve(JSObject().put("removed", f.delete()))
+    }
+
+    private fun filesDirOf(): java.io.File = context.filesDir
 
     companion object {
         private const val REQ_MISSION = 4712

@@ -1482,6 +1482,66 @@ select.winput { appearance: auto; cursor: pointer; }
 }
 .wtime:focus { border-color: var(--accent); }
 
+/* ── Крупный текст ─────────────────────────────────────────── */
+
+/*
+ * Класс wbig увеличивает только то, что читают: названия дел, заметки,
+ * подписи-пояснения. Кнопки, меню и иконки остаются на месте — прежний
+ * zoom растил всё подряд и ломал телефонную раскладку: почта складывалась
+ * вертикально, привычки не влезали в строку.
+ */
+.wbig .wsched-title { font-size: 17px; }
+.wbig .wsched-row.now .wsched-title { font-size: 18px; }
+.wbig .wsched-row.inner .wsched-title { font-size: 16px; }
+.wbig .wsched-sub { font-size: 13.5px; }
+.wbig .wnote-title { font-size: 17px; }
+.wbig .wnote-text { font-size: 15px; }
+.wbig .wrow-sw-title { font-size: 16.5px; }
+.wbig .wrow-sw-hint { font-size: 13.5px; }
+.wbig .wpanel-note { font-size: 14.5px; }
+.wbig .wclock-cap { font-size: 12.5px; line-height: 1.35; }
+.wbig .whead-hint { font-size: 15.5px; }
+.wbig .wperm-title { font-size: 16px; }
+.wbig .wperm-hint { font-size: 13.5px; }
+.wbig .wrow-link > span:not(.wrow-link-val) { font-size: 16.5px; }
+.wbig .wtask-title, .wbig .wtask-name { font-size: 16.5px; }
+
+/* ── Фото профиля и предпросмотр звука ─────────────────────── */
+
+.wuser { border: 0; background: none; text-align: left; cursor: pointer; }
+.wuser:hover .wuser-name { color: var(--accent); }
+.wuser-pic {
+  width: 30px; height: 30px; border-radius: 9px;
+  object-fit: cover; flex: none; display: block;
+}
+.wava-row { display: flex; align-items: center; gap: 14px; padding: 12px 14px 4px; }
+.wava-row .wuser-pic { width: 56px; height: 56px; border-radius: 16px; }
+.wava-row .wuser-ava { width: 56px; height: 56px; border-radius: 16px; }
+.wava-crop {
+  width: min(280px, 100%); aspect-ratio: 1; margin: 0 auto; display: block;
+  border-radius: 22px; background: var(--raise); cursor: grab; touch-action: none;
+}
+.wava-crop:active { cursor: grabbing; }
+.wava-zoom { width: min(280px, 100%); margin: 0 auto; display: block; accent-color: var(--accent); }
+
+.wplay {
+  flex: none; display: grid; place-items: center;
+  width: 32px; height: 32px; border-radius: 9px;
+  border: 1px solid var(--line); background: var(--raise);
+  color: var(--dim); cursor: pointer;
+}
+.wplay.on { color: var(--accent); border-color: var(--accent); }
+
+/* ── Раздел настроек: дорога назад ─────────────────────────── */
+
+.wset-back {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-bottom: 10px; padding: 6px 10px 6px 4px;
+  border: 0; background: none; color: var(--accent);
+  font: 500 14px/1 var(--ui); cursor: pointer; border-radius: 9px;
+}
+.wset-back:active { background: var(--raise); }
+
 /* ── Лист на печать ────────────────────────────────────────── */
 
 /*

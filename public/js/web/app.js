@@ -78,6 +78,8 @@ const state = {
   pairCode: null,
   tokenName: '', tokenScope: 'read', tokenSecret: null,
   aiDraft: null,
+  // открытый раздел настроек; null — оглавление
+  setPage: null,
 };
 
 /*
@@ -360,6 +362,9 @@ async function reload() {
         jobs.push(native.checkPermissions().then(p => { state.alarmPerms = p; }).catch(() => null));
         // то же самое про камеру, шагомер и привязанный код
         jobs.push(native.missionCapabilities().then(c => { state.missionCaps = c; }).catch(() => null));
+        // свой звук, выбранный в браузере, довозится на телефон здесь:
+        // будильник звонит без сети, файл обязан лежать на устройстве
+        jobs.push(ensureCustomSound().catch(() => null));
       }
     }
     /*
@@ -484,11 +489,26 @@ function sideBar() {
     h('div.wside-foot',
       ai,
       themeBtn,
-      h('div.wuser',
-        h('span.wuser-ava', ico('user', '15px')),
-        h('div.wuser-body',
-          h('div.wuser-name', { text: userName() }),
-          h('div.wuser-note', { text: 'синхронизировано' })))));
+      /*
+       * Персонаж — дверь в свои настройки: аккаунт, устройства, день и
+       * питание. Раньше блок был просто картинкой, и его нажимали впустую.
+       */
+      h('button.wuser', {
+        type: 'button',
+        onclick: () => set({ screen: 'settings', setPage: 'account' }),
+      },
+      avatarEl('15px'),
+      h('div.wuser-body',
+        h('div.wuser-name', { text: userName() }),
+        h('div.wuser-note', { text: 'синхронизировано' })))));
+}
+
+/** Аватар: своя картинка из настроек или значок-заглушка. */
+function avatarEl(size) {
+  const src = store.settings?.settings?.avatar;
+  return src
+    ? h('img.wuser-ava.wuser-pic', { src, alt: '' })
+    : h('span.wuser-ava', ico('user', size));
 }
 
 // ── Верхняя полоса ───────────────────────────────────────────
@@ -924,6 +944,11 @@ function todayScreen() {
    * другого нет. Разделять их на два списка значило заставлять человека искать
    * своё дело в двух местах и помнить, чем они отличаются.
    */
+  /*
+   * Кнопок «Блок» и «Напоминание» под расписанием на компьютере больше нет:
+   * пришитые снизу, они выбивались из колонки и выглядели чужими. Всё
+   * добавляется через «изменить» — там и строка, и напоминание в одном месте.
+   */
   const left = h('div.wcol', nowCard(),
     h('div',
       sectHd('расписание', (() => {
@@ -931,15 +956,7 @@ function todayScreen() {
         add(b, ico('pencil-simple', '13px'), h('span', { text: 'изменить' }));
         return b;
       })()),
-      scheduleList(),
-      (() => {
-        const row = h('div.wrow', { style: { padding: '4px 12px 0' } });
-        const block = h('button.wadd', { type: 'button', onclick: () => newRow() });
-        add(block, ico('plus', '15px'), h('span', { text: 'Блок' }));
-        const rem = h('button.wadd', { type: 'button', onclick: () => newRow({ kind: 'reminder' }) });
-        add(rem, ico('bell', '15px'), h('span', { text: 'Напоминание' }));
-        return add(row, block, rem);
-      })()));
+      scheduleList()));
 
   const mid = h('div.wcol', statCards(), tasksBlock(), foodBlock());
 
@@ -1568,7 +1585,77 @@ function notesScreen() {
     filters, grid);
 }
 
+/*
+ * Настройки — разделами, как в мессенджерах: список, из него — в раздел.
+ *
+ * Раньше всё лежало одной простынёй, и любое переключение перерисовывало её
+ * целиком — экран прыгал, а нужный пункт приходилось искать заново. Разделы
+ * держат каждый экран коротким: почти всё видно без прокрутки, а «назад»
+ * возвращает в оглавление, где человек уже ориентируется.
+ */
+const SET_PAGES = {
+  account: { icon: 'user', title: 'Аккаунт', hint: () => store.user?.email ?? '' },
+  look: { icon: 'paint-brush', title: 'Оформление', hint: () => ({ system: 'системная тема', light: 'светлая тема', dark: 'тёмная тема' })[state.theme] ?? '' },
+  alarm: { icon: 'alarm-fill', title: 'Будильник', hint: () => (store.settings?.settings?.alarmMode === 'advanced' ? 'продвинутый' : 'простой') },
+  sounds: { icon: 'speaker-high', title: 'Звуки', hint: () => state.sound },
+  day: { icon: 'fork-knife', title: 'День и питание', hint: () => '' },
+  data: { icon: 'database', title: 'Данные', hint: () => 'шаблон, экспорт, импорт' },
+  devices: { icon: 'devices', title: 'Устройства', hint: () => devicesHint() },
+};
+
+function devicesHint() {
+  const n = 1 + (store.devices?.length ?? 0);
+  const word = n === 1 ? 'устройство' : n < 5 ? 'устройства' : 'устройств';
+  return `${n} ${word}`;
+}
+
 function settingsScreen() {
+  const page = SET_PAGES[state.setPage] ? state.setPage : null;
+  if (page) return settingsPage(page);
+
+  const list = h('div.wpanel-list');
+  add(list, ...Object.entries(SET_PAGES).map(([k, p]) => {
+    const row = h('button.wrow-link', {
+      type: 'button',
+      onclick: () => set({ setPage: k }),
+    });
+    add(row, ico(p.icon, '17px'), h('span', { text: p.title }),
+      h('span.wrow-link-val', { text: p.hint() }), ico('caret-right', '14px'));
+    return row;
+  }));
+
+  const out = h('button.wrow-link.wrow-danger', { type: 'button', onclick: () => logOut() });
+  add(out, ico('sign-out', '17px'), h('span', { text: 'Выйти из аккаунта' }),
+    h('span.wrow-link-val', { text: '' }), ico('caret-right', '14px'));
+
+  return h('div',
+    h('div.whead-title', { text: 'Настройки', style: { marginBottom: '18px' } }),
+    h('div.wsettings', list, h('div.wpanel-list', out)));
+}
+
+/** Один раздел настроек: шапка с «назад» и своя панель. */
+function settingsPage(key) {
+  const p = SET_PAGES[key];
+  const body = {
+    account: accountPanel,
+    look: lookPanel,
+    alarm: alarmPanel,
+    sounds: soundsPanel,
+    day: dayPanel,
+    data: dataPanel,
+    devices: devicesPanel,
+  }[key];
+
+  return h('div',
+    h('button.wset-back', {
+      type: 'button',
+      onclick: () => set({ setPage: null }),
+    }, ico('caret-left', '16px'), h('span', { text: 'Настройки' })),
+    h('div.whead-title', { text: p.title, style: { marginBottom: '18px' } }),
+    h('div.wsettings', body()));
+}
+
+function lookPanel() {
   const themeSeg = h('div.wsegline');
   add(themeSeg, ...[['system', 'Система'], ['light', 'Светлая'], ['dark', 'Тёмная']].map(([k, label]) =>
     h('button', {
@@ -1580,7 +1667,6 @@ function settingsScreen() {
   add(scaleSeg, ...SCALES.map(v =>
     h('button', {
       type: 'button', text: `${Math.round(v * 100)}%`, class: state.scale === v ? 'on' : '',
-      style: { fontSize: `${13 + (v - 1) * 8}px` },
       onclick: () => { state.scale = v; render(); data.saveSettings({ scale: v }).catch(fail); },
     })));
 
@@ -1598,12 +1684,19 @@ function settingsScreen() {
     return b;
   }));
 
-  const look = h('div.wpanel',
+  return h('div.wpanel',
     cap('оформление'),
     h('div.wpanel-label', { text: 'Тема' }), themeSeg,
-    h('div.wpanel-label', { text: 'Размер текста' }), scaleSeg,
+    h('div.wpanel-label', { text: 'Крупный текст' }), scaleSeg,
+    h('div.wclock-cap', {
+      text: 'увеличивается только текст, который читают: заметки, названия дел, подписи. '
+        + 'Кнопки и меню остаются на месте',
+      style: { marginTop: '8px' },
+    }),
     h('div.wpanel-label', { text: 'Цвет приложения' }), swatches);
+}
 
+function dayPanel() {
   const flags = store.settings?.settings ?? {};
   const switches = [
     { k: 'carryOver', label: 'Переносить невыполненное', hint: 'задачи уезжают на завтра' },
@@ -1625,57 +1718,114 @@ function settingsScreen() {
       sw(on));
     return row;
   }));
+  return day;
+}
 
+function soundsPanel() {
   const links = [
     { icon: 'alarm-fill', label: 'Звук будильника', value: state.sound, m: 'sound' },
     { icon: 'bell', label: 'Звук уведомлений', value: state.notifySound, m: 'sound' },
-    { icon: 'calendar-check', label: 'Общее расписание', value: 'шаблон дня', m: 'template' },
-    { icon: 'file-arrow-down', label: 'Экспорт данных', value: 'JSON', m: 'export' },
-    { icon: 'file-arrow-up', label: 'Импорт данных', value: 'JSON', m: 'import' },
   ];
-  const dataPanel = h('div.wpanel-list', cap('звуки и данные'));
-  add(dataPanel, ...links.map(l => {
+  const panel = h('div.wpanel-list', cap('звуки'));
+  add(panel, ...links.map(l => {
     const row = h('button.wrow-link', { type: 'button', onclick: () => openLink(l.m, l.label) });
     add(row, ico(l.icon, '17px'), h('span', { text: l.label }),
       h('span.wrow-link-val', { text: l.value }), ico('caret-right', '14px'));
     return row;
   }));
+  return panel;
+}
 
-  const devices = h('div.wpanel',
+function dataPanel() {
+  const links = [
+    { icon: 'calendar-check', label: 'Общее расписание', value: 'шаблон дня', m: 'template' },
+    { icon: 'file-arrow-down', label: 'Экспорт данных', value: 'JSON', m: 'export' },
+    { icon: 'file-arrow-up', label: 'Импорт данных', value: 'JSON', m: 'import' },
+  ];
+  const panel = h('div.wpanel-list', cap('шаблон и перенос'));
+  add(panel, ...links.map(l => {
+    const row = h('button.wrow-link', { type: 'button', onclick: () => openLink(l.m, l.label) });
+    add(row, ico(l.icon, '17px'), h('span', { text: l.label }),
+      h('span.wrow-link-val', { text: l.value }), ico('caret-right', '14px'));
+    return row;
+  }));
+  return panel;
+}
+
+function devicesPanel() {
+  /*
+   * Текущий вход называем тем, чем он является: из приложения человек
+   * читает «этот браузер» как враньё — он же с телефона.
+   */
+  const native = api.isNative();
+  const panel = h('div.wpanel',
     cap('устройства'),
-    h('div.wpanel-note', { text: 'Браузер — это ещё одно устройство: расписание и дела синхронизируются с телефоном.' }),
+    h('div.wpanel-note', {
+      text: 'Каждый вход — своё устройство: расписание и дела синхронизируются между всеми. '
+        + 'Отключённое устройство выходит из аккаунта при первом же обращении.',
+    }),
     h('div.wdevs',
       h('div.wdev',
-        ico('browser', '17px'),
+        ico(native ? 'device-mobile' : 'browser', '17px'),
         h('div.wdev-body',
-          h('div.wdev-name', { text: 'Этот браузер' }),
+          h('div.wdev-name', { text: native ? 'Это приложение' : 'Этот браузер' }),
           h('div.wdev-seen', { text: store.user?.email ?? '' })),
         h('span.wdev-tag', { text: 'сейчас' })),
-      ...store.devices.map(d => h('div.wdev',
-        ico(d.platform === 'android' ? 'device-mobile' : 'laptop', '17px'),
-        h('div.wdev-body',
-          h('div.wdev-name', { text: d.name || 'Устройство' }),
-          h('div.wdev-seen', {
-            text: d.last_seen_at ? `заходило ${adapt.shortDate(String(d.last_seen_at).slice(0, 10))}` : 'ещё не заходило',
-          }))))));
+      ...store.devices.map(d => {
+        const row = h('div.wdev',
+          ico(d.platform === 'android' ? 'device-mobile' : 'laptop', '17px'),
+          h('div.wdev-body',
+            h('div.wdev-name', { text: d.name || 'Устройство' }),
+            h('div.wdev-seen', {
+              text: [
+                d.platform === 'android' ? 'Android' : (d.platform || 'приложение'),
+                d.last_seen_at
+                  ? `заходило ${adapt.shortDate(String(d.last_seen_at).slice(0, 10))}`
+                  : 'ещё не заходило',
+              ].join(' · '),
+            })),
+          h('button.wbtn-line', {
+            type: 'button', text: 'Отключить',
+            onclick: () => act(async () => {
+              await api.devices.revoke(d.id);
+              await data.loadAccount();
+              note('Устройство отключено');
+            }),
+          }));
+        return row;
+      })));
+  return panel;
+}
 
+/*
+ * Аккаунт. В эталоне веб-версии этой панели нет, но в описании функционала
+ * она есть, и без неё имя и пароль поменять нечем — а человек про них
+ * спросил прямо.
+ */
+function accountPanel() {
   /*
-   * Аккаунт. В эталоне веб-версии этой панели нет, но в описании функционала
-   * она есть, и без неё имя и пароль поменять нечем — а человек про них
-   * спросил прямо.
+   * Фото профиля — сверху: раздел открывается нажатием на персонажа, и
+   * первым делом человек видит себя. Обрезка своя, прямоугольником со
+   * скруглением — как принято в мессенджерах, только не кружок.
    */
-  /*
-   * Строк несколько, а не одна.
-   *
-   * С одной строкой панель выглядела недоделанной: заголовок, полоса и пустота
-   * под ней. И главное — выйти из аккаунта было нечем: выход жил внутри шторки,
-   * и найти его там никто не догадывался.
-   */
-  const account = h('div.wpanel-list', cap('аккаунт'));
+  const hasAva = Boolean(store.settings?.settings?.avatar);
+  const avaRow = h('div.wava-row',
+    avatarEl('22px'),
+    h('div.wrow',
+      h('button.wbtn-line', { type: 'button', text: hasAva ? 'Сменить фото' : 'Добавить фото', onclick: pickAvatar }),
+      hasAva ? h('button.wbtn-line', {
+        type: 'button', text: 'Убрать',
+        onclick: () => act(async () => { await data.saveSettings({ avatar: null }); }),
+      }) : null));
+
+  const account = h('div.wpanel-list', cap('аккаунт'), avaRow);
   const accountRows = [
     { icon: 'user', label: 'Имя', value: userName(), go: openAccount },
     { icon: 'envelope-simple', label: 'Почта', value: store.user?.email ?? '—', go: openAccount },
     { icon: 'lock-simple', label: 'Пароль', value: 'сменить', go: openAccount },
+    // соседи по смыслу: у персонажа живёт всё «про меня и мои устройства»
+    { icon: 'devices', label: 'Устройства', value: devicesHint(), go: () => set({ setPage: 'devices' }) },
+    { icon: 'fork-knife', label: 'День и питание', value: '', go: () => set({ setPage: 'day' }) },
   ];
   add(account, ...accountRows.map(r => {
     const row = h('button.wrow-link', { type: 'button', onclick: r.go });
@@ -1683,17 +1833,52 @@ function settingsScreen() {
       h('span.wrow-link-val', { text: r.value }), ico('caret-right', '14px'));
     return row;
   }));
-  const out = h('button.wrow-link.wrow-danger', {
-    type: 'button',
-    onclick: () => logOut(),
-  });
-  add(out, ico('sign-out', '17px'), h('span', { text: 'Выйти из аккаунта' }),
-    h('span.wrow-link-val', { text: '' }), ico('caret-right', '14px'));
-  add(account, out);
+  return account;
+}
 
-  return h('div',
-    h('div.whead-title', { text: 'Настройки', style: { marginBottom: '18px' } }),
-    h('div.wsettings', account, look, alarmPanel(), day, dataPanel, devices));
+// ── Фото профиля ─────────────────────────────────────────────
+
+/*
+ * Кадрирование живёт вне state: тянуть картинку мышью через полный render
+ * значило бы перерисовывать всё приложение на каждый пиксель движения.
+ * Канва рисует сама, state узнаёт только результат.
+ */
+const avaCrop = { img: null, zoom: 1, x: 0, y: 0 };
+
+function pickAvatar() {
+  const input = h('input', { type: 'file', accept: 'image/*', style: { display: 'none' } });
+  input.onchange = () => {
+    const f = input.files?.[0];
+    if (!f) return;
+    const url = URL.createObjectURL(f);
+    const img = new Image();
+    img.onload = () => {
+      avaCrop.img = img;
+      avaCrop.zoom = 1;
+      avaCrop.x = 0;
+      avaCrop.y = 0;
+      set({ modal: 'avatar' });
+    };
+    img.onerror = () => setIn({ notice: 'Это не похоже на картинку' });
+    img.src = url;
+  };
+  input.click();
+}
+
+/** Рисует картинку с текущим сдвигом и приближением в квадрат канвы. */
+function drawAvaCrop(canvas) {
+  const ctx = canvas.getContext('2d');
+  const size = canvas.width;
+  const img = avaCrop.img;
+  if (!img) return;
+  const base = Math.max(size / img.width, size / img.height) * avaCrop.zoom;
+  const w = img.width * base;
+  const hh = img.height * base;
+  // сдвиг ограничен так, чтобы в кадре не оказалось пустоты
+  avaCrop.x = Math.min(Math.max(avaCrop.x, size - w), 0);
+  avaCrop.y = Math.min(Math.max(avaCrop.y, size - hh), 0);
+  ctx.clearRect(0, 0, size, size);
+  ctx.drawImage(img, avaCrop.x, avaCrop.y, w, hh);
 }
 
 /**
@@ -1762,18 +1947,56 @@ function alarmPanel() {
         style: { marginTop: '8px' },
       }));
 
+    // ── Пробуждение: как быстро громкость доходит до максимума ──
+    const rampOn = s.alarmVolumeRamp !== false;
+    const rampSec = Number(s.alarmRampSec ?? 30);
+    const rampSeg = h('div.wsegline');
+    add(rampSeg, ...[[0, 'Сразу громко'], [15, 'Быстрое'], [30, 'Среднее'], [60, 'Медленное']].map(([v, label]) =>
+      h('button', {
+        type: 'button', text: label,
+        class: (v === 0 ? !rampOn : rampOn && rampSec === v) ? 'on' : '',
+        onclick: () => save(v === 0
+          ? { alarmVolumeRamp: false }
+          : { alarmVolumeRamp: true, alarmRampSec: v }),
+      })));
+    add(panel, h('div.wpanel-label', { text: 'Пробуждение' }), rampSeg,
+      h('div.wclock-cap', {
+        text: rampOn
+          ? `громкость нарастает и доходит до максимума за ${rampSec === 15 ? '15 секунд' : rampSec === 60 ? 'минуту' : '30 секунд'}. `
+            + 'Даже если звук на телефоне был на минимуме — будильник поднимет его сам'
+          : 'звонит сразу на полную. Даже с минимальной громкости телефона — будильник поднимет её сам',
+        style: { marginTop: '8px' },
+      }));
+
     // ── Задача ──
     // фолбэк — из native.ALARM_DEFAULTS: пока набор не сохранён, экран должен
     // показывать ровно то, что телефон выдаст на самом деле, а не своё мнение
     const types = Array.isArray(s.alarmTaskTypes) && s.alarmTaskTypes.length
       ? s.alarmTaskTypes : native.ALARM_DEFAULTS.alarmTaskTypes;
-    const taskRow = h('div.wwrap');
-    add(taskRow, ...ALARM_TASKS.map(t => sheetChip(t.label, types.includes(t.k), () => {
-      const next = types.includes(t.k) ? types.filter(x => x !== t.k) : [...types, t.k];
-      // без задачи будильник перестаёт быть продвинутым — математику не отнять
-      save({ alarmTaskTypes: next.length ? next : ['math'] });
-    })));
-    add(panel, h('div.wpanel-label', { text: 'Задача пробуждения' }), taskRow,
+    /*
+     * Каждая задача — строкой с описанием, а не голым чипом: «Значки» без
+     * объяснения ничего не говорят, а ряд чипов на телефоне ломался косо.
+     * Выбранные отмечены переключателем — тем же, что и остальные настройки.
+     */
+    const taskList = h('div.wstack-tight', { style: { marginTop: '4px' } });
+    add(taskList, ...ALARM_TASKS.map(t => {
+      const on = types.includes(t.k);
+      const row = h('button.wrow-sw', {
+        type: 'button',
+        onclick: () => {
+          const next = on ? types.filter(x => x !== t.k) : [...types, t.k];
+          // без задачи будильник перестаёт быть продвинутым — математику не отнять
+          save({ alarmTaskTypes: next.length ? next : ['math'] });
+        },
+      });
+      add(row,
+        h('div.wrow-sw-body',
+          h('div.wrow-sw-title', { text: t.label }),
+          h('div.wrow-sw-hint', { text: t.hint })),
+        sw(on));
+      return row;
+    }));
+    add(panel, h('div.wpanel-label', { text: 'Задача пробуждения' }), taskList,
       h('div.wclock-cap', {
         text: 'QR-код и шаги работают только на телефоне: камеры и датчика шагов в браузере нет. '
           + 'Если код потерялся или идти некуда, будильник через полторы минуты сам предложит '
@@ -2007,6 +2230,95 @@ function refreshMissionCaps() {
     .catch(() => null);
 }
 
+// ── Предпросмотр звука ───────────────────────────────────────
+
+/*
+ * Плеер один на всю страницу: два звука разом — это какофония, а не выбор.
+ * Останавливается сам, когда шторка звука закрылась (см. render).
+ */
+let previewAudio = null;
+
+function stopPreview() {
+  if (!previewAudio) return;
+  try { previewAudio.pause(); } catch { /* уже остановлен */ }
+  if (previewAudio.src.startsWith('blob:')) URL.revokeObjectURL(previewAudio.src);
+  previewAudio = null;
+  if (state.soundPlay) { state.soundPlay = null; }
+}
+
+async function togglePreview(playKey, src) {
+  if (state.soundPlay === playKey) { stopPreview(); render(); return; }
+  stopPreview();
+  try {
+    let url = src;
+    if (!url) {
+      // свой звук: тег audio заголовков не умеет, а доступ живёт на токене
+      const id = playKey.slice(2);
+      url = URL.createObjectURL(await api.sounds.fileBlob(id));
+    }
+    previewAudio = new Audio(url);
+    previewAudio.loop = false;
+    previewAudio.onended = () => { stopPreview(); render(); };
+    await previewAudio.play();
+    state.soundPlay = playKey;
+    render();
+  } catch (e) {
+    stopPreview();
+    fail(e);
+  }
+}
+
+/**
+ * Свой звук, выбранный на другом устройстве, довозится сюда сам: настройка
+ * синхронизировалась, а файла на телефоне ещё нет — без этой проверки
+ * будильник молча падал бы на системный сигнал.
+ */
+async function ensureCustomSound() {
+  const file = store.settings?.settings?.soundFile;
+  if (!file || !/^u-(\d+)\./.test(file)) return;
+  if (await native.hasSound(file)) return;
+  const id = /^u-(\d+)\./.exec(file)[1];
+  const blob = await api.sounds.fileBlob(id);
+  const base64 = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1]);
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+  await native.saveSound(file, base64);
+}
+
+/** Имя файла своего звука на телефоне: u-<id>.<расширение из mime>. */
+function customSoundFile(sd) {
+  const ext = { 'audio/mpeg': 'mp3', 'audio/ogg': 'ogg', 'audio/wav': 'wav', 'audio/mp4': 'm4a', 'audio/aac': 'aac', 'audio/x-m4a': 'm4a' }[sd.mime] ?? 'mp3';
+  return `u-${sd.id}.${ext}`;
+}
+
+/**
+ * Выбор своего звука. На телефоне файл заранее уезжает на устройство:
+ * будильник звонит из убитого процесса и часто без сети — качать с сервера
+ * в этот момент нечем.
+ */
+async function pickCustomSound(sd, forAlarm, key) {
+  const file = customSoundFile(sd);
+  if (forAlarm && native.available()) {
+    const blob = await api.sounds.fileBlob(sd.id);
+    const base64 = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result).split(',')[1]);
+      r.onerror = reject;
+      r.readAsDataURL(blob);
+    });
+    await native.saveSound(file, base64);
+  }
+  state[key] = sd.name;
+  await data.saveSettings(forAlarm ? { sound: sd.name, soundFile: file } : { notifySound: sd.name });
+  await native.pushAlarmConfig?.(store.settings);
+  if (forAlarm && !native.available()) {
+    note('Выбрано. На телефоне звук доедет сам, когда откроете приложение');
+  }
+}
+
 /**
  * Шторки из настроек. Открываются с уже загруженными данными, а не с
  * пустотой, которая через секунду заполнится: мигание списком читается
@@ -2020,7 +2332,17 @@ function openLink(kind, label) {
     return;
   }
   if (kind === 'sound') {
-    set({ modal: 'sound', soundKind: label });
+    set({ modal: 'sound', soundKind: label, soundPlay: null });
+    // подборка и свои звуки подгружаются следом: шторка уже открыта с
+    // встроенным списком, а сеть дорисует своё без мигания
+    if (!store.soundManifest) {
+      fetch('/sounds/manifest.json').then(r => r.json())
+        .then(m => { store.soundManifest = m; render(); })
+        .catch(() => { store.soundManifest = []; });
+    }
+    api.sounds.list()
+      .then(list => { store.mySounds = list; render(); })
+      .catch(() => { store.mySounds = store.mySounds ?? []; });
     return;
   }
   set({ modal: 'template', tplRows: adapt.templateRows(store.template), tplEdit: null });
@@ -2560,9 +2882,10 @@ function openNote(n) {
     noteId: n?.id ?? 'new',
     noteTitle: n?.raw?.title ?? '',
     noteText: n?.text ?? '',
-    // новая заметка по умолчанию на открытый день: чаще всего пишут про него
+    // новая заметка по умолчанию на дату, и дата эта — сегодня: человек чаще
+    // пишет про сегодняшний день, а не про тот, который листал неделю назад
     noteDated: n ? n.dated : true,
-    noteDate: n?.dateKey ?? state.date,
+    noteDate: n?.dateKey ?? store.settings?.today ?? state.date,
     notice: null,
   });
 }
@@ -2753,6 +3076,7 @@ const TITLES = {
   calendar: () => 'Выбор дня',
   account: () => 'Аккаунт',
   sound: () => state.soundKind,
+  avatar: () => 'Фото профиля',
   template: () => 'Общее расписание',
   tplRow: () => 'Строка шаблона',
   file: () => (state.fileKind === 'import' ? 'Импорт данных' : 'Экспорт данных'),
@@ -2804,11 +3128,11 @@ const DURS = [15, 30, 45, 60, 90, 120, 180, 240];
  * предлагает математику — иначе выключить его было бы нечем.
  */
 const ALARM_TASKS = [
-  { k: 'math', label: 'Математика' },
-  { k: 'qr', label: 'QR-код' },
-  { k: 'steps', label: 'Шаги' },
-  { k: 'code', label: 'Код' },
-  { k: 'icons', label: 'Значки' },
+  { k: 'math', label: 'Математика', hint: 'решить пример — работает всегда и везде' },
+  { k: 'qr', label: 'QR-код', hint: 'дойти и отсканировать код, наклеенный не у кровати' },
+  { k: 'steps', label: 'Шаги', hint: 'встать и пройтись — считает шагомер телефона' },
+  { k: 'code', label: 'Код', hint: 'переписать показанные цифры — глаза придётся открыть' },
+  { k: 'icons', label: 'Значки', hint: 'нажать значки в показанном порядке' },
 ];
 
 /*
@@ -2854,7 +3178,13 @@ const ALARM_PERMS = [
  * прокрутку. Крупнее 125 % имеет смысл делать системным увеличением телефона,
  * а не своим.
  */
-const SCALES = [1, 1.25];
+/*
+ * Крупный текст — 110 %, а не 125: четверть сверху ломала телефонную
+ * раскладку (почта складывалась вертикально, привычки не влезали), и
+ * выглядело это хуже, чем читалось. Десятая доля — ощутимая прибавка
+ * читаемости без переломанных строк.
+ */
+const SCALES = [1, 1.1];
 
 /**
  * Подписи трёх плиток времени правятся на месте.
@@ -3365,12 +3695,19 @@ const BODIES = {
   // ── Новая привычка ──
   habit() {
     /*
-     * Значок — предложенные шесть и плюсик на все остальные: выбранный смайлик
-     * почти всегда среди предложенных, а когда нет — искать его в шести
-     * вариантах бессмысленно. Пикер тот же, что был в прежней версии.
+     * Значок — шесть предложенных и плюсик на все остальные.
+     *
+     * Ряд не переставляется: раньше выбранный смайлик вставал в начало, и
+     * при каждом нажатии все значки перескакивали — попасть по второму разу
+     * было не во что. Пресет стоит на месте, выбранное подсвечивается; свой
+     * значок из полного набора занимает последнюю клетку, не трогая первые.
      */
+    const presets = HABIT_EMOJI.slice(0, 6);
+    const shown = presets.includes(state.habitEmoji)
+      ? presets
+      : [...presets.slice(0, 5), state.habitEmoji];
     const emoji = h('div.wrow.wrow-emoji');
-    add(emoji, ...[...new Set([state.habitEmoji, ...HABIT_EMOJI])].slice(0, 6).map(e =>
+    add(emoji, ...shown.map(e =>
       h('button.wemoji', {
         type: 'button', text: e, class: state.habitEmoji === e ? 'on' : '',
         onclick: () => setIn({ habitEmoji: e }),
@@ -3473,9 +3810,12 @@ const BODIES = {
       sheetChip(label, state.noteDated === v, () => setIn({ noteDated: v }))));
     if (state.noteDated) {
       const [y, m, d] = String(state.noteDate ?? state.date).split('-').map(Number);
+      // Коротко: «6 августа», год — только чужой. Прежняя подпись с годом и
+      // хвостом «покажется в делах» в ширину телефона не помещалась вовсе.
+      const thisYear = Number(String(store.settings?.today ?? state.date).slice(0, 4));
       const badge = h('button.wdate-chip', { type: 'button', onclick: () => openCalendar('note') });
       add(badge, ico('calendar-blank', '15px'),
-        h('span', { text: `${d} ${MONTHS[m - 1]} ${y} · покажется в делах` }));
+        h('span', { text: `${d} ${MONTHS[m - 1]}${y === thisYear ? '' : ` ${y}`}` }));
       add(kinds, badge);
     }
 
@@ -3485,6 +3825,9 @@ const BODIES = {
         oninput: e => { state.noteTitle = e.target.value; },
       }),
       kinds,
+      state.noteDated
+        ? h('div.wclock-cap', { text: 'заметка с датой покажется в делах этого дня' })
+        : null,
       h('textarea.wtextarea', {
         name: 'noteText', value: state.noteText, placeholder: 'О чём не хочется забыть',
         oninput: e => { state.noteText = e.target.value; },
@@ -3818,35 +4161,173 @@ const BODIES = {
 
   // ── Звук ──
   sound() {
-    const key = state.soundKind === 'Звук уведомлений' ? 'notifySound' : 'sound';
-    const list = h('div.wstack-tight');
-    add(list, ...SOUNDS.map(s => {
-      const b = h('button.wopt', {
-        type: 'button', class: state[key] === s.k ? 'on' : '',
-        onclick: () => {
-          state[key] = s.k;
-          render();
-          data.saveSettings({ [key]: s.k }).catch(fail);
-        },
-      });
-      add(b, ico(s.k === 'Случайный' ? 'shuffle' : 'music-note-simple', '17px'),
-        h('div.wopt-body',
-          h('div.wopt-title', { text: s.k }),
-          h('div.wopt-hint', { text: s.hint })));
-      return b;
-    }));
+    const forAlarm = state.soundKind !== 'Звук уведомлений';
+    const key = forAlarm ? 'sound' : 'notifySound';
+    const manifest = store.soundManifest ?? [];
+
     /*
-     * Свой звук — только в приложении на телефоне: чем звенеть уведомлению,
-     * в браузере решает система, и подсунуть ей файл нельзя. Кнопка была без
-     * обработчика и молчала на нажатие; теперь она это и говорит.
+     * Каждый звук можно послушать до выбора: название «Клаксон» о громкости
+     * ничего не говорит, а будильник — не то место, где сюрприз уместен.
+     */
+    const soundRow = (name, hint, opts) => {
+      const playing = state.soundPlay === opts.playKey;
+      // div, а не button: внутри живут свои кнопки «послушать» и «удалить»,
+      // а кнопка в кнопке — невалидная разметка с непредсказуемыми кликами
+      const b = h('div.wopt', {
+        class: opts.on ? 'on' : '', role: 'button', tabindex: '0',
+        onclick: opts.pick,
+        onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); opts.pick(); } },
+      });
+      add(b, ico(opts.icon ?? 'music-note-simple', '17px'),
+        h('div.wopt-body',
+          h('div.wopt-title', { text: name }),
+          h('div.wopt-hint', { text: hint })),
+        h('button.wplay', {
+          type: 'button', class: playing ? 'on' : '',
+          title: playing ? 'Остановить' : 'Послушать',
+          'aria-label': playing ? 'Остановить' : 'Послушать',
+          onclick: e => { e.stopPropagation(); togglePreview(opts.playKey, opts.src); },
+        }, ico(playing ? 'stop' : 'play-fill', '15px')),
+        opts.trash ? h('button.wplay', {
+          type: 'button', title: 'Удалить',
+          'aria-label': 'Удалить',
+          onclick: e => { e.stopPropagation(); opts.trash(); },
+        }, ico('trash', '15px')) : null);
+      return b;
+    };
+
+    const groups = [];
+    const wanted = manifest.filter(s => (forAlarm ? s.kind === 'alarm' : true));
+    for (const mood of ['мягкий', 'злой']) {
+      const items = wanted.filter(s => s.mood === mood);
+      if (!items.length) continue;
+      groups.push(h('div.wclock-cap', {
+        text: mood === 'злой' ? 'злые — поднимут кого угодно' : 'мягкие',
+        style: { margin: '6px 0 2px' },
+      }));
+      groups.push(...items.map(s => soundRow(s.name,
+        mood === 'злой' ? 'громкий и настойчивый' : 'спокойный',
+        {
+          on: state[key] === s.name,
+          playKey: s.file,
+          src: `/sounds/${s.file}`,
+          pick: () => {
+            state[key] = s.name;
+            render();
+            // для будильника вместе с названием сохраняется имя файла:
+            // название — человеку, файл — телефону
+            data.saveSettings(forAlarm ? { sound: s.name, soundFile: s.file } : { notifySound: s.name })
+              .then(() => native.pushAlarmConfig?.(store.settings))
+              .catch(fail);
+          },
+        })));
+    }
+
+    // ── Свои звуки ──
+    const mine = store.mySounds ?? [];
+    if (mine.length) {
+      groups.push(h('div.wclock-cap', { text: 'свои', style: { margin: '6px 0 2px' } }));
+      groups.push(...mine.map(sd => soundRow(sd.name, `${(sd.sizeBytes / 1048576).toFixed(1)} МБ`, {
+        icon: 'waveform',
+        on: state[key] === sd.name,
+        playKey: `u-${sd.id}`,
+        src: null, // тег audio заголовков не умеет — файл едет блобом с токеном
+        blobId: sd.id,
+        pick: () => act(() => pickCustomSound(sd, forAlarm, key)),
+        trash: () => act(async () => {
+          await api.sounds.remove(sd.id);
+          native.removeSound(customSoundFile(sd)).catch(() => {});
+          store.mySounds = await api.sounds.list();
+          note('Звук удалён');
+        }),
+      })));
+    }
+
+    /*
+     * Свой звук добавляется и здесь, и в приложении: хранится он на сервере
+     * и синхронизируется между устройствами, а на телефон при выборе
+     * уезжает целиком — будильник звонит и без сети.
      */
     const own = h('button.wbtn-dashed', {
       type: 'button',
-      onclick: () => setIn({ notice: 'Свой звук можно будет выбрать в приложении на телефоне: в браузере звук уведомления выбирает система' }),
+      onclick: () => {
+        const input = h('input', { type: 'file', accept: 'audio/*', style: { display: 'none' } });
+        input.onchange = () => {
+          const f = input.files?.[0];
+          if (!f) return;
+          if (f.size > 10 * 1048576) {
+            setIn({ notice: `Файл весит ${(f.size / 1048576).toFixed(1)} МБ, а будильнику хватает 10: это десять минут звука в хорошем качестве` });
+            return;
+          }
+          act(async () => {
+            await api.sounds.upload(f);
+            store.mySounds = await api.sounds.list();
+            note('Звук добавлен — он синхронизируется между устройствами');
+          });
+        };
+        input.click();
+      },
     });
-    add(own, ico('plus', '15px'), h('span', { text: 'Добавить свой звук' }));
-    return h('div.wstack', list, own,
+    add(own, ico('plus', '15px'), h('span', { text: 'Добавить свой звук — до 10 МБ' }));
+
+    return h('div.wstack', h('div.wstack-tight', ...groups), own,
       h('button.wbtn-wide', { type: 'button', text: 'Готово', onclick: closeModal }));
+  },
+
+  // ── Фото профиля: кадрирование ──
+  avatar() {
+    const canvas = h('canvas.wava-crop', { width: '560', height: '560' });
+    requestAnimationFrame(() => drawAvaCrop(canvas));
+
+    // перетаскивание рисует прямо на канве, без render: полный цикл на
+    // каждый пиксель движения дёргал бы всё приложение
+    let dragFrom = null;
+    canvas.onpointerdown = e => {
+      dragFrom = { x: e.clientX, y: e.clientY, ax: avaCrop.x, ay: avaCrop.y };
+      canvas.setPointerCapture(e.pointerId);
+    };
+    canvas.onpointermove = e => {
+      if (!dragFrom) return;
+      const k = canvas.width / canvas.getBoundingClientRect().width;
+      avaCrop.x = dragFrom.ax + (e.clientX - dragFrom.x) * k;
+      avaCrop.y = dragFrom.ay + (e.clientY - dragFrom.y) * k;
+      drawAvaCrop(canvas);
+    };
+    canvas.onpointerup = () => { dragFrom = null; };
+
+    const zoom = h('input.wava-zoom', {
+      type: 'range', min: '100', max: '300', value: String(Math.round(avaCrop.zoom * 100)),
+      'aria-label': 'Приближение',
+      oninput: e => { avaCrop.zoom = Number(e.target.value) / 100; drawAvaCrop(canvas); },
+    });
+
+    return h('div.wstack',
+      h('div.wclock-cap', { text: 'потяните, чтобы сдвинуть; ползунком — приблизить' }),
+      canvas, zoom,
+      h('div.wrow-end',
+        h('button.wbtn-quiet', { type: 'button', text: 'Отмена', onclick: closeModal }),
+        h('button.wbtn-wide', {
+          type: 'button', text: state.busy ? 'Сохраняю…' : 'Сохранить',
+          disabled: state.busy,
+          onclick: () => act(async () => {
+            /*
+             * Храним готовый маленький JPEG в настройках: он синхронизируется
+             * между устройствами тем же путём, что и всё остальное, и не
+             * требует отдельного хранилища. 256 пикселей на аватар 40px —
+             * запас на плотные экраны, вес ~20–40 КБ.
+             */
+            const out = document.createElement('canvas');
+            out.width = 256;
+            out.height = 256;
+            const k = 256 / canvas.width;
+            const ctx = out.getContext('2d');
+            const img = avaCrop.img;
+            const base = Math.max(canvas.width / img.width, canvas.width / img.height) * avaCrop.zoom;
+            ctx.drawImage(img, avaCrop.x * k, avaCrop.y * k, img.width * base * k, img.height * base * k);
+            await data.saveSettings({ avatar: out.toDataURL('image/jpeg', 0.85) });
+            closeModal();
+          }),
+        })));
   },
 
   // ── Экспорт и импорт ──
@@ -4446,6 +4927,8 @@ function render() {
    * микрофон остался включённым. Одно правило в одном месте забыть нельзя.
    */
   if ((state.recorder || state.micStream) && state.modal !== 'ai') releaseMic();
+  // предпросмотр звука живёт ровно столько, сколько открыта шторка звука
+  if (previewAudio && state.modal !== 'sound') stopPreview();
 
   // Тема: переменные ставим на корень, чтобы CSS остался без вариантов
   const vars = { ...(dark() ? DARK : LIGHT) };
@@ -4455,15 +4938,31 @@ function render() {
   root.dataset.theme = dark() ? 'dark' : 'light';
   for (const [k, v] of Object.entries(vars)) root.style.setProperty(k, v);
   /*
-   * Увеличение — и как `zoom`, и как переменная.
+   * Крупный текст — класс, а не zoom.
    *
-   * `zoom` множит внутри себя всё, включая `100dvh`: при 125 % корень
-   * вырастал до 1055 пикселей на экране в 844, и полоса разделов уезжала
-   * ниже края телефона — до неё было не дотянуться. Высоты, которые должны
-   * остаться экранными, делятся на эту переменную обратно.
+   * zoom растил всё подряд: иконки, меню, кнопки — и на телефоне ломал
+   * раскладку (почта складывалась вертикально, привычки не влезали).
+   * Увеличивать нужно только то, что читают: названия дел, заметки,
+   * подписи. Это делает CSS по классу wbig — точечно, без пересчёта
+   * высот и без уехавшей за экран полосы разделов.
    */
-  root.style.zoom = String(state.scale);
-  root.style.setProperty('--zoom', String(state.scale));
+  root.style.zoom = '';
+  root.style.setProperty('--zoom', '1');
+  root.classList.toggle('wbig', state.scale > 1);
+
+  /*
+   * Системные полосы Android — статусбар и полоса жестов — следуют за темой.
+   * Стартовые цвета задаёт styles.xml по теме телефона, но выбранная в
+   * приложении тема может быть противоположной — тогда без этого вызова
+   * снизу оставалась белая полоса на тёмном экране. Зовём только при
+   * фактической смене: мост не место для шума на каждый render.
+   */
+  const barColor = vars['--bg'];
+  if (native.available() && (paintedBars.dark !== root.dataset.theme || paintedBars.color !== barColor)) {
+    paintedBars.dark = root.dataset.theme;
+    paintedBars.color = barColor;
+    native.setSystemBars(dark(), barColor).catch(() => {});
+  }
 
   const phone = isPhone();
   root.classList.toggle('wphone', phone);
@@ -4500,19 +4999,62 @@ function render() {
    */
   const notice = state.toast ? h('div.wnotice', { text: state.toast }) : null;
 
+  /*
+   * Прокрутка переживает перерисовку.
+   *
+   * render() пересобирает DOM целиком, и контейнеры прокрутки рождаются
+   * заново с нулевой позицией: любое переключение в настройках — тема,
+   * сложность математики, «переносить невыполненное» — уводило экран вверх,
+   * и до следующего пункта приходилось доезжать заново. Позицию запоминаем
+   * до пересборки и возвращаем после — но только пока человек остался там
+   * же: новый экран или другая шторка честно открываются с начала.
+   */
+  const keepScroll = [];
+  const sameScreen = renderedAt.screen === state.screen && renderedAt.phone === phone;
+  const sameModal = renderedAt.modal === state.modal;
+  /*
+   * Новый заход — чистый лист. Фильтр «без даты», оставшийся с прошлого
+   * раза, читается как «заметки пропали»; раздел настроек, открытый
+   * позавчера, — как чужой экран. Внутри одного захода состояние живёт,
+   * при возврате на экран — сбрасывается.
+   */
+  if (!sameScreen && state.screen === 'notes') state.noteFilter = 'all';
+  if (!sameScreen && state.screen === 'settings') state.setPage = null;
+  if (sameScreen) {
+    for (const sel of ['.wpbody', '.wbody']) {
+      const el = root.querySelector(sel);
+      if (el?.scrollTop) keepScroll.push([sel, el.scrollTop]);
+    }
+  }
+  if (sameModal && state.modal) {
+    const el = root.querySelector('.wmodal-body');
+    if (el?.scrollTop) keepScroll.push(['.wmodal-body', el.scrollTop]);
+  }
+  renderedAt.screen = state.screen;
+  renderedAt.modal = state.modal;
+  renderedAt.phone = phone;
+
   if (phone) {
     replace(root,
       h('div.wpbody.wscroll', offline, notice, screens[state.screen]()),
       phoneNav(),
       modal());
-    return;
+  } else {
+    replace(root,
+      sideBar(),
+      h('div.wmain', topBar(), h('div.wbody.wscroll', offline, notice, screens[state.screen]())),
+      modal());
   }
-
-  replace(root,
-    sideBar(),
-    h('div.wmain', topBar(), h('div.wbody.wscroll', offline, notice, screens[state.screen]())),
-    modal());
+  for (const [sel, top] of keepScroll) {
+    const el = root.querySelector(sel);
+    if (el) el.scrollTop = top;
+  }
 }
+
+// где человек был при прошлой отрисовке — чтобы вернуть ему прокрутку
+const renderedAt = { screen: null, modal: null, phone: null };
+// каким цветом покрашены системные полосы Android — чтобы не дёргать мост зря
+const paintedBars = { dark: null, color: null };
 
 /*
  * Смена ширины меняет раскладку целиком, поэтому перерисовываем — но только

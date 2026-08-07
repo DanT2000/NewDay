@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Тёмная тема: фон как ‑‑bg тёмной темы веб-части, значки светлые -->
+    <color name="system_bar_background">#161826</color>
+    <bool name="system_bars_light">false</bool>
+</resources>

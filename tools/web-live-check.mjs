@@ -277,20 +277,36 @@ const клеткиПоДатам = await js(`(async () => {
 await shot('web-live-month');
 
 // ── Настройки сохраняются ──
+// Настройки теперь разделами: сначала оглавление, из него — в раздел.
 await nav("Настройки");
 await wait(500);
+const открытьРаздел = async title => {
+  await js(`[...document.querySelectorAll('.wrow-link')]
+    .find(r => r.textContent.includes(${JSON.stringify(title)})).click()`);
+  await wait(500);
+};
+const назадВОглавление = async () => {
+  await js(`document.querySelector('.wset-back').click()`);
+  await wait(400);
+};
+
+await открытьРаздел('Оформление');
 await js(`document.querySelectorAll('.wswatch')[2].click()`);
 await wait(900);
 const accent = await js(`fetch('/api/v1/settings').then(r=>r.json()).then(s => s.settings.accent)`, true);
 проба('акцент сохранён в профиле', accent === 'green', String(accent));
+await назадВОглавление();
 
 // База между прогонами живёт, поэтому проверяем не значение, а что оно
 // изменилось: иначе второй прогон падал бы на том же переключателе
+await открытьРаздел('День и питание');
 const flagBefore = await js(`fetch('/api/v1/settings').then(r=>r.json()).then(s => Boolean(s.settings.carryOver))`, true);
 await js(`document.querySelectorAll('.wrow-sw')[0].click()`);
 await wait(900);
 const flag = await js(`fetch('/api/v1/settings').then(r=>r.json()).then(s => Boolean(s.settings.carryOver))`, true);
 проба('переключатель дня сохранён', flag === !flagBefore, `${flagBefore} → ${flag}`);
+
+await назадВОглавление();
 await shot('web-live-settings');
 
 // ── Печать ──
@@ -356,63 +372,96 @@ await wait(600);
   (await js(`[...document.querySelectorAll('.wcap')].map(e => e.textContent).join(',')`))
     === 'расписание,задачи,питание,привычки сегодня,заметки дня',
   await js(`[...document.querySelectorAll('.wcap')].map(e => e.textContent).join(',')`));
-проба('напоминание заводится прямо из расписания',
-  await js(`[...document.querySelectorAll('.wadd')].some(b => b.textContent.includes('Напоминание'))`));
+/*
+ * Кнопок «Блок» и «Напоминание» под расписанием на компьютере больше нет:
+ * пришитые снизу, они выбивались из колонки. Всё добавляется через «изменить».
+ */
+проба('под расписанием нет пришитых кнопок добавления',
+  await js(`![...document.querySelectorAll('.wadd')].some(b => b.textContent.includes('Напоминание'))`));
 
 await nav('Настройки');
 await waitFor('Boolean(document.querySelector(".wsettings"))');
 await wait(700);
 /*
- * Панелей пять: четыре эталонных плюс «аккаунт». В эталоне веб-версии её нет,
- * но она есть в описании функционала, и без неё имя и пароль поменять нечем.
+ * Настройки — разделами, как в мессенджерах: оглавление из семи строк плюс
+ * выход. Одной простынёй они прыгали при каждом переключении, и нужный пункт
+ * приходилось искать заново.
  */
-/*
- * Панелей шесть: четыре эталонных, «аккаунт» и «будильник». Первой в эталоне
- * нет, но без неё имя и пароль поменять нечем; вторая появилась потому, что
- * будильнику нужны и общие настройки, и разрешения телефона.
- */
-проба('в настройках шесть панелей',
-  (await js(`[...document.querySelectorAll('.wsettings .wcap')].map(e => e.textContent).join(',')`))
-    === 'аккаунт,оформление,будильник,день и питание,звуки и данные,устройства',
-  await js(`[...document.querySelectorAll('.wsettings .wcap')].map(e => e.textContent).join(',')`));
+проба('в настройках семь разделов и выход',
+  (await js(`[...document.querySelectorAll('.wsettings .wrow-link')].map(e => e.querySelector('span').textContent).join(',')`))
+    === 'Аккаунт,Оформление,Будильник,Звуки,День и питание,Данные,Устройства,Выйти из аккаунта',
+  await js(`[...document.querySelectorAll('.wsettings .wrow-link')].map(e => e.querySelector('span').textContent).join(',')`));
+await открытьРаздел('Будильник');
 проба('в панели будильника сказано, что он звонит на телефоне',
   await js(`[...document.querySelectorAll('.wsettings .wpanel-note')]
     .some(e => e.textContent.includes('звонит на телефоне'))`));
 проба('в браузере вместо разрешений — объяснение, что они на телефоне',
   await js(`[...document.querySelectorAll('.wsettings .wclock-cap')]
     .some(e => e.textContent.includes('проверяются в приложении'))`));
-/*
- * Размеров два. Полуторный убран нарочно: на телефоне он не оставлял места
- * ни строке расписания, ни полосе разделов.
- */
-проба('размеров текста два: 100 % и 125 %',
-  (await js(`(() => { const seg = [...document.querySelectorAll('.wsegline')]
-    .find(s => s.previousElementSibling?.textContent === 'Размер текста');
-    return seg ? [...seg.children].map(b => b.textContent).join(',') : 'нет'; })()`)) === '100%,125%');
+// описания задач видны в продвинутом режиме — включаем его
+await js(`[...document.querySelectorAll('.wsegline button')].find(b => b.textContent === 'Продвинутый').click()`);
+await wait(800);
+проба('у задач пробуждения есть описания',
+  await js(`[...document.querySelectorAll('.wsettings .wrow-sw-hint')]
+    .some(e => e.textContent.includes('шагомер'))`));
+проба('нарастание громкости настраивается',
+  await js(`[...document.querySelectorAll('.wsegline button')]
+    .some(b => b.textContent === 'Медленное')`));
 
 /*
- * Увеличение не должно ронять раскладку: `zoom` множит и высоту экрана, и при
- * 125 % корень становился выше окна — низ боковой колонки и полоса разделов
- * уезжали за край. Проверяем ровно это: корень ростом в окно.
+ * Переключатель не должен уводить экран вверх: раньше каждый щелчок
+ * перерисовывал настройки с нулевой прокруткой, и до следующего пункта
+ * приходилось доезжать заново. Раздел будильника в продвинутом режиме
+ * длинный — прокрутке здесь есть куда сброситься.
  */
+await js(`document.querySelector('.wbody').scrollTo(0, 120)`);
+await wait(200);
+const скроллДо = await js(`document.querySelector('.wbody').scrollTop`, true);
+await js(`[...document.querySelectorAll('.wsegline button')].find(b => b.textContent === 'Сложная').click()`);
+await wait(900);
+const скроллПосле = await js(`document.querySelector('.wbody').scrollTop`, true);
+проба('переключение не сбрасывает прокрутку',
+  Number(скроллДо) > 0 && Number(скроллПосле) === Number(скроллДо),
+  `${скроллДо} → ${скроллПосле}`);
+await js(`[...document.querySelectorAll('.wsegline button')].find(b => b.textContent === 'Простая').click()`);
+await wait(600);
+
+await js(`[...document.querySelectorAll('.wsegline button')].find(b => b.textContent === 'Простой').click()`);
+await wait(600);
+await назадВОглавление();
+/*
+ * Крупный текст — класс, а не zoom: увеличивается только читаемое (названия,
+ * заметки, подписи), кнопки и меню остаются на месте. Прежний zoom на 125 %
+ * ломал телефонную раскладку и складывал почту вертикально.
+ */
+await открытьРаздел('Оформление');
+проба('размеров текста два: 100 % и 110 %',
+  (await js(`(() => { const seg = [...document.querySelectorAll('.wsegline')]
+    .find(s => s.previousElementSibling?.textContent === 'Крупный текст');
+    return seg ? [...seg.children].map(b => b.textContent).join(',') : 'нет'; })()`)) === '100%,110%');
+
 await js(`[...document.querySelectorAll('.wsegline')]
-  .find(s => s.previousElementSibling?.textContent === 'Размер текста')
+  .find(s => s.previousElementSibling?.textContent === 'Крупный текст')
   .children[1].click()`);
 await wait(900);
-const при125 = await js(`(() => {
-  const r = document.querySelector('.wroot').getBoundingClientRect();
+const приКрупном = await js(`(() => {
+  const root = document.querySelector('.wroot');
+  const r = root.getBoundingClientRect();
   const foot = document.querySelector('.wside-foot')?.getBoundingClientRect();
-  return { увеличение: getComputedStyle(document.querySelector('.wroot')).zoom,
+  return { класс: root.classList.contains('wbig'),
+           увеличение: getComputedStyle(root).zoom,
            корень: Math.round(r.height), экран: innerHeight,
            низКолонкиВиден: foot ? foot.bottom <= innerHeight + 1 : null };
 })()`);
-проба('при 125 % корень ростом в экран, низ колонки виден',
-  при125.увеличение === '1.25' && Math.abs(при125.корень - при125.экран) <= 1 && при125.низКолонкиВиден,
-  JSON.stringify(при125));
+проба('крупный текст — класс wbig, без zoom, раскладка цела',
+  приКрупном.класс && приКрупном.увеличение === '1'
+    && Math.abs(приКрупном.корень - приКрупном.экран) <= 1 && приКрупном.низКолонкиВиден,
+  JSON.stringify(приКрупном));
 await js(`[...document.querySelectorAll('.wsegline')]
-  .find(s => s.previousElementSibling?.textContent === 'Размер текста')
+  .find(s => s.previousElementSibling?.textContent === 'Крупный текст')
   .children[0].click()`);
 await wait(700);
+await назадВОглавление();
 
 /*
  * Боковая колонка стоит на месте: она прокручивается сама, а не вместе с
@@ -426,24 +475,27 @@ await wait(700);
     return getComputedStyle(s).position + ' ' + Math.round(r.top) + '…' + Math.round(r.bottom)
       + ' при ' + innerHeight; })()`));
 
-const строкиДанных = `(() => {
-  const panel = [...document.querySelectorAll('.wsettings .wpanel-list')]
-    .find(p => p.querySelector('.wcap')?.textContent === 'звуки и данные');
-  return panel ? panel.querySelectorAll('.wrow-link').length : -1;
-})()`;
-проба('в «звуках и данных» пять строк',
-  (await js(строкиДанных)) === 5, `${await js(строкиДанных)}`);
-
-// Звук: выбор сохраняется в настройках человека
+// Звук: подборка с прослушиванием, выбор сохраняет и название, и файл
+await открытьРаздел('Звуки');
 await js(`[...document.querySelectorAll('.wrow-link')].find(r => r.textContent.includes('Звук будильника')).click()`);
 проба('шторка звука открылась',
   await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Звук будильника'`));
+await wait(800);
+проба('в подборке есть злые звуки — сирена на месте',
+  await js(`[...document.querySelectorAll('.wmodal .wopt-title')].some(e => e.textContent === 'Сирена')`));
+проба('у каждого звука есть кнопка «послушать»',
+  await js(`document.querySelectorAll('.wmodal .wplay').length >= 5`));
+проба('свой звук добавляется с лимитом в 10 МБ',
+  await js(`document.querySelector('.wmodal .wbtn-dashed')?.textContent.includes('10 МБ')`));
 await js(`[...document.querySelectorAll('.wmodal .wopt')].find(b => b.textContent.includes('Колокол')).click()`);
 await wait(1000);
 проба('звук сохранён в профиле',
   (await js(`fetch('/api/v1/settings').then(r=>r.json()).then(s => s.settings.sound)`, true)) === 'Колокол');
+проба('вместе с названием сохранено имя файла для телефона',
+  (await js(`fetch('/api/v1/settings').then(r=>r.json()).then(s => s.settings.soundFile)`, true)) === 'bell.wav');
 await js(`document.querySelector('.wmodal-x').click()`);
 await waitFor('!document.querySelector(".wveil")');
+await назадВОглавление();
 
 /*
  * Напоминание: повтор уходит настоящим правилом.
@@ -456,7 +508,9 @@ await waitFor('Boolean(document.querySelector(".wsched-row"))', 40);
 await wait(600);
 const правил = () => js(`fetch('/api/v1/series?templates=0').then(r=>r.json()).then(l => l.length)`, true);
 const былоПравил = await правил();
-await js(`[...document.querySelectorAll('.wadd')].find(b => b.textContent.includes('Напоминание')).click()`);
+// кнопок под расписанием больше нет — напоминание открывается тем же
+// редактором строки, что и из шторки «изменить»
+await js(`window.__wopen('reminder')`);
 проба('напоминание заводится редактором строки',
   await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Новое напоминание'`));
 проба('у напоминания одна плитка времени — момент длительности не имеет',
@@ -1123,7 +1177,9 @@ await js(`(async () => {
 await nav('Настройки');
 await waitFor('Boolean(document.querySelector(".wsettings"))');
 await wait(600);
-await js(`[...document.querySelectorAll('.wrow-link')][0].click()`);
+await открытьРаздел('Аккаунт');
+await js(`[...document.querySelectorAll('.wrow-link')]
+  .find(r => r.querySelector('span')?.textContent === 'Имя').click()`);
 проба('шторка аккаунта открылась',
   await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Аккаунт'`));
 await js(`(() => { const i = document.querySelector('.wmodal input[name=accName]');

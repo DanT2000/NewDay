@@ -215,5 +215,28 @@ export const devices = {
   revoke: id => DELETE(`/devices/${id}`),
   pair:   () => POST('/auth/pair/create'),
 };
+
+export const sounds = {
+  list:   () => GET('/sounds'),
+  upload: (file, name) => {
+    const form = new FormData();
+    form.append('file', file);
+    if (name) form.append('name', name);
+    return postForm('/sounds', form);
+  },
+  remove: id => DELETE(`/sounds/${id}`),
+  /**
+   * Сам файл — как blob, с токеном в заголовке: тег audio заголовков не
+   * умеет, а в приложении доступ живёт именно на токене устройства.
+   */
+  async fileBlob(id) {
+    const token = deviceToken();
+    const res = await fetch(`${apiBase()}/sounds/${id}/file`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new ApiError(res.status, 'ERROR', 'Звук не скачался');
+    return res.blob();
+  },
+};
 export const exportAll = () => GET('/export');
 export const importAll = (data, mode) => POST('/import', { data, mode });

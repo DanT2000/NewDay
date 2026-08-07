@@ -73,6 +73,16 @@ data class DismissConfig(
     val qrLabel: String,       // «на чайнике» — чтобы спросонья вспомнить, куда идти
     val stepsTarget: Int,
     val rescueAfterSec: Int,   // через сколько появится аварийный выход
+    /*
+     * Имя файла из public/sounds APK («siren.wav»), пустое — системный сигнал.
+     * Именно имя файла, а не человеческое название: название локализовано и
+     * живёт в вебе (public/sounds/manifest.json), может меняться и переводиться,
+     * а файл — инвариант, по которому сервис находит звук в ассетах.
+     */
+    val soundFile: String,
+    // за сколько секунд громкость доходит до максимума: «медленное
+    // пробуждение» — минута, «быстрое» — пятнадцать секунд
+    val rampSec: Int,
 ) {
     /** Сколько длится мягкое начало на самом деле: выключенное окно — это ноль. */
     val effectiveGraceSec get() = if (graceEnabled) graceSec else 0
@@ -94,6 +104,8 @@ data class DismissConfig(
         put("qrLabel", qrLabel)
         put("stepsTarget", stepsTarget)
         put("rescueAfterSec", rescueAfterSec)
+        put("soundFile", soundFile)
+        put("rampSec", rampSec)
     }
 
     companion object {
@@ -102,6 +114,7 @@ data class DismissConfig(
             timeoutSec = 30, snoozeAllowed = true, snoozeMinutes = 5, volumeRamp = true,
             graceEnabled = true, graceSec = 60,
             qrValue = "", qrLabel = "", stepsTarget = 30, rescueAfterSec = 90,
+            soundFile = "", rampSec = 30,
         )
 
         fun fromJson(o: JSONObject?): DismissConfig {
@@ -135,6 +148,10 @@ data class DismissConfig(
                  * что код не читается, и мало, чтобы стать привычкой.
                  */
                 rescueAfterSec = o.optInt("rescueAfterSec", DEFAULT.rescueAfterSec).coerceIn(30, 300),
+                soundFile = o.optString("soundFile", DEFAULT.soundFile),
+                // от пятнадцати секунд до двух минут: мгновенный максимум
+                // задаётся выключенным volumeRamp, а не нулём здесь
+                rampSec = o.optInt("rampSec", DEFAULT.rampSec).coerceIn(15, 120),
             )
         }
     }

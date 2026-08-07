@@ -1,0 +1,50 @@
+[
+  {
+    "file": "dawn.wav",
+    "name": "Рассвет",
+    "kind": "alarm",
+    "mood": "мягкий"
+  },
+  {
+    "file": "drop.wav",
+    "name": "Капля",
+    "kind": "notify",
+    "mood": "мягкий"
+  },
+  {
+    "file": "bell.wav",
+    "name": "Колокол",
+    "kind": "alarm",
+    "mood": "злой"
+  },
+  {
+    "file": "birds.wav",
+    "name": "Птицы",
+    "kind": "alarm",
+    "mood": "мягкий"
+  },
+  {
+    "file": "siren.wav",
+    "name": "Сирена",
+    "kind": "alarm",
+    "mood": "злой"
+  },
+  {
+    "file": "klaxon.wav",
+    "name": "Клаксон",
+    "kind": "alarm",
+    "mood": "злой"
+  },
+  {
+    "file": "alert.wav",
+    "name": "Тревога",
+    "kind": "alarm",
+    "mood": "злой"
+  },
+  {
+    "file": "reveille.wav",
+    "name": "Подъём",
+    "kind": "alarm",
+    "mood": "злой"
+  }
+]

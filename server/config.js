@@ -9,11 +9,17 @@ function loadConfig(env = process.env) {
   const apkDir = env.APK_DIR || (dbPath === ':memory:'
     ? path.join(os.tmpdir(), 'newday-apk')
     : path.join(path.dirname(dbPath), 'apk'));
+  // Свои звуки будильника — тоже рядом с базой, в том же постоянном томе:
+  // база знает про звук, значит и файл должен переживать пересборку вместе с ней.
+  const soundsDir = env.SOUNDS_DIR || (dbPath === ':memory:'
+    ? path.join(os.tmpdir(), 'newday-sounds')
+    : path.join(path.dirname(dbPath), 'sounds'));
   return {
     nodeEnv: env.NODE_ENV || 'development',
     port: Number(env.PORT || 3000),
     dbPath,
     apkDir,
+    soundsDir,
     // Токен для выкладки APK из CI. Пока не задан — эндпоинт выкладки закрыт.
     apkUploadToken: env.APK_UPLOAD_TOKEN || '',
     sessionSecret: env.SESSION_SECRET || 'newday-dev-secret-change-in-production',

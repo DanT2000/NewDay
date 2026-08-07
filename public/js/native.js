@@ -33,6 +33,18 @@ export const ALARM_DEFAULTS = {
   alarmStepsTarget: 30,
   alarmRescueAfterSec: 90,
   alarmQrLabel: '',
+  alarmRampSec: 30,
+  soundFile: 'dawn.wav',
+};
+
+/*
+ * Старые профили хранят только русское название звука, без имени файла.
+ * Название локализовано и может меняться, файл — инвариант, поэтому у
+ * прежних пяти имён есть карта; всё новое сохраняет soundFile само.
+ */
+const LEGACY_SOUND_FILES = {
+  'Рассвет': 'dawn.wav', 'Капля': 'drop.wav', 'Колокол': 'bell.wav',
+  'Птицы': 'birds.wav', 'Сирена': 'siren.wav',
 };
 
 /** Настройки экрана отключения: их задаёт человек в настройках. */
@@ -60,6 +72,9 @@ function dismissConfig(settings = {}) {
     stepsTarget: Number(settings.alarmStepsTarget ?? ALARM_DEFAULTS.alarmStepsTarget),
     rescueAfterSec: Number(settings.alarmRescueAfterSec ?? ALARM_DEFAULTS.alarmRescueAfterSec),
     qrLabel: String(settings.alarmQrLabel ?? ''),
+    // за сколько секунд громкость доходит до максимума после мягкого начала
+    rampSec: Number(settings.alarmRampSec ?? ALARM_DEFAULTS.alarmRampSec),
+    soundFile: String(settings.soundFile ?? LEGACY_SOUND_FILES[settings.sound] ?? ''),
   };
 }
 
@@ -194,4 +209,33 @@ export async function requestMissionPermission(what) {
   if (!available()) return { granted: false };
   try { return await plugin().requestMissionPermission({ what }); }
   catch { return { granted: false }; }
+}
+
+/**
+ * Красит системные полосы под тему приложения. Полоса жестов внизу без
+ * этого остаётся белой на тёмной теме — как чужая наклейка на экране.
+ */
+export async function setSystemBars(darkTheme, color) {
+  if (!available()) return null;
+  try { return await plugin().setSystemBars({ dark: Boolean(darkTheme), color }); }
+  catch { return null; }
+}
+
+/**
+ * Кладёт свой звук на телефон. Будильник звонит из убитого процесса и до
+ * сервера в этот момент не достучится — файл должен лежать на устройстве.
+ */
+export async function saveSound(file, base64) {
+  if (!available()) return null;
+  return plugin().saveSound({ file, base64 });
+}
+
+export async function removeSound(file) {
+  if (!available()) return null;
+  try { return await plugin().removeSound({ file }); } catch { return null; }
+}
+
+export async function hasSound(file) {
+  if (!available()) return false;
+  try { return Boolean((await plugin().hasSound({ file }))?.exists); } catch { return false; }
 }

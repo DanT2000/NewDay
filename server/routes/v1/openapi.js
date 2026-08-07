@@ -199,6 +199,19 @@ function buildSpec(appUrl) {
       '/push/test': { post: { tags: ['Уведомления'], summary: 'Прислать проверочное уведомление', responses: { 200: ok('Отправлено') } } },
       '/push/replan': { post: { tags: ['Уведомления'], summary: 'Пересчитать очередь на сегодня и завтра', responses: { 200: ok('{ planned, skipped }') } } },
 
+      '/sounds': {
+        get: { tags: ['Звуки'], summary: 'Свои звуки будильника', responses: { 200: ok('[{ id, name, mime, sizeBytes, createdAt }]') } },
+        post: {
+          tags: ['Звуки'],
+          summary: 'Загрузить звук (multipart: file, name?)',
+          description: 'До 10 МБ и до 20 звуков на пользователя. Принимаются mp3, ogg, wav, m4a/aac. '
+            + 'Без `name` имя берётся из имени файла без расширения.',
+          responses: { 201: ok('{ id, name, mime, sizeBytes, createdAt }'), 400: ok('Слишком большой файл или не звук') },
+        },
+      },
+      '/sounds/{id}': { delete: { tags: ['Звуки'], summary: 'Удалить звук', parameters: [idParam], responses: { 200: ok('{ success: true }') } } },
+      '/sounds/{id}/file': { get: { tags: ['Звуки'], summary: 'Сам аудиофайл', description: 'Отдаётся с верным Content-Type и `Cache-Control: private, max-age=3600` — годится для тега audio.', parameters: [idParam], responses: { 200: { description: 'Аудиофайл' }, 404: ok('Не ваш или не существует') } } },
+
       '/ai/status': { get: { tags: ['Помощник'], summary: 'Включён ли помощник и распознавание речи', responses: { 200: ok('{ ready, voice }') } } },
       '/ai/parse': { post: { tags: ['Помощник'], summary: 'Разобрать текст в пункты плана', requestBody: body('{ text, date }'), responses: { 200: ok('{ items }') } } },
       '/ai/improve': { post: { tags: ['Помощник'], summary: 'Предложить, чем дополнить день', requestBody: body('{ date }'), responses: { 200: ok('{ items }') } } },

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Base application theme. -->
     <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
@@ -13,6 +13,25 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <!--
+            Системные полосы под цвет приложения, а не белые.
+
+            Цвет и признак «полоса светлая» лежат в system_bars.xml: у пары
+            values/values-night свои значения, поэтому стиль здесь один, а тема
+            телефона выбирает нужное сама. Это закрывает промежуток от запуска
+            до загрузки вебвью; дальше, если тема в приложении разошлась с
+            системной, полосы перекрашивает setSystemBars из AlarmPlugin.
+        -->
+        <item name="android:statusBarColor">@color/system_bar_background</item>
+        <item name="android:navigationBarColor">@color/system_bar_background</item>
+        <!--
+            Тёмные значки на светлой полосе: статусбар умеет это с API 23,
+            полоса жестов — с 27. На версиях старее атрибут просто
+            игнорируется, поэтому отдельные values-vNN не нужны — tools лишь
+            глушит предупреждение анализатора.
+        -->
+        <item name="android:windowLightStatusBar" tools:targetApi="m">@bool/system_bars_light</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">@bool/system_bars_light</item>
     </style>
 
     <!--

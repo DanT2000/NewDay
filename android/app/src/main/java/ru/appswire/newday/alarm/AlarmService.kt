@@ -161,24 +161,15 @@ class AlarmService : Service() {
     private fun startSound(a: Alarm) {
         val cfg = AlarmStore.config(this)
         val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
 
-        try {
-            player = MediaPlayer().apply {
-                setDataSource(this@AlarmService, uri)
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)   // звучит в беззвучном
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build(),
-                )
-                isLooping = true
-                prepare()
-                start()
-            }
-        } catch (e: Exception) {
-            Log.e("NewDayAlarm", "Не удалось запустить звук: " + e.message)
+        // Выбранный звук лежит либо в веб-ассетах APK (встроенный набор),
+        // либо в filesDir/sounds (свой, загруженный человеком). Любая ошибка
+        // с файлом — и звоним системным: будильник с не тем звуком будит,
+        // молчащий будильник — нет.
+        player = if (cfg.soundFile.isNotBlank()) {
+            openAssetPlayer(cfg.soundFile) ?: openCustomPlayer(cfg.soundFile) ?: openSystemPlayer()
+        } else {
+            openSystemPlayer()
         }
 
         val grace = cfg.effectiveGraceSec
@@ -199,6 +190,71 @@ class AlarmService : Service() {
         }
     }
 
+    /**
+     * Звук из ассетов APK: public/sounds/<файл> — то, что cap sync положил
+     * туда из public/ репозитория. null — файл не открылся, звонить нечем.
+     */
+    private fun openAssetPlayer(file: String): MediaPlayer? {
+        val mp = MediaPlayer()
+        return try {
+            assets.openFd("public/sounds/$file").use { fd ->
+                mp.setDataSource(fd.fileDescriptor, fd.startOffset, fd.length)
+            }
+            mp.configureAndStart()
+            mp
+        } catch (e: Exception) {
+            Log.e("NewDayAlarm", "Звук '" + file + "' не открылся: " + e.message + " — беру системный")
+            mp.release()
+            null
+        }
+    }
+
+    /**
+     * Свой звук: файл, который веб-часть заранее положила в filesDir/sounds
+     * через saveSound. С сервера в момент звонка тянуть нечего — процесс
+     * только что подняли, сети может не быть вовсе.
+     */
+    private fun openCustomPlayer(file: String): MediaPlayer? {
+        val f = java.io.File(filesDir, "sounds/$file")
+        if (!f.isFile) return null
+        val mp = MediaPlayer()
+        return try {
+            mp.setDataSource(f.absolutePath)
+            mp.configureAndStart()
+            mp
+        } catch (e: Exception) {
+            Log.e("NewDayAlarm", "Свой звук '" + file + "' не открылся: " + e.message)
+            mp.release()
+            null
+        }
+    }
+
+    private fun openSystemPlayer(): MediaPlayer? {
+        val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+        return try {
+            MediaPlayer().apply {
+                setDataSource(this@AlarmService, uri)
+                configureAndStart()
+            }
+        } catch (e: Exception) {
+            Log.e("NewDayAlarm", "Не удалось запустить звук: " + e.message)
+            null
+        }
+    }
+
+    private fun MediaPlayer.configureAndStart() {
+        setAudioAttributes(
+            AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ALARM)   // звучит в беззвучном
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build(),
+        )
+        isLooping = true
+        prepare()
+        start()
+    }
+
     /** Окно кончилось: громкость вверх, вибрация настойчивее, задачи обязательны. */
     private fun escalate(a: Alarm, cfg: DismissConfig) {
         if (currentAlarmId != a.id) return   // будильник уже выключили
@@ -212,21 +268,27 @@ class AlarmService : Service() {
     private fun goLoud(a: Alarm, cfg: DismissConfig, am: AudioManager) {
         val max = am.getStreamMaxVolume(AudioManager.STREAM_ALARM)
         if (cfg.volumeRamp && a.isWakeup) {
-            // резкий максимум в 6 утра жесток, тихий будильник не будит —
-            // поэтому доходим до максимума примерно за минуту
+            /*
+             * Резкий максимум в 6 утра жесток, тихий будильник не будит —
+             * поэтому громкость нарастает. За сколько именно, решает человек
+             * в настройках (rampSec): «медленное пробуждение» — минута,
+             * «быстрое» — пятнадцать секунд до полной громкости.
+             */
             var level = (max * 0.25).toInt().coerceAtLeast(1)
             am.setStreamVolume(AudioManager.STREAM_ALARM, level, 0)
             val handler = Handler(Looper.getMainLooper())
             rampHandler = handler
+            val stepsLeft = (max - level).coerceAtLeast(1)
+            val stepMs = (cfg.rampSec * 1000L / stepsLeft).coerceAtLeast(500L)
             val step = object : Runnable {
                 override fun run() {
                     if (level >= max) return
                     level += 1
                     am.setStreamVolume(AudioManager.STREAM_ALARM, level, 0)
-                    handler.postDelayed(this, 60_000L / max.coerceAtLeast(1))
+                    handler.postDelayed(this, stepMs)
                 }
             }
-            handler.postDelayed(step, 4000)
+            handler.postDelayed(step, stepMs)
         } else {
             am.setStreamVolume(AudioManager.STREAM_ALARM, max, 0)
         }

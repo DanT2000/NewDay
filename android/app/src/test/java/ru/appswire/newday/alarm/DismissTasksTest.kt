@@ -155,4 +155,12 @@ class DismissTasksTest {
         )
         assertEquals(cfg, DismissConfig.fromJson(org.json.JSONObject(cfg.toJson().toString())))
     }
+
+    @Test
+    fun `имя файла звука доезжает туда и обратно, без него — пусто, то есть системный`() {
+        val cfg = DismissConfig.fromJson(org.json.JSONObject("""{"soundFile": "siren.wav"}"""))
+        assertEquals("siren.wav", cfg.soundFile)
+        assertEquals(cfg, DismissConfig.fromJson(org.json.JSONObject(cfg.toJson().toString())))
+        assertEquals("", DismissConfig.fromJson(org.json.JSONObject("{}")).soundFile)
+    }
 }
