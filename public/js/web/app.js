@@ -1821,12 +1821,18 @@ function devicesPanel() {
           h('div.wdev-body',
             h('div.wdev-name', { text: d.name || 'Устройство' }),
             h('div.wdev-seen', {
+              /*
+               * Чем это устройство отличить от соседнего: платформа, откуда
+               * заходило и когда. Без адреса список из двух «Android» ничего
+               * не говорит — а по нему видно, своё это или чужое.
+               */
               text: [
                 d.platform === 'android' ? 'Android' : (d.platform || 'приложение'),
+                d.lastIp || null,
                 d.last_seen_at
                   ? `заходило ${adapt.shortDate(String(d.last_seen_at).slice(0, 10))}`
                   : 'ещё не заходило',
-              ].join(' · '),
+              ].filter(Boolean).join(' · '),
             })),
           h('button.wbtn-line', {
             type: 'button', text: 'Отключить',
