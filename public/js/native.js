@@ -34,7 +34,7 @@ export const ALARM_DEFAULTS = {
   alarmRescueAfterSec: 90,
   alarmQrLabel: '',
   alarmRampSec: 30,
-  soundFile: 'dawn.wav',
+  soundFile: 'dawn.ogg',
 };
 
 /*
@@ -43,9 +43,25 @@ export const ALARM_DEFAULTS = {
  * прежних пяти имён есть карта; всё новое сохраняет soundFile само.
  */
 const LEGACY_SOUND_FILES = {
-  'Рассвет': 'dawn.wav', 'Капля': 'drop.wav', 'Колокол': 'bell.wav',
-  'Птицы': 'birds.wav', 'Сирена': 'siren.wav',
+  'Рассвет': 'dawn.ogg', 'Капля': 'drop.ogg', 'Птицы': 'birds.ogg',
+  'Сирена': 'siren.ogg',
+  // «Колокол» из первого набора не пережил замену синтезированных звуков
+  // настоящими: ближайший по смыслу — колокольчик уведомления
+  'Колокол': 'chime.ogg',
 };
+
+/*
+ * Имя файла из старого профиля.
+ *
+ * Первый набор был в WAV и синтезированным; сейчас звуки настоящие и в OGG.
+ * Профиль человека мог сохранить «bell.wav» — такого файла больше нет, и
+ * будильник упал бы на системный сигнал молча. Переводим по названию.
+ */
+function soundFileOf(settings) {
+  const saved = String(settings.soundFile ?? '');
+  if (saved && !saved.endsWith('.wav')) return saved;
+  return LEGACY_SOUND_FILES[settings.sound] ?? saved.replace(/\.wav$/, '.ogg');
+}
 
 /** Настройки экрана отключения: их задаёт человек в настройках. */
 function dismissConfig(settings = {}) {
@@ -74,7 +90,7 @@ function dismissConfig(settings = {}) {
     qrLabel: String(settings.alarmQrLabel ?? ''),
     // за сколько секунд громкость доходит до максимума после мягкого начала
     rampSec: Number(settings.alarmRampSec ?? ALARM_DEFAULTS.alarmRampSec),
-    soundFile: String(settings.soundFile ?? LEGACY_SOUND_FILES[settings.sound] ?? ''),
+    soundFile: soundFileOf(settings),
   };
 }
 

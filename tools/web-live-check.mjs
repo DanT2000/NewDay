@@ -518,12 +518,12 @@ await wait(800);
   await js(`document.querySelectorAll('.wmodal .wplay').length >= 5`));
 проба('свой звук добавляется с лимитом в 10 МБ',
   await js(`document.querySelector('.wmodal .wbtn-dashed')?.textContent.includes('10 МБ')`));
-await js(`[...document.querySelectorAll('.wmodal .wopt')].find(b => b.textContent.includes('Колокол')).click()`);
+await js(`[...document.querySelectorAll('.wmodal .wopt')].find(b => b.textContent.includes('Петух')).click()`);
 await wait(1000);
 проба('звук сохранён в профиле',
-  (await js(`fetch('/api/v1/settings').then(r=>r.json()).then(s => s.settings.sound)`, true)) === 'Колокол');
+  (await js(`fetch('/api/v1/settings').then(r=>r.json()).then(s => s.settings.sound)`, true)) === 'Петух');
 проба('вместе с названием сохранено имя файла для телефона',
-  (await js(`fetch('/api/v1/settings').then(r=>r.json()).then(s => s.settings.soundFile)`, true)) === 'bell.wav');
+  (await js(`fetch('/api/v1/settings').then(r=>r.json()).then(s => s.settings.soundFile)`, true)) === 'rooster.ogg');
 await js(`document.querySelector('.wmodal-x').click()`);
 await waitFor('!document.querySelector(".wveil")');
 await назадВОглавление();

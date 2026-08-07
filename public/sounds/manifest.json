@@ -1,50 +1,86 @@
 [
   {
-    "file": "dawn.wav",
+    "file": "dawn.ogg",
     "name": "Рассвет",
     "kind": "alarm",
-    "mood": "мягкий"
+    "mood": "мягкий",
+    "license": "AOSP frameworks/base data/sounds/alarms/ogg/Argon.ogg — Apache-2.0"
   },
   {
-    "file": "drop.wav",
-    "name": "Капля",
-    "kind": "notify",
-    "mood": "мягкий"
-  },
-  {
-    "file": "bell.wav",
-    "name": "Колокол",
+    "file": "harp.ogg",
+    "name": "Арфа",
     "kind": "alarm",
-    "mood": "злой"
+    "mood": "мягкий",
+    "license": "freesound.org #594067 «Harp and Pad Fm Complicated Loop», f-r-a-g-i-l-e — CC0"
   },
   {
-    "file": "birds.wav",
+    "file": "birds.ogg",
     "name": "Птицы",
     "kind": "alarm",
-    "mood": "мягкий"
+    "mood": "мягкий",
+    "license": "Wikimedia Commons «Reggelirigók.ogg», Ödönke — public domain"
   },
   {
-    "file": "siren.wav",
-    "name": "Сирена",
+    "file": "alert.ogg",
+    "name": "Резкий сигнал",
     "kind": "alarm",
-    "mood": "злой"
+    "mood": "злой",
+    "license": "AOSP frameworks/base data/sounds/Alarm_Beep_03.ogg — Apache-2.0"
   },
   {
-    "file": "klaxon.wav",
+    "file": "rooster.ogg",
+    "name": "Петух",
+    "kind": "alarm",
+    "mood": "злой",
+    "license": "AOSP frameworks/base data/sounds/Alarm_Rooster_02.ogg — Apache-2.0"
+  },
+  {
+    "file": "klaxon.ogg",
     "name": "Клаксон",
     "kind": "alarm",
-    "mood": "злой"
+    "mood": "злой",
+    "license": "Wikimedia Commons «Car Horn.wav», 15HPanska_Ruttner_Jan — CC0"
   },
   {
-    "file": "alert.wav",
-    "name": "Тревога",
+    "file": "siren.ogg",
+    "name": "Сирена",
     "kind": "alarm",
-    "mood": "злой"
+    "mood": "злой",
+    "license": "Wikimedia Commons «Civil-defense-siren-waver.ogg», Techtonic — public domain"
   },
   {
-    "file": "reveille.wav",
+    "file": "reveille.ogg",
     "name": "Подъём",
     "kind": "alarm",
-    "mood": "злой"
+    "mood": "злой",
+    "license": "Wikimedia Commons «Reveille on bugle.ogg», United States Army Band — public domain"
+  },
+  {
+    "file": "drop.ogg",
+    "name": "Капля",
+    "kind": "notify",
+    "mood": "мягкий",
+    "license": "AOSP frameworks/base data/sounds/notifications/Drip.ogg — Apache-2.0"
+  },
+  {
+    "file": "chime.ogg",
+    "name": "Колокольчик",
+    "kind": "notify",
+    "mood": "мягкий",
+    "license": "AOSP frameworks/base data/sounds/notifications/Tinkerbell.ogg — Apache-2.0"
+  },
+  {
+    "file": "bubble.ogg",
+    "name": "Пузырёк",
+    "kind": "notify",
+    "mood": "мягкий",
+    "license": "AOSP frameworks/base data/sounds/notifications/Plastic_Pipe.ogg — Apache-2.0"
+  },
+  {
+    "file": "key.ogg",
+    "name": "Клавиша",
+    "kind": "notify",
+    "mood": "мягкий",
+    "license": "AOSP frameworks/base data/sounds/effects/ogg/KeypressStandard_120_48k.ogg — Apache-2.0"
   }
 ]
