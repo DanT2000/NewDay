@@ -253,3 +253,11 @@
 
 /* Действия над пользователем: кнопки в строку, на узком — переносом */
 .adm-user-actions { display: flex; gap: var(--s-2); align-items: center; flex-wrap: wrap; }
+
+/* Секрет показывается один раз — пусть его будет удобно выделить целиком */
+.adm-token {
+  padding: 10px 12px; border-radius: 10px;
+  background: var(--surface-2, var(--surface)); border: 1px dashed var(--hairline-firm);
+  font-family: var(--mono, monospace); font-size: 13px; word-break: break-all;
+  user-select: all;
+}

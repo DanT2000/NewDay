@@ -1,6 +1,9 @@
 const express = require('express');
 const pkg = require('../../package.json');
 const { MIGRATIONS } = require('../db/migrations');
+const { hashToken, safeEqual } = require('../lib/secrets');
+const { appSettingsRepo } = require('../repos/appSettings');
+const { panelSettings } = require('../repos/panelSettings');
 
 /**
  * Состояние службы. Открыто без входа, поэтому здесь только то, по чему нельзя
@@ -29,8 +32,29 @@ const QUEUE_STUCK_MS = 10 * 60 * 1000;
 
 module.exports = function healthRouter(db, { ai, push, mailer } = {}) {
   const router = express.Router();
+  const panel = panelSettings(appSettingsRepo(db));
 
-  router.get('/', (_req, res) => {
+  /**
+   * Показывать ли подробности этому запросу.
+   *
+   * Ключ можно прислать заголовком `Authorization: Bearer …`, заголовком
+   * `X-Health-Token` или параметром `?token=` — у наблюдалок разные привычки,
+   * и заставлять человека подбирать способ незачем. Пока ключ не выпущен,
+   * подробности открыты: сервер, поднятый пять минут назад, должен уметь
+   * объяснить, что с ним не так, до всякой настройки.
+   */
+  function detailsAllowed(req) {
+    if (panel.healthOpen()) return true;
+    const hash = panel.healthTokenHash();
+    if (!hash) return true;
+    const header = req.get('authorization') || '';
+    const given = (header.startsWith('Bearer ') ? header.slice(7) : '')
+      || req.get('x-health-token')
+      || (typeof req.query.token === 'string' ? req.query.token : '');
+    return Boolean(given) && safeEqual(hashToken(given), hash);
+  }
+
+  router.get('/', (req, res) => {
     const problems = [];      // из-за чего служба нездорова
     const notes = [];         // на что стоит посмотреть, но это не поломка
 
@@ -111,6 +135,14 @@ module.exports = function healthRouter(db, { ai, push, mailer } = {}) {
      * чтобы в уведомлении была причина, а не только «сайт упал».
      */
     const ok = problems.length === 0;
+    /*
+     * Без ключа — только «жив или нет». Наблюдалке этого хватает: она смотрит
+     * на код ответа. Подробности (версия схемы, очередь, причины поломки)
+     * рассказывают о внутренностях, и на публичном адресе им не место.
+     */
+    if (!detailsAllowed(req)) {
+      return res.status(ok ? 200 : 503).json({ ok, status: ok ? 'up' : 'down' });
+    }
     res.status(ok ? 200 : 503).json({
       ok,
       status: ok ? 'up' : 'down',

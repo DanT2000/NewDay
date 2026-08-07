@@ -683,3 +683,60 @@ test('ссылка приглашения ведёт на тот адрес, п�
     assert.ok(body.url.includes('/register.html?invite='));
   } finally { await srv.close(); }
 });
+
+/*
+ * Подробности здоровья — по ключу.
+ *
+ * «Жив или нет» нужен наблюдалке и остаётся открытым: закрывать его значит
+ * требовать ключ ради того, что и так видно по доступности сайта. А версия
+ * схемы, длина очереди и причины поломки рассказывают о внутренностях.
+ */
+test('до выпуска ключа подробности здоровья открыты', async () => {
+  const srv = await startTestServer();
+  try {
+    const body = await (await fetch(srv.url + '/api/health')).json();
+    assert.ok('schemaVersion' in body, 'свежий сервер должен объяснять себя без настройки');
+  } finally { await srv.close(); }
+});
+
+test('выпущенный ключ прячет подробности и открывает их обратно', async () => {
+  const srv = await startTestServer();
+  try {
+    const { cookie } = await adminLogin(srv.url);
+    const res = await fetch(`${srv.url}/api/admin/health-token`, {
+      method: 'POST', headers: { Cookie: cookie },
+    });
+    const { token, url, header } = await res.json();
+    assert.match(String(token), /^[0-9a-f]{48}$/);
+    assert.ok(url.endsWith('/api/health'));
+    assert.ok(header.startsWith('X-Health-Token: '));
+
+    // без ключа — только «жив или нет»
+    const plain = await (await fetch(srv.url + '/api/health')).json();
+    assert.strictEqual(plain.ok, true);
+    assert.ok(!('schemaVersion' in plain), 'внутренности без ключа наружу не идут');
+    assert.ok(!('problems' in plain));
+
+    // тремя способами, как их присылают разные наблюдалки
+    for (const opts of [
+      { headers: { Authorization: `Bearer ${token}` }, path: '/api/health' },
+      { headers: { 'X-Health-Token': token }, path: '/api/health' },
+      { headers: {}, path: `/api/health?token=${token}` },
+    ]) {
+      const r = await fetch(srv.url + opts.path, { headers: opts.headers });
+      const b = await r.json();
+      assert.ok('schemaVersion' in b, `ключ не принят: ${opts.path}`);
+    }
+
+    // чужой ключ не подходит
+    const bad = await (await fetch(`${srv.url}/api/health`, {
+      headers: { 'X-Health-Token': 'wrong-key-0000' },
+    })).json();
+    assert.ok(!('schemaVersion' in bad));
+
+    // отзыв возвращает подробности всем: сервер снова объясняет себя сам
+    await fetch(`${srv.url}/api/admin/health-token`, { method: 'DELETE', headers: { Cookie: cookie } });
+    const after = await (await fetch(srv.url + '/api/health')).json();
+    assert.ok('schemaVersion' in after);
+  } finally { await srv.close(); }
+});

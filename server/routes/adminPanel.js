@@ -28,6 +28,7 @@ const { aiProxiesRepo, publicProxy } = require('../repos/aiProxies');
 const { usersRepo } = require('../repos/users');
 const { TIERS } = require('../services/aiAccess');
 const { deleteAfterOf } = require('../services/userCleanup');
+const { randomHex, hashToken } = require('../lib/secrets');
 
 /** Сессия админа живёт 12 часов: панель — не то, чему стоит быть открытым месяц. */
 const ADMIN_TTL_MS = 12 * 60 * 60 * 1000;
@@ -350,6 +351,50 @@ module.exports = function adminPanelRouter({ db, config, ai, access, push, clean
   }));
 
   // ── Статистика ─────────────────────────────────────────────
+
+  // ── Ключ к подробностям здоровья ───────────────────────────
+
+  /*
+   * «Жив или нет» открыто всем — наблюдалке нужен код ответа. Подробности
+   * (версия схемы, очередь, причины поломки) рассказывают о внутренностях,
+   * и на публичном адресе им не место. Ключ показывается один раз: хранится
+   * хеш, и «покажите ещё» невозможно даже серверу.
+   */
+  router.get('/health-token', wrap((req, res) => {
+    const base = req.get('host') ? `${req.protocol}://${req.get('host')}` : config.appUrl;
+    res.json({
+      issued: Boolean(panel.healthTokenHash()),
+      open: panel.healthOpen(),
+      url: `${base}/api/health`,
+    });
+  }));
+
+  router.post('/health-token', wrap((req, res) => {
+    const token = randomHex(24);
+    panel.setHealthTokenHash(hashToken(token));
+    panel.setHealthOpen(false);
+    const base = req.get('host') ? `${req.protocol}://${req.get('host')}` : config.appUrl;
+    res.json({
+      token,
+      issued: true,
+      open: false,
+      url: `${base}/api/health`,
+      // готовая строка для Uptime Kuma: заголовок туда вставляется целиком
+      header: `X-Health-Token: ${token}`,
+    });
+  }));
+
+  router.delete('/health-token', wrap((_req, res) => {
+    // Отзыв не закрывает подробности наглухо: без ключа их снова видно всем.
+    // Так свежий сервер объясняет свои поломки до всякой настройки.
+    panel.setHealthTokenHash('');
+    res.json({ issued: false, open: panel.healthOpen() });
+  }));
+
+  router.patch('/health-token', wrap((req, res) => {
+    if (req.body?.open !== undefined) panel.setHealthOpen(Boolean(req.body.open));
+    res.json({ issued: Boolean(panel.healthTokenHash()), open: panel.healthOpen() });
+  }));
 
   router.get('/stats', wrap((_req, res) => {
     const totalUsers = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;

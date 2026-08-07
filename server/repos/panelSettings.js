@@ -38,6 +38,22 @@ function panelSettings(settings) {
 
     adminPasswordHash: () => settings.get('adminPasswordHash'),
     setAdminPasswordHash: hash => settings.set('adminPasswordHash', hash),
+
+    /*
+     * Ключ к подробностям здоровья.
+     *
+     * Само «жив или нет» открыто всем: наблюдалке нужен код ответа, и
+     * закрывать его значит требовать ключ ради того, что и так видно по
+     * доступности сайта. А подробности — версия схемы, длина очереди,
+     * причины поломки — рассказывают о внутренностях, и их отдаём по ключу.
+     * Ключ хранится хешем: сервер его не помнит, показать второй раз нельзя.
+     */
+    healthTokenHash: () => settings.get('healthTokenHash'),
+    setHealthTokenHash: hash => settings.set('healthTokenHash', hash || ''),
+
+    // Открыть подробности всем — осознанный выбор владельца закрытого контура
+    healthOpen: () => settings.get('healthOpen') === '1',
+    setHealthOpen: v => settings.set('healthOpen', v ? '1' : '0'),
   };
 }
 

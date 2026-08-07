@@ -1114,7 +1114,100 @@ async function renderSettings() {
     el('p', { class: 'adm-lead', text: 'Этим паролем открывается вся админка — не делитесь им и не ставьте короткий.' }),
     passForm);
 
-  return [regCard, passCard];
+  /*
+   * Ключ для наблюдалки (Uptime Kuma и подобных).
+   *
+   * «Жив или нет» открыто всем: наблюдалке нужен код ответа, и требовать
+   * ключ ради того, что видно по доступности сайта, незачем. А подробности —
+   * версия схемы, длина очереди, причины поломки — рассказывают о
+   * внутренностях, и их закрывает ключ. Показывается он один раз: сервер
+   * хранит только хеш.
+   */
+  const hErr = errBox();
+  const hBox = el('div', { class: 'stack' });
+  let health = null;
+  try { health = await api('GET', '/api/admin/health-token'); }
+  catch { /* сервер старой версии — покажем, что раздел недоступен */ }
+
+  function drawHealth(fresh) {
+    hBox.replaceChildren();
+    if (!health) {
+      hBox.append(el('p', { class: 'adm-lead', text: 'Раздел недоступен: сервер ещё не обновлён.' }));
+      return;
+    }
+    const issued = Boolean(health.issued);
+    hBox.append(el('p', { class: 'adm-lead', text: issued
+      ? 'Подробности здоровья закрыты ключом. Проверка «жив или нет» по-прежнему открыта всем.'
+      : 'Ключ не выпущен: подробности здоровья видны всем, у кого есть адрес. Для публичного сервера выпустите ключ.' }));
+
+    hBox.append(el('div', { class: 'adm-kv-row' },
+      el('span', { text: 'Адрес для наблюдалки' }),
+      el('b', { class: 'mono', text: health.url || '/api/health' })));
+
+    if (fresh?.token) {
+      // Ключ показывается ровно один раз — говорим об этом прямо
+      hBox.append(
+        el('p', { class: 'small', text: 'Скопируйте сейчас: второй раз его не покажет даже сервер.' }),
+        el('div', { class: 'adm-token' }, el('code', { text: fresh.token })),
+        el('div', { class: 'adm-actions' },
+          (() => {
+            const b = el('button', { class: 'btn btn-sm', type: 'button', text: 'Скопировать ключ' });
+            b.addEventListener('click', async () => {
+              toast(await copyText(fresh.token) ? 'Ключ скопирован' : 'Не получилось скопировать');
+            });
+            return b;
+          })(),
+          (() => {
+            const b = el('button', { class: 'btn btn-sm', type: 'button', text: 'Скопировать заголовок' });
+            b.addEventListener('click', async () => {
+              toast(await copyText(fresh.header) ? 'Заголовок скопирован' : 'Не получилось скопировать');
+            });
+            return b;
+          })()));
+    }
+
+    const issue = el('button', { class: 'btn btn-primary', type: 'button' },
+      icon('key', { size: '16px' }),
+      el('span', { text: issued ? 'Выпустить новый ключ' : 'Выпустить ключ' }));
+    issue.addEventListener('click', async () => {
+      hideErr(hErr);
+      issue.disabled = true;
+      try {
+        const r = await api('POST', '/api/admin/health-token');
+        health = { issued: true, open: false, url: r.url };
+        drawHealth(r);
+        toast(issued ? 'Ключ заменён — старый больше не работает' : 'Ключ выпущен');
+      } catch (ex) {
+        showErr(hErr, 'Не получилось выпустить: ' + ex.message);
+        issue.disabled = false;
+      }
+    });
+
+    const actions = el('div', { class: 'adm-actions' }, issue);
+    if (issued) {
+      const drop = el('button', { class: 'btn btn-sm btn-danger', type: 'button', text: 'Отозвать' });
+      drop.addEventListener('click', async () => {
+        hideErr(hErr);
+        drop.disabled = true;
+        try {
+          await api('DELETE', '/api/admin/health-token');
+          health = { ...health, issued: false };
+          drawHealth(null);
+          toast('Ключ отозван — подробности снова открыты');
+        } catch (ex) {
+          showErr(hErr, 'Не получилось отозвать: ' + ex.message);
+          drop.disabled = false;
+        }
+      });
+      actions.append(drop);
+    }
+    hBox.append(actions, hErr);
+  }
+  drawHealth(null);
+
+  const healthCard = card('Наблюдение за сервером', null, hBox);
+
+  return [regCard, healthCard, passCard];
 }
 
 /* ── Старт ──────────────────────────────────────────────────────
