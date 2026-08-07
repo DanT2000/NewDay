@@ -39,6 +39,13 @@ want() { [ -z "$ONLY" ] || [ "${ONLY#*,$1,}" != "$ONLY" ]; }
 restart() {
   "$ADB" shell am force-stop $PKG >/dev/null 2>&1
   "$ADB" logcat -c >/dev/null 2>&1
+  # Экран будим и отпираем до старта: прошлый сценарий мог оставить его
+  # погашенным и запертым, а activity, запущенная за локскрином, на 13-м
+  # висит паузнутой — вебвью в ней не создаётся, и мост CDP молчит,
+  # сколько ни пробуй. Выглядело это как «будильник не поднял экран».
+  "$ADB" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1
+  "$ADB" shell wm dismiss-keyguard >/dev/null 2>&1
+  sleep 1
   "$ADB" shell am start -n $PKG/.MainActivity >/dev/null 2>&1
   # Приложение при запуске само отправляет свои будильники в систему, и этот
   # вызов заменяет весь список. Если он придёт после тестового будильника,
@@ -60,11 +67,42 @@ cdp() {
   sleep 1
 }
 
+# eval с упорством: вебвью после рестарта поднимается неровно, и на свежем
+# AVD (особенно 13-м) первая попытка попадает в момент, когда страницы ещё
+# нет. Одна молчаливая неудача здесь превращалась в «экран будильника не
+# поднялся» — провал приложения там, где не сработал стенд.
+wv() {
+  local out i
+  for i in 1 2 3 4 5 6; do
+    cdp
+    out=$(node tools/webview-eval.js "$1" 2>/dev/null | tail -1)
+    [ -n "$out" ] && { echo "$out"; return 0; }
+    sleep 3
+  done
+  # Отказ моста без объяснения уже один раз выглядел как провал приложения.
+  # Пишем в лог всё, чем он объясним: жив ли процесс, есть ли сокет
+  # отладки, что отвечает список страниц и что сказал сам eval.
+  {
+    echo "      МОСТ НЕ ОТВЕТИЛ, диагностика:"
+    echo "      pid=[$("$ADB" shell pidof $PKG | tr -d '\r')]"
+    echo "      сокеты: $("$ADB" shell 'cat /proc/net/unix | grep devtools' 2>/dev/null | tr -d '\r' | tr '\n' ' ')"
+    echo "      страницы: $(curl -s --max-time 3 http://127.0.0.1:9222/json/list | head -c 200)"
+    echo "      eval: $(node tools/webview-eval.js "$1" 2>&1 | head -2 | tr '\n' ' ')"
+  } >&2
+  echo ""
+  return 1
+}
+
 # fire <delaySec> [profile] — ставит тестовый будильник через настоящий плагин
 fire() {
-  cdp
-  node tools/webview-eval.js \
-    "Capacitor.Plugins.NewDayAlarm.testAlarm({ delaySec: $1, profile: '${2:-gentle}' })" >/dev/null 2>&1
+  local got
+  got=$(wv "Capacitor.Plugins.NewDayAlarm.testAlarm({ delaySec: $1, profile: '${2:-gentle}' }).then(r => 'fireAt=' + r.fireAt)")
+  # Непоставленный будильник — это провал стенда, а не приложения, и он
+  # должен быть виден как таковой: иначе «экран не поднялся» врёт.
+  case "$got" in
+    *fireAt=*) return 0 ;;
+    *) echo "      СТЕНД: будильник не поставился через вебвью"; return 1 ;;
+  esac
 }
 
 # grace <секунды|off> — задаёт мягкое начало.
@@ -75,13 +113,10 @@ fire() {
 # думая, что проверяет заданное. setConfig — чтобы значение подействовало сразу,
 # не дожидаясь следующей синхронизации.
 grace() {
-  cdp
   local on=true sec=${1} got
   [ "$1" = "off" ] && { on=false; sec=60; }
-  node tools/webview-eval.js \
-    "fetch(localStorage.getItem('newday.apiBase') + '/api/v1/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('newday.deviceToken') }, body: JSON.stringify({ settings: { alarmGraceEnabled: $on, alarmGraceSec: $sec } }) }).then(r => 'settings ' + r.status)" >/dev/null 2>&1
-  got=$(node tools/webview-eval.js \
-    "Capacitor.Plugins.NewDayAlarm.setConfig({ config: { graceEnabled: $on, graceSec: $sec, types: ['math'], count: 1, difficulty: 1, timeoutSec: 30, snoozeAllowed: false, volumeRamp: false } }).then(r => 'grace=' + r.config.graceEnabled + '/' + r.config.graceSec)" 2>/dev/null | tail -1)
+  wv "fetch(localStorage.getItem('newday.apiBase') + '/api/v1/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('newday.deviceToken') }, body: JSON.stringify({ settings: { alarmGraceEnabled: $on, alarmGraceSec: $sec } }) }).then(r => 'settings ' + r.status)" >/dev/null
+  got=$(wv "Capacitor.Plugins.NewDayAlarm.setConfig({ config: { graceEnabled: $on, graceSec: $sec, types: ['math'], count: 1, difficulty: 1, timeoutSec: 30, snoozeAllowed: false, volumeRamp: false } }).then(r => 'grace=' + r.config.graceEnabled + '/' + r.config.graceSec)")
   # Настройка, молча не применившаяся, — худший вид провала: сценарий пройдёт
   # мимо того, что проверял. Поэтому печатаем, что реально записалось.
   echo "      настройка: $got"
