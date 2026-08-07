@@ -34,13 +34,25 @@ if (!shellBlock) {
 }
 const files = [...shellBlock[1].matchAll(/'([^']+)'/g)].map(m => m[1]);
 
+/*
+ * Переносы строк выравниваем до хеширования: на Windows рабочая копия живёт
+ * с CRLF, чекаут CI — с LF, и один и тот же текстовый файл давал два разных
+ * хеша. Отметка, поставленная на одной системе, на другой выглядела
+ * устаревшей — CI краснел на дереве, которое локально было зелёным.
+ * Бинарные файлы не трогаем: git их не перекодирует, они одинаковы везде,
+ * а «нормализация» через utf8 их бы только исказила.
+ */
+const TEXT = /\.(js|css|html|json|webmanifest|svg|txt)$/i;
+const lf = buf => Buffer.from(buf.toString('utf8').replaceAll('\r\n', '\n'));
+
 const hash = crypto.createHash('sha256');
 let missing = 0;
 for (const url of files.sort()) {
   const file = path.join(ROOT, 'public', url.replace(/^\//, ''));
   try {
     hash.update(url);
-    hash.update(await fs.readFile(file));
+    const raw = await fs.readFile(file);
+    hash.update(TEXT.test(url) ? lf(raw) : raw);
   } catch {
     missing += 1;
     console.warn(`  нет файла: ${url}`);
@@ -48,7 +60,7 @@ for (const url of files.sort()) {
 }
 // сам обработчик fetch тоже часть поведения: правка стратегии кеша должна
 // приводить к новой версии, даже если файлы оболочки не тронуты
-hash.update(source.replace(/const VERSION = '[^']*';/, ''));
+hash.update(source.replaceAll('\r\n', '\n').replace(/const VERSION = '[^']*';/, ''));
 
 const stamp = 'newday-' + hash.digest('hex').slice(0, 12);
 const current = /const VERSION = '([^']*)';/.exec(source)?.[1] ?? '';
