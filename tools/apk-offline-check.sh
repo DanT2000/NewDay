@@ -28,6 +28,9 @@ while [ $# -gt 0 ]; do
     --base) shift; BASE="$1" ;;
     --mail) shift; MAIL="$1" ;;
     --pass) shift; PASS="$1" ;;
+    # проверить можно и скачанный с сайта артефакт, а не только свою сборку:
+    # людям достаётся именно он
+    --apk) shift; APK="$1" ;;
     --keep) KEEP=1 ;;
   esac
   shift
