@@ -33,6 +33,17 @@ if ! "$AVDMAN" list avd 2>/dev/null | grep -q "Name: $avd"; then
     -k "system-images;android-${API};google_apis;x86_64" -d pixel_6 --force >/dev/null 2>&1
 fi
 
+# Камера — виртуальная сцена, не «none»: без неё hasCamera() честно отвечает
+# «камеры нет», задача QR ещё до показа становится примером, и снимок
+# видоискателя снять не с чего. Замки от убитых прогонов — тоже здесь.
+AVD_DIR="${USERPROFILE}/.android/avd/${avd}.avd"
+if [ -f "$AVD_DIR/config.ini" ]; then
+  sed -i 's/^hw.camera.back=.*/hw.camera.back=virtualscene/' "$AVD_DIR/config.ini"
+  grep -q '^hw.camera.back=' "$AVD_DIR/config.ini" || echo 'hw.camera.back=virtualscene' >> "$AVD_DIR/config.ini"
+fi
+rm -rf "$AVD_DIR/hardware-qemu.ini.lock" "$AVD_DIR/multiinstance.lock" \
+       "$AVD_DIR/userdata-qemu.img.lock" "$AVD_DIR/snapshot.lock" 2>/dev/null || true
+
 echo "поднимаю эмулятор"
 "$EMU" -avd "$avd" -no-snapshot-save -no-boot-anim -no-audio -gpu swiftshader_indirect >/dev/null 2>&1 &
 "$ADB" wait-for-device
@@ -43,7 +54,12 @@ until [ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 
 done
 sleep 8
 
-"$ADB" install -r -g "$APK" >/dev/null 2>&1 || { echo "APK не встал"; exit 1; }
+# Самая частая причина отказа — прошлая сборка на эмуляторе подписана другим
+# ключом: обновление поверх неё Android запрещает. Сносим и ставим заново.
+if ! "$ADB" install -r -g "$APK" >/dev/null 2>&1; then
+  "$ADB" uninstall $PKG >/dev/null 2>&1
+  "$ADB" install -g "$APK" >/dev/null 2>&1 || { echo "APK не встал"; exit 1; }
+fi
 "$ADB" shell appops set $PKG SYSTEM_ALERT_WINDOW allow >/dev/null 2>&1
 "$ADB" shell appops set $PKG SCHEDULE_EXACT_ALARM allow >/dev/null 2>&1
 
@@ -167,6 +183,31 @@ setup "{ $BASE, difficulty: 1, graceEnabled: false, snoozeAllowed: true, snoozeM
 fire 8 gentle
 "$ADB" shell input keyevent KEYCODE_SLEEP >/dev/null 2>&1
 if await_screen; then shot alarm-gentle; fi
+
+# 9. QR: видоискатель поверх виртуальной сцены эмулятора.
+# Код ставится через setConfig с явным ключом qrValue — путь мимо камеры,
+# оставленный ровно для таких прогонов.
+case_shot alarm-qr \
+  "{ types: ['qr'], count: 1, timeoutSec: 60, snoozeAllowed: false, volumeRamp: false, graceEnabled: false, qrValue: 'проверка', qrLabel: 'на чайнике', rescueAfterSec: 300 }" \
+  "QR-код"
+
+# 10. QR с кнопкой аварийного выхода: ждём, пока она появится
+echo "== QR: аварийный выход через 30 с"
+start_app
+setup "{ types: ['qr'], count: 1, timeoutSec: 60, snoozeAllowed: false, volumeRamp: false, graceEnabled: false, qrValue: 'проверка', qrLabel: 'на чайнике', rescueAfterSec: 30 }"
+"$ADB" logcat -c >/dev/null 2>&1
+fire 8 wakeup
+"$ADB" shell input keyevent KEYCODE_SLEEP >/dev/null 2>&1
+if await_screen; then
+  sleep 34
+  shot alarm-qr-rescue
+fi
+
+# 11. Шаги. На эмуляторе шагомера обычно нет, и это тоже показательно:
+# экран должен объяснить причину и сам увести на пример, а не зависнуть.
+case_shot alarm-steps \
+  "{ types: ['steps'], count: 1, timeoutSec: 60, snoozeAllowed: false, volumeRamp: false, graceEnabled: false, stepsTarget: 20 }" \
+  "Шаги"
 
 "$ADB" shell am force-stop $PKG >/dev/null 2>&1
 echo
