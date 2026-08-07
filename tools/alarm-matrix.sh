@@ -162,12 +162,17 @@ for api in "${LIST[@]}"; do
   fi
 
   echo "  ставлю приложение"
-  "$ADB" install -r -g "$APK" >/dev/null 2>&1 || {
-    echo "  ПРОВАЛ: APK не установился"
-    echo "$human|—|—|APK не встал" >> "$REPORT"
-    stop_emulator
-    continue
-  }
+  # Если на AVD осталась сборка с другой подписью, обновление поверх неё
+  # Android запрещает — сносим и ставим заново, стенд чистый.
+  if ! "$ADB" install -r -g "$APK" >/dev/null 2>&1; then
+    "$ADB" uninstall $PKG >/dev/null 2>&1
+    "$ADB" install -g "$APK" >/dev/null 2>&1 || {
+      echo "  ПРОВАЛ: APK не установился"
+      echo "$human|—|—|APK не встал" >> "$REPORT"
+      stop_emulator
+      continue
+    }
+  fi
 
   # Разрешения, которые на устройстве выдаёт человек. -g при установке даёт
   # runtime-разрешения, но не особые: их выдаём отдельно, иначе половина
