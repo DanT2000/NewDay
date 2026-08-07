@@ -253,7 +253,31 @@ const isDone = r => Boolean(r.done);
 const alarmOf = r => r.alarm ?? 'off';
 const leadsOf = r => (r.leads?.length ? r.leads : ['at']);
 const hasLead = (r, k) => leadsOf(r).includes(k);
-const leadsLabel = r => leadsOf(r).map(k => LEADS.find(l => l.k === k)?.label ?? k).join(', ');
+const leadsLabel = r => leadsOf(r)
+  .map(k => LEADS.find(l => l.k === k)?.label ?? (/^\d+$/.test(k) ? leadOwnLabel(k) : k))
+  .join(', ');
+
+/** Свой срок словами: «за 40 мин», «за 2 ч», «за 1 ч 30 мин». */
+function leadOwnLabel(k) {
+  const n = Number(k);
+  if (n < 60) return `за ${n} мин`;
+  const hh = Math.floor(n / 60);
+  const mm = n % 60;
+  return mm ? `за ${hh} ч ${mm} мин` : `за ${hh} ч`;
+}
+
+/**
+ * Свой срок предупреждения. prompt намеренно: это редкое действие, и своя
+ * шторка ради него отняла бы больше внимания, чем сэкономила.
+ */
+function askOwnLead() {
+  const raw = prompt('За сколько минут предупредить?', '40');
+  if (raw === null) return;
+  const n = Number(String(raw).replace(/\D+/g, ''));
+  // сутки — потолок: дальше это уже не «предупредить», а другой день
+  if (!n || n < 1 || n > 1440) { setIn({ notice: 'Нужно число от 1 до 1440 минут' }); return; }
+  setIn({ rowLeads: toggleLead(state.rowLeads, String(n)) });
+}
 
 /**
  * Переключение срока предупреждения. «Вовремя» и «за сколько-то» —
@@ -453,7 +477,19 @@ function sideBar() {
     const on = state.screen === n.key;
     const b = h('button.wnav-item', {
       type: 'button', class: on ? 'on' : '',
-      onclick: () => { state.screen = n.key; state.modal = null; render(); reload(); },
+      onclick: () => {
+        /*
+         * «Сейчас» — это всегда сегодня. Человек листал дни на неделю вперёд,
+         * уходил в заметки, возвращался — и попадал не в свой день, а туда,
+         * где остановился. Раздел называется «Сейчас», и открывать он должен
+         * именно сейчас.
+         */
+        if (n.key === 'today') state.date = store.settings?.today ?? state.date;
+        state.screen = n.key;
+        state.modal = null;
+        render();
+        reload();
+      },
     });
     add(b, ico(on ? `${n.icon}-fill` : n.icon, '19px'), h('span', { text: n.label }));
     return b;
@@ -548,6 +584,16 @@ function topBar() {
   const cal = h('button.wbtn-ghost', { type: 'button', onclick: openCalendar });
   add(cal, ico('calendar-blank', '16px'), h('span', { text: 'Календарь' }));
 
+  /*
+   * На настройках и привычках полосы дня нет.
+   *
+   * «Сегодня», календарь и стрелки там ничего не меняли: ни настройки, ни
+   * список привычек к дате не привязаны. Кнопка, которая нажимается и не
+   * делает ничего, хуже отсутствующей. На заметках полоса остаётся — у них
+   * есть фильтр «на этот день», и он про выбранную дату.
+   */
+  if (state.screen === 'settings' || state.screen === 'habits') return null;
+
   return h('div.wtop',
     h('div.wtop-date',
       h('div.wtop-dow', { text: period.top }),
@@ -612,7 +658,8 @@ function scheduleList() {
     const mode = alarmOf(r);
     const sub = [];
     if (r.isReminder) sub.push('напоминание');
-    if (inner[r.id]) sub.push('внутри блока');
+    // «внутри блока» словами больше не пишем: вложенность видна отступом и
+    // цветной чертой слева — объяснять нарисованное незачем
     if (r.fromFood) sub.push('из питания');
     if (mode !== 'off' && !hasLead(r, 'at')) sub.push(leadsLabel(r));
     // комментарий — первым: это то, что человек написал сам
@@ -640,7 +687,9 @@ function scheduleList() {
           r.isReminder ? ico('bell', '13px', 'wsched-kind') : null,
           h('span', { text: r.title })),
         sub.length ? h('div.wsched-sub', { text: sub.join(' · ') }) : null),
-      mode === 'off' ? null : ico(bellOf(mode).icon, '16px', 'wbell'));
+      // пустой значок вместо null: колонка держит ширину, и строки без
+      // напоминания стоят вровень с остальными
+      mode === 'off' ? h('span') : ico(bellOf(mode).icon, '16px', 'wbell'));
     return row;
   }));
   return wrap;
@@ -3010,8 +3059,8 @@ const fromRuDate = text => {
 };
 
 const FREQ_OF = {
-  Разово: null, Ежедневно: 'daily', Еженедельно: 'weekly',
-  Ежемесячно: 'monthly', Ежегодно: 'yearly',
+  'Разово': null, 'Ежедневно': 'daily', 'По дням недели': 'weekly',
+  'Ежемесячно': 'monthly', 'Ежегодно': 'yearly',
 };
 
 const REPEAT_OF = Object.fromEntries(Object.entries(FREQ_OF).map(([k, v]) => [v, k]));
@@ -3252,6 +3301,67 @@ const SCALES = [1, 1.1];
  * приём пищи, шаблон. Подписи и служат ключом — искать по ним надёжнее, чем
  * заводить каждому редактору свой набор имён.
  */
+/**
+ * Поле плитки времени: смотрится как надпись, по двойному нажатию — ввод.
+ *
+ * Сетка часов быстрее для «примерно в десять», но «в 9:47» ею не набрать, а
+ * с клавиатуры это две секунды. Одиночное нажатие оставлено плитке — оно
+ * переключает, что именно правит сетка; ввод открывается двойным, чтобы одно
+ * другому не мешало.
+ *
+ * Принимает «9:47», «947», «9.47» и «19» — так же, как разбирает время сервер.
+ */
+function timeInput(value, key, onDone) {
+  const input = h('input', {
+    value, readOnly: true, tabIndex: -1, name: `tile-${key}`,
+    title: 'Двойное нажатие — ввести с клавиатуры',
+    ondblclick: e => {
+      const el = e.target;
+      el.readOnly = false;
+      el.tabIndex = 0;
+      el.select();
+    },
+    onblur: e => {
+      const el = e.target;
+      if (el.readOnly) return;
+      el.readOnly = true;
+      el.tabIndex = -1;
+      onDone(el.value);
+    },
+    onkeydown: e => {
+      if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+      if (e.key === 'Escape') { e.target.value = value; e.target.blur(); }
+      // нажатия внутри поля не должны трогать плитку под ним
+      e.stopPropagation();
+    },
+    onclick: e => { if (!e.target.readOnly) e.stopPropagation(); },
+  });
+  return input;
+}
+
+/** «9:47», «947», «9.47», «19» → минуты от полуночи; иначе null. */
+function parseTime(raw) {
+  const s = String(raw ?? '').trim().replace(/[.,]/g, ':');
+  let hh; let mm;
+  const m = /^(\d{1,2}):(\d{1,2})$/.exec(s);
+  if (m) { hh = Number(m[1]); mm = Number(m[2]); }
+  else if (/^\d{1,2}$/.test(s)) { hh = Number(s); mm = 0; }
+  else if (/^\d{3,4}$/.test(s)) { hh = Number(s.slice(0, -2)); mm = Number(s.slice(-2)); }
+  else return null;
+  if (hh > 23 || mm > 59) return null;
+  return hh * 60 + mm;
+}
+
+/** «90», «1:30», «1 ч 30 мин», «2ч» → минуты; иначе null. */
+function parseDur(raw) {
+  const s = String(raw ?? '').trim().toLowerCase();
+  const hm = /^(\d{1,2})\s*(?:ч|:)\s*(\d{1,2})?\s*(?:мин|м)?$/.exec(s);
+  if (hm) return Number(hm[1]) * 60 + Number(hm[2] ?? 0);
+  const only = /^(\d{1,4})\s*(мин|м)?$/.exec(s);
+  if (only) return Number(only[1]);
+  return null;
+}
+
 function paintTiles(start, end) {
   const values = { начало: hhmm(start), длится: durLabel(Math.max(5, end - start)), конец: hhmm(end) };
   for (const tile of document.querySelectorAll('.wmodal .wtile')) {
@@ -3474,7 +3584,22 @@ const BODIES = {
       ['end', 'конец', hhmm(re)],
     ].filter(([k]) => !moment || k === 'start').map(([k, label, value]) => {
       const tile = h('div.wtile', { class: field === k ? 'on' : '', onclick: () => setIn({ rowField: k }) });
-      add(tile, h('span.wtile-cap', { text: label }), h('input', { value, readOnly: true, tabIndex: -1 }));
+      add(tile, h('span.wtile-cap', { text: label }),
+        timeInput(value, k, next => {
+          if (k === 'dur') {
+            const mins = parseDur(next);
+            if (mins !== null) setIn({ rowEnd: rs + Math.min(Math.max(mins, 5), 1440 - rs) });
+            return;
+          }
+          const t = parseTime(next);
+          if (t === null) return;
+          if (k === 'start') {
+            // сдвиг начала тянет конец за собой, сохраняя длительность
+            setIn({ rowStart: t, rowEnd: moment ? state.rowEnd : Math.min(1440, t + dur) });
+          } else {
+            setIn({ rowEnd: Math.max(rs + 5, t) });
+          }
+        }));
       return tile;
     }));
 
@@ -3508,6 +3633,23 @@ const BODIES = {
     const leads = h('div.wwrap.wleads');
     add(leads, ...LEADS.map(l => sheetChip(l.label, state.rowLeads.includes(l.k),
       () => setIn({ rowLeads: toggleLead(state.rowLeads, l.k) }))));
+    /*
+     * Свой срок — сверх готовых. Готовые покрывают почти всё, но «за сорок
+     * минут, потому что дорога» встречается, и задать такое было нечем.
+     * Уже выбранные свои значения показываются рядом обычными чипами.
+     */
+    add(leads, ...state.rowLeads
+      .filter(k => /^\d+$/.test(k) && !LEADS.some(l => l.k === k))
+      .map(k => sheetChip(leadOwnLabel(k), true,
+        () => setIn({ rowLeads: toggleLead(state.rowLeads, k) }))));
+    add(leads, (() => {
+      const b = h('button.wchip-sheet.wchip-add', {
+        type: 'button', title: 'Свой срок', 'aria-label': 'Свой срок',
+        onclick: () => askOwnLead(),
+      });
+      add(b, ico('plus', '14px'));
+      return b;
+    })());
 
     /*
      * Четыре степени в одну строку: они и так короткие, а сеткой два на два
@@ -3546,9 +3688,9 @@ const BODIES = {
         })),
       colorRow(),
       h('div', h('div.wfield-label', { text: 'повтор' }), repeats,
-        state.rowRepeat === 'Еженедельно'
+        state.rowRepeat === 'По дням недели'
           ? h('div', { style: { marginTop: '10px' } }, weekdays,
-            h('div.wclock-cap', { text: 'пусто — в тот же день недели, что и дата', style: { marginTop: '8px' } }))
+            h('div.wclock-cap', { text: 'ничего не отмечено — повторится в тот же день недели, что и дата', style: { marginTop: '8px' } }))
           : null),
       h('div', h('div.wfield-label', { text: 'предупредить · можно несколько' }), leads),
       /*
@@ -3861,19 +4003,32 @@ const BODIES = {
 
   // ── Заметка ──
   note() {
+    /*
+     * «На дату» — сама кнопка с датой, а не переключатель и отдельный чип
+     * рядом. Раньше выбранная дата висела вторым элементом, и после выбора
+     * кнопка «На дату» выглядела нажатой, но мёртвой: непонятно, куда жать,
+     * чтобы дату поменять. Теперь нажатие на неё каждый раз открывает
+     * календарь, а дата написана прямо на ней.
+     */
+    const dated = state.noteDated;
+    const [y, m, d] = String(state.noteDate ?? state.date).split('-').map(Number);
+    const thisYear = Number(String(store.settings?.today ?? state.date).slice(0, 4));
+    const dateText = `${d} ${MONTHS[m - 1]}${y === thisYear ? '' : ` ${y}`}`;
+
     const kinds = h('div.wrow');
-    add(kinds, ...[[false, 'Просто заметка'], [true, 'На дату']].map(([v, label]) =>
-      sheetChip(label, state.noteDated === v, () => setIn({ noteDated: v }))));
-    if (state.noteDated) {
-      const [y, m, d] = String(state.noteDate ?? state.date).split('-').map(Number);
-      // Коротко: «6 августа», год — только чужой. Прежняя подпись с годом и
-      // хвостом «покажется в делах» в ширину телефона не помещалась вовсе.
-      const thisYear = Number(String(store.settings?.today ?? state.date).slice(0, 4));
-      const badge = h('button.wdate-chip', { type: 'button', onclick: () => openCalendar('note') });
-      add(badge, ico('calendar-blank', '15px'),
-        h('span', { text: `${d} ${MONTHS[m - 1]}${y === thisYear ? '' : ` ${y}`}` }));
-      add(kinds, badge);
-    }
+    add(kinds,
+      sheetChip('Просто заметка', !dated, () => setIn({ noteDated: false })),
+      (() => {
+        const b = h('button.wchip-sheet.wchip-date', {
+          type: 'button',
+          class: dated ? 'on' : '',
+          // не выбрано — первое нажатие включает вид и сразу спрашивает дату
+          onclick: () => (dated ? openCalendar('note') : setIn({ noteDated: true })),
+        });
+        add(b, ico('calendar-blank', '14px'),
+          h('span', { text: dated ? `На ${dateText}` : 'На дату' }));
+        return b;
+      })());
 
     return h('div.wstack',
       h('input.winput', {

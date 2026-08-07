@@ -377,6 +377,30 @@ await wait(600);
  * Кнопок «Блок» и «Напоминание» под расписанием на компьютере больше нет:
  * пришитые снизу, они выбивались из колонки. Всё добавляется через «изменить».
  */
+/*
+ * Расписание выглядит одинаково любой день: карточка у каждой строки, рельс
+ * с полоской между точками, место под колокольчик даже там, где его нет.
+ * Раньше день с вложенными блоками был набором серых карточек, а соседний —
+ * голым списком.
+ */
+проба('у каждой строки расписания своя карточка',
+  await js(`(() => { const b = [...document.querySelectorAll('.wsched-body')];
+    if (!b.length) return false;
+    return b.every(x => getComputedStyle(x).backgroundColor !== 'rgba(0, 0, 0, 0)'); })()`));
+проба('точки соединены полоской',
+  await js(`(() => { const m = document.querySelector('.wsched-mark');
+    if (!m) return false;
+    const s = getComputedStyle(m, '::before');
+    return s.content !== 'none' && parseFloat(s.width) > 0; })()`));
+проба('колонка под колокольчик держит ширину и без напоминаний',
+  await js(`(() => { const rows = [...document.querySelectorAll('.wsched-row')];
+    if (rows.length < 2) return false;
+    const cols = rows.map(r => getComputedStyle(r).gridTemplateColumns.split(' ').pop());
+    return new Set(cols).size === 1; })()`),
+  await js(`[...document.querySelectorAll('.wsched-row')].map(r => getComputedStyle(r).gridTemplateColumns.split(' ').pop()).join(' | ')`));
+проба('«внутри блока» словами не пишется',
+  await js(`![...document.querySelectorAll('.wsched-sub')].some(e => e.textContent.includes('внутри блока'))`));
+
 проба('под расписанием нет пришитых кнопок добавления',
   await js(`![...document.querySelectorAll('.wadd')].some(b => b.textContent.includes('Напоминание'))`));
 

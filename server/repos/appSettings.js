@@ -8,9 +8,19 @@
  * умная разбирает длинный текст, голосовая слушает речь — и стоят они
  * по-разному. Одна модель на всё либо дорога там, где не надо, либо
  * слаба там, где надо.
+ *
+ * У распознавания речи вдобавок своё подключение: адрес и ключ. Текст и
+ * whisper не обязаны жить у одного провайдера — текст дешевле взять в
+ * агрегаторе, а речь у того, кто её умеет. Пустой aiVoiceBaseUrl или
+ * пустой aiVoiceApiKey означают «то же, что у текста»: уже настроенные
+ * установки продолжают работать, а заполнять второй раз одно и то же
+ * большинству не нужно.
  */
 
-const AI_KEYS = ['aiBaseUrl', 'aiApiKey', 'aiModel', 'aiSmartModel', 'aiVoiceModel', 'aiEnabled'];
+const AI_KEYS = [
+  'aiBaseUrl', 'aiApiKey', 'aiModel', 'aiSmartModel',
+  'aiVoiceBaseUrl', 'aiVoiceApiKey', 'aiVoiceModel', 'aiEnabled',
+];
 
 /** Значения по умолчанию: пустая конфигурация — это выключенный ИИ. */
 const AI_DEFAULTS = {
@@ -19,6 +29,8 @@ const AI_DEFAULTS = {
   aiApiKey: '',
   aiModel: '',
   aiSmartModel: '',
+  aiVoiceBaseUrl: '',
+  aiVoiceApiKey: '',
   aiVoiceModel: '',
 };
 
@@ -33,6 +45,8 @@ function fromEnv(env) {
     aiApiKey: env.AI_API_KEY || '',
     aiModel: env.AI_MODEL || '',
     aiSmartModel: env.AI_SMART_MODEL || '',
+    aiVoiceBaseUrl: env.AI_VOICE_BASE_URL || '',
+    aiVoiceApiKey: env.AI_VOICE_API_KEY || '',
     aiVoiceModel: env.AI_VOICE_MODEL || '',
     aiEnabled: env.AI_API_KEY ? '1' : '',
   };
@@ -67,6 +81,15 @@ function appSettingsRepo(db, { env = process.env } = {}) {
       // не распознаём: подсунуть текстовую модель звук нельзя.
       smartModel: out.aiSmartModel || out.aiModel,
       voiceModel: out.aiVoiceModel,
+      // Эффективные адрес и ключ распознавания: чего нет своего — берём
+      // от текста. Каждое поле подставляется само по себе, чтобы можно
+      // было сменить только ключ, оставив адрес общим, и наоборот.
+      voiceBaseUrl: out.aiVoiceBaseUrl || out.aiBaseUrl,
+      voiceApiKey: out.aiVoiceApiKey || out.aiApiKey,
+      // Заданное руками — отдельно: по нему админка показывает, где
+      // подстановка, а где настоящее второе подключение.
+      voiceOwnBaseUrl: out.aiVoiceBaseUrl,
+      voiceOwnApiKey: out.aiVoiceApiKey,
     };
   }
 
@@ -86,22 +109,33 @@ function appSettingsRepo(db, { env = process.env } = {}) {
       hasKey: Boolean(c.apiKey),
       keyTail: c.apiKey ? c.apiKey.slice(-4) : '',
       ready: Boolean(c.enabled && c.baseUrl && c.model && c.apiKey),
-      voiceReady: Boolean(c.enabled && c.baseUrl && c.voiceModel && c.apiKey),
+      // Показываем то, куда запросы пойдут на самом деле, — с подстановкой:
+      // иначе при пустых полях админка рисовала бы «не задано» рядом с
+      // работающим распознаванием.
+      voiceBaseUrl: c.voiceBaseUrl,
+      voiceKeySet: Boolean(c.voiceApiKey),
+      voiceKeyTail: c.voiceApiKey ? c.voiceApiKey.slice(-4) : '',
+      voiceOwn: Boolean(c.voiceOwnBaseUrl || c.voiceOwnApiKey),
+      voiceReady: Boolean(c.enabled && c.voiceBaseUrl && c.voiceModel && c.voiceApiKey),
     };
   }
 
   function saveAi(fields) {
-    if (fields.baseUrl !== undefined) set('aiBaseUrl', String(fields.baseUrl).trim().replace(/\/+$/, ''));
+    // Пустой голосовой адрес — не поломка, а возврат к подстановке от текста
+    for (const [field, key] of [['baseUrl', 'aiBaseUrl'], ['voiceBaseUrl', 'aiVoiceBaseUrl']]) {
+      if (fields[field] !== undefined) set(key, String(fields[field] ?? '').trim().replace(/\/+$/, ''));
+    }
     for (const [field, key] of [['model', 'aiModel'], ['smartModel', 'aiSmartModel'], ['voiceModel', 'aiVoiceModel']]) {
       if (fields[field] !== undefined) set(key, String(fields[field] ?? '').trim());
     }
     if (fields.enabled !== undefined) set('aiEnabled', fields.enabled ? '1' : '0');
     // Пустая строка означает «оставить как было»: иначе открытая форма,
     // где ключ не показан, стирала бы его при каждом сохранении.
-    if (typeof fields.apiKey === 'string' && fields.apiKey.trim()) {
-      set('aiApiKey', fields.apiKey.trim());
+    // null — «стереть»; для голосового это ещё и «вернуться к текстовому».
+    for (const [field, key] of [['apiKey', 'aiApiKey'], ['voiceApiKey', 'aiVoiceApiKey']]) {
+      if (typeof fields[field] === 'string' && fields[field].trim()) set(key, fields[field].trim());
+      if (fields[field] === null) set(key, '');
     }
-    if (fields.apiKey === null) set('aiApiKey', '');
     return aiPublic();
   }
 

@@ -1,9 +1,15 @@
 /**
  * Помощник: разбор речи в план дня, причёсывание текста, распознавание.
  *
- * Провайдер один и OpenAI-совместимый: адрес плюс ключ. Так подходят и
- * OpenAI, и AI Tunnel, и DeepSeek, и локальная LM Studio — путь у всех
- * один и тот же.
+ * Провайдер OpenAI-совместимый: адрес плюс ключ. Так подходят и OpenAI,
+ * и AI Tunnel, и DeepSeek, и локальная LM Studio — путь у всех один и
+ * тот же.
+ *
+ * Подключений при этом два: текстовое и голосовое. Речь распознают не все,
+ * и владелец вправе взять текст у одного провайдера, а whisper у другого,
+ * со своим ключом. Пустое голосовое подключение подставляется от текстового
+ * (repos/appSettings), так что для одного провайдера всё как было. Прокси
+ * общие: они про сеть, а не про провайдера.
  *
  * Никакой очереди и никаких работников: обращаемся напрямую и ждём ответ.
  * Замеры (docs/стоимость.md) показали, что десять активных человек стоят
@@ -17,6 +23,8 @@ const { createAiFetch } = require('../lib/aiFetch');
 
 const CHAT_TIMEOUT_MS = 90_000;
 const VOICE_TIMEOUT_MS = 180_000;
+/** Проверка связи ждёт недолго: человек стоит над кнопкой и смотрит. */
+const CHECK_TIMEOUT_MS = 15_000;
 
 /**
  * Длинный текст модель норовит пересказать вместо того, чтобы причесать:
@@ -223,9 +231,14 @@ function aiService(db, { env = process.env, fetchImpl, now = () => Date.now() } 
 
   // ── Речь в текст ───────────────────────────────────────────
 
+  /**
+   * Речь уходит на голосовой адрес со своим ключом. Если своих нет, там
+   * лежат текстовые — подстановка живёт в aiConfig(), а здесь просто
+   * эффективные значения.
+   */
   async function transcribe({ userId, audio, filename = 'zapis.webm', language = 'ru' }) {
     const cfg = settings.aiConfig();
-    if (!cfg.enabled || !cfg.baseUrl || !cfg.apiKey) return { ok: false, error: 'Помощник не подключён' };
+    if (!cfg.enabled || !cfg.voiceBaseUrl || !cfg.voiceApiKey) return { ok: false, error: 'Помощник не подключён' };
     if (!cfg.voiceModel) return { ok: false, error: 'Не выбрана модель распознавания' };
 
     const form = new FormData();
@@ -237,9 +250,9 @@ function aiService(db, { env = process.env, fetchImpl, now = () => Date.now() } 
 
     const started = now();
     try {
-      const res = await doFetch(`${cfg.baseUrl}/audio/transcriptions`, {
+      const res = await doFetch(`${cfg.voiceBaseUrl}/audio/transcriptions`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${cfg.apiKey}` },
+        headers: { Authorization: `Bearer ${cfg.voiceApiKey}` },
         body: form,
         signal: AbortSignal.timeout(VOICE_TIMEOUT_MS),
       });
@@ -271,8 +284,62 @@ function aiService(db, { env = process.env, fetchImpl, now = () => Date.now() } 
     }
   }
 
+  /**
+   * Проверка голосового подключения.
+   *
+   * Настоящей расшифровки здесь нет нарочно: распознавание тарифицируется
+   * по секундам, а многие провайдеры округляют вверх, и кнопка «проверить»
+   * тратила бы деньги при каждом нажатии. Спрашиваем список моделей — это
+   * бесплатно и отвечает на оба вопроса сразу: адрес верный и ключ принят.
+   * Идём тем же doFetch, что и настоящие запросы, — через те же прокси.
+   */
+  async function checkVoice() {
+    const cfg = settings.aiConfig();
+    if (!cfg.enabled || !cfg.voiceBaseUrl || !cfg.voiceApiKey) return { ok: false, error: 'Помощник не подключён' };
+    if (!cfg.voiceModel) return { ok: false, error: 'Не выбрана модель распознавания' };
+
+    const started = now();
+    try {
+      const res = await doFetch(`${cfg.voiceBaseUrl}/models`, {
+        method: 'GET',
+        headers: { Accept: 'application/json', Authorization: `Bearer ${cfg.voiceApiKey}` },
+        signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
+      });
+      const ms = now() - started;
+      const body = await res.json().catch(() => null);
+
+      // Списка моделей нет у всех подряд: у самодельных шлюзов whisper за
+      // /models может не быть ничего. Признаваться в этом честнее, чем
+      // объявлять живое подключение сломанным или гонять платную расшифровку.
+      if (res.status === 404 || res.status === 405) {
+        return {
+          ok: false, ms,
+          error: 'Провайдер не отдаёт список моделей — проверить голосовое подключение, не потратив денег, нечем. Просто надиктуйте что-нибудь',
+        };
+      }
+      if (!res.ok || body?.error) return { ok: false, ms, error: remember(reason(res.status, body)) };
+
+      const ids = Array.isArray(body?.data) ? body.data.map(m => m?.id) : [];
+      return {
+        ok: true, ms, model: cfg.voiceModel,
+        // Список пришёл, а модели в нём нет — ключ принят, но расшифровка
+        // всё равно не заработает. Пусть владелец узнает об этом сейчас.
+        ...(ids.length && !ids.includes(cfg.voiceModel)
+          ? { warning: `Ключ принят, но модели «${cfg.voiceModel}» в списке провайдера нет` }
+          : {}),
+      };
+    } catch (e) {
+      return {
+        ok: false, ms: now() - started,
+        error: remember(e.name === 'TimeoutError'
+          ? 'Голосовой адрес не ответил за 15 секунд'
+          : 'Не удалось соединиться с голосовым адресом'),
+      };
+    }
+  }
+
   return {
-    status, chat, parse, improve, transcribe, usage, settings, SYSTEM,
+    status, chat, parse, improve, transcribe, checkVoice, usage, settings, SYSTEM,
     lastError: () => lastError,
   };
 }

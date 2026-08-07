@@ -49,6 +49,45 @@ async function connectAi(url, cookie) {
   });
 }
 
+/**
+ * Провайдер, который запоминает, куда и с каким ключом ходили. Для речи
+ * важен не ответ, а адресат: у неё своё подключение, и подмена адреса или
+ * ключа снаружи никак не видна — только по запросу.
+ */
+function recordingProvider({ noModels = false } = {}) {
+  const calls = [];
+  const impl = async (url, init = {}) => {
+    calls.push({ url, auth: init.headers?.Authorization ?? null });
+
+    if (url.endsWith('/audio/transcriptions')) {
+      return { ok: true, status: 200, json: async () => ({ text: 'услышано' }) };
+    }
+    if (url.endsWith('/models')) {
+      // Самодельный шлюз whisper вполне может не уметь список моделей
+      return noModels
+        ? { ok: false, status: 404, json: async () => ({}) }
+        : { ok: true, status: 200, json: async () => ({ data: [{ id: 'whisper-1' }] }) };
+    }
+    return {
+      ok: true, status: 200,
+      json: async () => ({
+        choices: [{ message: { content: '{"items":[]}' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      }),
+    };
+  };
+  impl.calls = calls;
+  return impl;
+}
+
+/** Надиктовать серверу: расшифровка ходит формой, а не JSON. */
+async function sendAudio(url, cookie) {
+  const form = new FormData();
+  form.append('file', new Blob([Buffer.from('поддельный звук')]), 'zapis.webm');
+  const res = await fetch(`${url}/api/v1/ai/transcribe`, { method: 'POST', headers: { cookie }, body: form });
+  return { status: res.status, body: await res.json() };
+}
+
 // ── Вход ─────────────────────────────────────────────────────
 
 test('пароль по умолчанию пускает, но требует смены', async () => {
@@ -431,6 +470,158 @@ test('проверка связи отвечает ok и временем, а б
     const warm = await api(s.url, admin.cookie, 'POST', '/api/admin/ai/check', {});
     assert.strictEqual(warm.ok, true);
     assert.ok(warm.latencyMs >= 0);
+  } finally { await s.close(); }
+});
+
+// ── Своё подключение для распознавания речи ──────────────────
+
+/*
+ * Текст и речь не обязаны жить у одного провайдера: текст дешевле взять
+ * в агрегаторе, а whisper — там, где он есть. Поэтому у распознавания
+ * свои адрес и ключ, а пустые означают «то же, что у текста» — иначе
+ * обновление сломало бы все уже настроенные установки.
+ */
+
+const VOICE_KEY = 'sk-whisper-9876';
+
+test('без своего адреса и ключа речь уходит туда же, куда текст', async () => {
+  const provider = recordingProvider();
+  const s = await startTestServer({ fetchImpl: provider });
+  try {
+    const userCookie = await makeUser(s.url);
+    const admin = await adminLogin(s.url);
+    await connectAi(s.url, admin.cookie);
+    await api(s.url, admin.cookie, 'PATCH', '/api/admin/ai', { voiceModel: 'whisper-1' });
+
+    const overview = await getJson(s.url, admin.cookie, '/api/admin/ai');
+    assert.strictEqual(overview.voiceOwn, false, 'своего подключения не задано');
+    assert.strictEqual(overview.voiceBaseUrl, 'https://provider.test/v1', 'показываем подставленный адрес');
+    assert.strictEqual(overview.voiceKeySet, true);
+    assert.strictEqual(overview.voiceKeyTail, 'test', 'хвост текстового ключа');
+
+    const heard = await sendAudio(s.url, userCookie);
+    assert.strictEqual(heard.status, 200);
+    assert.strictEqual(heard.body.text, 'услышано');
+    const call = provider.calls.at(-1);
+    assert.strictEqual(call.url, 'https://provider.test/v1/audio/transcriptions');
+    assert.strictEqual(call.auth, 'Bearer sk-panel-test');
+  } finally { await s.close(); }
+});
+
+test('свои адрес и ключ распознавания сохраняются и не трогают текст', async () => {
+  const provider = recordingProvider();
+  const s = await startTestServer({ fetchImpl: provider });
+  try {
+    const userCookie = await makeUser(s.url);
+    const admin = await adminLogin(s.url);
+    await connectAi(s.url, admin.cookie);
+
+    const saved = await api(s.url, admin.cookie, 'PATCH', '/api/admin/ai', {
+      voiceBaseUrl: 'https://whisper.test/v1', voiceApiKey: VOICE_KEY, voiceModel: 'whisper-1',
+    });
+    assert.strictEqual(saved.voiceOwn, true);
+    assert.strictEqual(saved.voiceBaseUrl, 'https://whisper.test/v1');
+    assert.strictEqual(saved.voiceKeyTail, '9876');
+    assert.ok(!JSON.stringify(saved).includes(VOICE_KEY), 'голосовой ключ наружу не отдаётся');
+
+    const overview = await getJson(s.url, admin.cookie, '/api/admin/ai');
+    assert.strictEqual(overview.voiceOwn, true);
+    assert.strictEqual(overview.voiceKeyTail, '9876');
+    assert.strictEqual(overview.keyTail, 'test', 'текстовое подключение не задето');
+    assert.ok(!JSON.stringify(overview).includes(VOICE_KEY));
+
+    await sendAudio(s.url, userCookie);
+    const voiceCall = provider.calls.at(-1);
+    assert.strictEqual(voiceCall.url, 'https://whisper.test/v1/audio/transcriptions');
+    assert.strictEqual(voiceCall.auth, `Bearer ${VOICE_KEY}`);
+
+    // Текст остался у своего провайдера со своим ключом
+    await api(s.url, userCookie, 'POST', '/api/v1/ai/parse', { text: 'дела' });
+    const textCall = provider.calls.at(-1);
+    assert.strictEqual(textCall.url, 'https://provider.test/v1/chat/completions');
+    assert.strictEqual(textCall.auth, 'Bearer sk-panel-test');
+  } finally { await s.close(); }
+});
+
+test('пустой голосовой ключ не стирает сохранённый, null возвращает подстановку', async () => {
+  const provider = recordingProvider();
+  const s = await startTestServer({ fetchImpl: provider });
+  try {
+    const userCookie = await makeUser(s.url);
+    const admin = await adminLogin(s.url);
+    await connectAi(s.url, admin.cookie);
+    await api(s.url, admin.cookie, 'PATCH', '/api/admin/ai', {
+      voiceBaseUrl: 'https://whisper.test/v1', voiceApiKey: VOICE_KEY, voiceModel: 'whisper-1',
+    });
+
+    // Форма ключа не показывает: сохранение с пустым полем не должно его затирать
+    const kept = await api(s.url, admin.cookie, 'PATCH', '/api/admin/ai',
+      { voiceApiKey: '', voiceModel: 'whisper-large' });
+    assert.strictEqual(kept.voiceKeySet, true);
+    assert.strictEqual(kept.voiceKeyTail, '9876', 'ключ должен был остаться');
+    assert.strictEqual(kept.voiceModel, 'whisper-large');
+
+    const cleared = await api(s.url, admin.cookie, 'PATCH', '/api/admin/ai',
+      { voiceApiKey: null, voiceBaseUrl: '' });
+    assert.strictEqual(cleared.voiceOwn, false, 'стёртое подключение — это возврат к текстовому');
+    assert.strictEqual(cleared.voiceBaseUrl, 'https://provider.test/v1');
+    assert.strictEqual(cleared.voiceKeyTail, 'test');
+    assert.strictEqual(cleared.voiceReady, true, 'подстановка — рабочее состояние, а не поломка');
+
+    // И речь снова идёт к текстовому провайдеру, а не в никуда
+    const heard = await sendAudio(s.url, userCookie);
+    assert.strictEqual(heard.status, 200);
+    assert.strictEqual(provider.calls.at(-1).url, 'https://provider.test/v1/audio/transcriptions');
+    assert.strictEqual(provider.calls.at(-1).auth, 'Bearer sk-panel-test');
+  } finally { await s.close(); }
+});
+
+test('проверка связи умеет голосовое подключение и не тратит на это денег', async () => {
+  const provider = recordingProvider();
+  const s = await startTestServer({ fetchImpl: provider });
+  try {
+    const admin = await adminLogin(s.url);
+    await connectAi(s.url, admin.cookie);
+    await api(s.url, admin.cookie, 'PATCH', '/api/admin/ai', {
+      voiceBaseUrl: 'https://whisper.test/v1', voiceApiKey: VOICE_KEY, voiceModel: 'whisper-1',
+    });
+
+    const r = await api(s.url, admin.cookie, 'POST', '/api/admin/ai/check', { what: 'voice' });
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.what, 'voice');
+    assert.strictEqual(provider.calls.at(-1).url, 'https://whisper.test/v1/models');
+    assert.strictEqual(provider.calls.at(-1).auth, `Bearer ${VOICE_KEY}`);
+    assert.ok(!provider.calls.some(c => c.url.includes('/audio/')), 'расшифровка стоит денег — её тут быть не должно');
+
+    // Ключ принят, а модели в списке нет: узнать об этом лучше сейчас
+    await api(s.url, admin.cookie, 'PATCH', '/api/admin/ai', { voiceModel: 'whisper-tridcat' });
+    const odd = await api(s.url, admin.cookie, 'POST', '/api/admin/ai/check', { what: 'voice' });
+    assert.strictEqual(odd.ok, true);
+    assert.match(odd.warning, /в списке провайдера нет/);
+
+    // По умолчанию проверяется текст — как было до появления второго подключения
+    const text = await api(s.url, admin.cookie, 'POST', '/api/admin/ai/check', {});
+    assert.strictEqual(text.ok, true);
+    assert.strictEqual(text.what, 'text');
+    assert.strictEqual(provider.calls.at(-1).url, 'https://provider.test/v1/chat/completions');
+
+    const bad = await api(s.url, admin.cookie, 'POST', '/api/admin/ai/check', { what: 'kartinki' }, {}, true);
+    assert.strictEqual(bad.status, 400);
+  } finally { await s.close(); }
+});
+
+test('провайдер без списка моделей: проверка речи признаётся, а не врёт', async () => {
+  const s = await startTestServer({ fetchImpl: recordingProvider({ noModels: true }) });
+  try {
+    const admin = await adminLogin(s.url);
+    await connectAi(s.url, admin.cookie);
+    await api(s.url, admin.cookie, 'PATCH', '/api/admin/ai', {
+      voiceBaseUrl: 'https://whisper.test/v1', voiceApiKey: VOICE_KEY, voiceModel: 'whisper-1',
+    });
+
+    const r = await api(s.url, admin.cookie, 'POST', '/api/admin/ai/check', { what: 'voice' });
+    assert.strictEqual(r.ok, false);
+    assert.match(r.error, /список моделей/);
   } finally { await s.close(); }
 });
 

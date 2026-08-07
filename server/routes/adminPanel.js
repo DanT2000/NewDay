@@ -255,6 +255,16 @@ module.exports = function adminPanelRouter({ db, config, ai, access, push, clean
       model: c.model,
       smartModel: c.smartModel,
       voiceModel: c.voiceModel,
+      // Голосовое подключение — с подстановкой от текстового: показываем
+      // то, куда запросы уйдут на самом деле, а voiceOwn говорит, своё это
+      // или отражение текстового
+      voiceBaseUrl: c.voiceBaseUrl,
+      voiceKeySet: c.voiceKeySet,
+      voiceKeyTail: c.voiceKeyTail,
+      voiceOwn: c.voiceOwn,
+      // Рядом с ready, чтобы страница не пересчитывала готовность речи сама:
+      // здешний enabled — это рубильник панели, а не флаг подключения
+      voiceReady: c.voiceReady,
       proxies: proxies.list().map(publicProxy),
       ...(ai.lastError() ? { lastError: ai.lastError() } : {}),
     };
@@ -265,20 +275,25 @@ module.exports = function adminPanelRouter({ db, config, ai, access, push, clean
   router.patch('/ai', wrap((req, res) => {
     const body = req.body || {};
     const patch = {};
-    if (body.baseUrl !== undefined) {
-      const url = v.str(body.baseUrl, { max: 300, field: 'адрес' });
+    // Пустой voiceBaseUrl — законное значение: «распознавать там же, где текст»
+    for (const [field, name] of [['baseUrl', 'адрес'], ['voiceBaseUrl', 'адрес распознавания']]) {
+      if (body[field] === undefined) continue;
+      const url = v.str(body[field], { max: 300, field: name });
       if (url && !/^https?:\/\//i.test(url)) {
         throw new ApiError(400, 'BAD_URL', 'Адрес должен начинаться с http:// или https://');
       }
-      patch.baseUrl = url;
+      patch[field] = url;
     }
     for (const [field, name] of [['model', 'модель'], ['smartModel', 'умная модель'], ['voiceModel', 'модель распознавания']]) {
       if (body[field] !== undefined) patch[field] = v.str(body[field], { max: 120, field: name });
     }
     if (body.enabled !== undefined) patch.enabled = Boolean(body.enabled);
-    // Как и в /api/v1/admin/ai: пустая строка — «не менять», null — «стереть»
-    if (body.apiKey === null) patch.apiKey = null;
-    else if (typeof body.apiKey === 'string') patch.apiKey = body.apiKey;
+    // Как и в /api/v1/admin/ai: пустая строка — «не менять», null — «стереть».
+    // Стёртый голосовой ключ возвращает подстановку от текстового.
+    for (const field of ['apiKey', 'voiceApiKey']) {
+      if (body[field] === null) patch[field] = null;
+      else if (typeof body[field] === 'string') patch[field] = body[field];
+    }
 
     settings.saveAi(patch);
     res.json(aiOverview());
@@ -314,17 +329,24 @@ module.exports = function adminPanelRouter({ db, config, ai, access, push, clean
    * Живой пинг: маленький настоящий запрос к модели тем же путём, что и
    * рабочие, — через те же прокси. Проверка списком моделей (v1) отвечает
    * «ключ принят», а эта — «модель правда отвечает».
+   *
+   * what: 'voice' проверяет второе подключение, голосовое. Там пинг другой —
+   * список моделей, а не расшифровка: секунда звука стоит денег, и кнопка
+   * не должна их тратить. Подробности — в aiService.checkVoice.
    */
-  router.post('/ai/check', wrap(async (_req, res) => {
-    const r = await ai.chat({
-      userId: null,
-      kind: 'check',
-      messages: [{ role: 'user', content: 'Ответь одним словом: работаешь?' }],
-      maxTokens: 20,
-    });
+  router.post('/ai/check', wrap(async (req, res) => {
+    const what = v.oneOf(req.body?.what, ['text', 'voice'], { field: 'что проверяем', fallback: 'text' });
+    const r = what === 'voice'
+      ? await ai.checkVoice()
+      : await ai.chat({
+        userId: null,
+        kind: 'check',
+        messages: [{ role: 'user', content: 'Ответь одним словом: работаешь?' }],
+        maxTokens: 20,
+      });
     res.json(r.ok
-      ? { ok: true, latencyMs: r.ms }
-      : { ok: false, error: r.error, ...(r.ms ? { latencyMs: r.ms } : {}) });
+      ? { ok: true, what, latencyMs: r.ms, ...(r.warning ? { warning: r.warning } : {}) }
+      : { ok: false, what, error: r.error, ...(r.ms ? { latencyMs: r.ms } : {}) });
   }));
 
   // ── Статистика ─────────────────────────────────────────────

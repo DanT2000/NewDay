@@ -36,12 +36,15 @@ module.exports = function adminRouter({ db, config, ai }) {
     const body = req.body || {};
     const patch = {};
 
-    if (body.baseUrl !== undefined) {
-      const url = v.str(body.baseUrl, { max: 300, field: 'адрес' });
+    // Адреса два: текстовый и голосовой. Пустой голосовой — «речь туда же,
+    // куда текст»: подстановка живёт в repos/appSettings
+    for (const [field, name] of [['baseUrl', 'адрес'], ['voiceBaseUrl', 'адрес распознавания']]) {
+      if (body[field] === undefined) continue;
+      const url = v.str(body[field], { max: 300, field: name });
       if (url && !/^https?:\/\//i.test(url)) {
         throw new ApiError(400, 'BAD_URL', 'Адрес должен начинаться с http:// или https://');
       }
-      patch.baseUrl = url;
+      patch[field] = url;
     }
     // Моделей три: быстрая для фраз, умная для длинных текстов, голосовая
     // для речи. Одна на всё либо дорога, либо слаба — замеры в docs/стоимость.md
@@ -49,9 +52,12 @@ module.exports = function adminRouter({ db, config, ai }) {
       if (body[field] !== undefined) patch[field] = v.str(body[field], { max: 120, field: name });
     }
     if (body.enabled !== undefined) patch.enabled = Boolean(body.enabled);
-    // null — «удалить ключ», пустая строка — «не менять»
-    if (body.apiKey === null) patch.apiKey = null;
-    else if (typeof body.apiKey === 'string') patch.apiKey = body.apiKey;
+    // null — «удалить ключ», пустая строка — «не менять».
+    // Удалённый голосовой ключ возвращает подстановку от текстового.
+    for (const field of ['apiKey', 'voiceApiKey']) {
+      if (body[field] === null) patch[field] = null;
+      else if (typeof body[field] === 'string') patch[field] = body[field];
+    }
 
     res.json(settings.saveAi(patch));
   }));

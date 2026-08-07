@@ -316,6 +316,8 @@
 .wchip-sheet { background: var(--raise); }
 .wchip-sheet.on { background: var(--accent); color: #fff; }
 .wchip-flex { flex: 1; padding: 0; }
+/* «плюс» к срокам: та же плитка, только под значок */
+.wchip-add { display: inline-flex; align-items: center; justify-content: center; padding: 0 12px; }
 
 .wseg { display: flex; gap: 3px; padding: 3px; border-radius: 11px; background: var(--surface); flex: none; }
 .wseg button {
@@ -434,6 +436,11 @@ select.winput { appearance: auto; cursor: pointer; }
 .wtile input {
   width: 100%; border: 0; background: transparent; outline: none; margin-top: 6px;
   font: 500 20px/1 var(--mono); color: var(--text); padding: 0;
+}
+/* Поле в режиме ввода: видно, что печатать можно прямо здесь */
+.wtile input:not([readonly]) {
+  cursor: text;
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 .wtile.on input { color: var(--accent); }
 
@@ -569,9 +576,16 @@ select.winput { appearance: auto; cursor: pointer; }
  * сжимала время, а название рядом вылезало из строки. `auto` даёт времени
  * ровно столько, сколько ему нужно, при любом масштабе.
  */
+/*
+ * Последняя колонка — твёрдые 18 пикселей, а не auto.
+ *
+ * Колокольчик есть не у каждой строки, и на auto колонка схлопывалась: у дня
+ * с напоминаниями названия стояли левее, чем у дня без них, и два соседних
+ * дня выглядели по-разному свёрстанными. Место под значок держим всегда.
+ */
 .wsched-row {
   --pin: var(--accent);
-  display: grid; grid-template-columns: auto 20px minmax(0, 1fr) auto;
+  display: grid; grid-template-columns: auto 20px minmax(0, 1fr) 18px;
   align-items: center; gap: 6px; padding: 2px 12px; cursor: pointer;
   border: 0; background: transparent; color: inherit; width: 100%; text-align: left;
 }
@@ -579,10 +593,31 @@ select.winput { appearance: auto; cursor: pointer; }
 .wsched-time { font: 500 13px/1 var(--mono); white-space: nowrap; color: var(--dim); }
 .wsched-row.past .wsched-time { color: var(--faint); }
 .wsched-row.now .wsched-time { color: var(--accent); }
-.wsched-mark { display: flex; justify-content: center; }
+
+/*
+ * Рельс: точки соединены полоской.
+ *
+ * Без неё строки висели в пустоте отдельными островками. Полоска идёт на всю
+ * высоту строки, поэтому у соседних строк концы стыкуются в непрерывную
+ * линию; у первой и последней она обрезана до точки, чтобы день не начинался
+ * и не заканчивался обрывком. Цвет — акцентный: рельс принадлежит дню.
+ */
+.wsched-mark {
+  display: flex; justify-content: center; align-items: center;
+  position: relative; align-self: stretch;
+}
+.wsched-mark::before {
+  content: ''; position: absolute; left: 50%; top: 0; bottom: 0;
+  width: 2px; margin-left: -1px;
+  background: color-mix(in srgb, var(--pin) 30%, transparent);
+}
+.wsched > .wsched-row:first-child .wsched-mark::before { top: 50%; }
+.wsched > .wsched-row:last-child .wsched-mark::before { bottom: 50%; }
+.wsched-row.past .wsched-mark::before { background: var(--line); }
 .wsched-dot {
   width: 10px; height: 10px; border-radius: 50%; display: block;
   background: var(--bg); border: 1px solid var(--dim);
+  position: relative; z-index: 1;
 }
 .wsched-row.past .wsched-dot { width: 10px; height: 10px; background: var(--faint); border: none; }
 .wsched-row.now .wsched-dot {
@@ -592,14 +627,34 @@ select.winput { appearance: auto; cursor: pointer; }
 .wsched-row.inner .wsched-dot {
   width: 8px; height: 8px; background: var(--surface); border: 2px solid var(--pin);
 }
-.wsched-body { min-width: 0; padding: 10px 12px; }
-/* Блок, внутри которого лежит другой: у родителя скруглён верх, у вложенного низ */
-.wsched-row.parent .wsched-body { background: var(--raise); border-radius: 12px 12px 0 0; padding: 10px 12px 8px; }
-.wsched-row.inner .wsched-body {
-  background: var(--raise); border-radius: 0 0 12px 12px;
-  padding: 9px 12px 10px 18px; margin: 0 0 6px;
-  box-shadow: inset 12px 0 0 -10px var(--accent);
+/*
+ * Подложка у каждой строки, а не только у вложенных.
+ *
+ * Раньше фон появлялся лишь там, где блоки вкладывались друг в друга — и один
+ * день выглядел набором серых карточек, а соседний голым списком. Один вид на
+ * все дни: карточка есть всегда, вложенность показана иначе.
+ */
+.wsched-body {
+  min-width: 0; padding: 10px 12px; border-radius: 12px;
+  background: var(--raise);
 }
+.wsched-row.past .wsched-body { background: color-mix(in srgb, var(--raise) 55%, transparent); }
+
+/*
+ * Вложенность — отступом и полосой, а не подписью «внутри блока».
+ *
+ * Что блок лежит внутри другого, видно по сдвигу и цветной черте слева;
+ * говорить об этом словами значит объяснять то, что и так нарисовано.
+ * Родитель снизу не скруглён, вложенный сверху — вместе они читаются одной
+ * фигурой, а последний вложенный закрывает её скруглением.
+ */
+.wsched-row.parent .wsched-body { border-radius: 12px 12px 4px 4px; padding-bottom: 8px; }
+.wsched-row.inner .wsched-body {
+  border-radius: 4px 4px 12px 12px;
+  padding: 9px 12px 10px 16px; margin-left: 14px;
+  box-shadow: inset 3px 0 0 var(--pin);
+}
+.wsched-row.inner + .wsched-row.inner .wsched-body { border-radius: 4px; }
 .wsched-title {
   font: 400 15px/1.3 var(--ui); color: var(--text);
   display: flex; align-items: center; gap: 7px; min-width: 0;
@@ -974,8 +1029,23 @@ select.winput { appearance: auto; cursor: pointer; }
 }
 .wrow-link:hover { background: var(--raise); }
 .wrow-link > i:first-child { color: var(--dim); font-size: 17px; }
-.wrow-link > span:nth-of-type(1) { flex: 1; font: 400 15px/1 var(--ui); }
-.wrow-link-val { font: 400 13px/1 var(--ui); color: var(--faint); }
+/*
+ * Название строки не переносится и не рвётся по буквам.
+ *
+ * Общее правило переноса (hyphens/overflow-wrap на .wroot) спасает длинные
+ * слова в тексте, но в узкой колонке настроек оно рвало «Данные» на три
+ * строки — по букве в каждой. Название держим целым, а сжимается пояснение
+ * справа: оно второстепенно, и многоточие в нём читается нормально.
+ */
+.wrow-link > span:nth-of-type(1) {
+  flex: none; font: 400 15px/1 var(--ui);
+  white-space: nowrap; overflow-wrap: normal; hyphens: none;
+}
+.wrow-link-val {
+  flex: 1; min-width: 0; text-align: right;
+  font: 400 13px/1 var(--ui); color: var(--faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
 .wdev { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 12px; background: var(--raise); }
 .wdev > i:first-child { color: var(--dim); font-size: 17px; }
@@ -1543,9 +1613,14 @@ select.winput { appearance: auto; cursor: pointer; }
 
 /* ── Настройки на компьютере: список слева, раздел справа ──── */
 
+/*
+ * Ширина по содержимому, а не во весь экран: раздел настроек — это список
+ * строк, и растянутый на два метра он заставляет вести глаз через пустоту.
+ * 960 — та же мера, что у прежней двухколоночной раскладки.
+ */
 .wset-cols {
-  display: grid; grid-template-columns: 300px minmax(0, 1fr);
-  gap: 18px; align-items: start;
+  display: grid; grid-template-columns: 290px minmax(0, 1fr);
+  gap: 18px; align-items: start; max-width: 960px;
 }
 .wset-cols .wrow-link.on {
   color: var(--accent);
@@ -1637,3 +1712,6 @@ select.winput { appearance: auto; cursor: pointer; }
 
   @page { size: A4 portrait; margin: 12mm 12mm 10mm; }
 }
+
+/* Чип «на дату» в заметке: значок и дата на одной кнопке */
+.wchip-date { display: inline-flex; align-items: center; gap: 6px; }
