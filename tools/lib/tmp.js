@@ -77,6 +77,19 @@ function hardRemove(dir) {
       if (empty) { try { fs.rmSync(empty, { recursive: true, force: true }); } catch { /* и он подождёт уборки */ } }
     }
   }
+
+  /*
+   * Последний рубеж: сам каталог, уже пустой.
+   *
+   * Edge отпускает описатель каталога позже, чем файлы в нём, и один раз это
+   * пережило все встроенные повторы — от профиля осталась пустая папка. Ждём
+   * ещё до двух секунд: пустой каталог удаляется мгновенно, так что цена этих
+   * попыток — ноль в обычном случае.
+   */
+  for (let i = 0; i < 3 && fs.existsSync(dir); i += 1) {
+    sleepSync(700);
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* следующая попытка */ }
+  }
   return !fs.existsSync(dir);
 }
 
