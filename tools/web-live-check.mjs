@@ -123,6 +123,27 @@ await rpc(ws, 'Page.navigate', { url: `${BASE}/web.html` });
 проба('экран поднялся', await waitFor('Boolean(document.querySelector(".wside"))'));
 await wait(700);
 
+/*
+ * Стенд засеивает день при запуске — и только тот, который был тогда.
+ *
+ * Стенд, поднятый вчера, наутро отдаёт пустой день: расписания нет, задач нет,
+ * и проверки начинают падать в самых неожиданных местах — одна валилась на
+ * «Cannot read properties of undefined (reading 'click')», обвиняя работающий
+ * код. Говорим прямо и уходим, а не тратим прогон.
+ */
+{
+  const строк = await js(`fetch('/api/v1/days/${DAY}/full').then(r => r.json())
+    .then(d => (d.schedule || []).length)`, true);
+  if (!строк) {
+    console.error(`\nСТЕНД: на ${DAY} в базе стенда ничего нет — он засеян на другую дату.`);
+    console.error('Перезапустите стенд: он засеивает день при старте.');
+    console.error('  node tools/dev-preview.js');
+    proc.kill();
+    await tmp.release(profile);
+    process.exit(2);
+  }
+}
+
 // ── Читает настоящий день ──
 const rows = await js(`[...document.querySelectorAll('.wsched-title')].map(e => e.textContent)`);
 проба('расписание пришло с сервера', rows.length > 0, `${rows.length} строк: ${rows.slice(0, 3).join(', ')}`);

@@ -110,23 +110,23 @@ npm install
 npx cap sync android                   # переносит public/ в проект Android
 
 cd android
-NEWDAY_VERSION_NAME=1.0.8 ./gradlew bundlePlayRelease      # AAB для Google Play
-NEWDAY_VERSION_NAME=1.0.8 ./gradlew assembleRustoreRelease # APK для RuStore и сайта
+NEWDAY_VERSION_NAME=1.0.8 ./gradlew bundleRelease      # AAB для Google Play
+NEWDAY_VERSION_NAME=1.0.8 ./gradlew assembleRelease # APK для RuStore и сайта
 ```
 
 В PowerShell переменная задаётся иначе:
 
 ```powershell
 $env:NEWDAY_VERSION_NAME = '1.0.8'
-cd android; ./gradlew bundlePlayRelease assembleRustoreRelease
+cd android; ./gradlew bundleRelease assembleRelease
 ```
 
 Готовые файлы:
 
 | Куда | Файл |
 |---|---|
-| Google Play | `android/app/build/outputs/bundle/playRelease/app-play-release.aab` |
-| RuStore и сайт | `android/app/build/outputs/apk/rustore/release/app-rustore-release.apk` |
+| Google Play | `android/app/build/outputs/bundle/release/app-release.aab` |
+| RuStore и сайт | `android/app/build/outputs/apk/release/app-release.apk` |
 
 `versionCode` считается из версии сам: `1.0.8` → `10008`. Задавать руками не
 нужно, но можно — `NEWDAY_VERSION_CODE`. Номер обязан расти: магазин не примет
@@ -146,7 +146,7 @@ NEWDAY_KEYSTORE, NEWDAY_KEYSTORE_PASSWORD, NEWDAY_KEY_ALIAS, NEWDAY_KEY_PASSWORD
 
 ```bash
 BT=$(ls -d "$LOCALAPPDATA/Android/Sdk/build-tools"/* | sort -V | tail -1)
-"$BT/apksigner.bat" verify --print-certs android/app/build/outputs/apk/rustore/release/app-rustore-release.apk
+"$BT/apksigner.bat" verify --print-certs android/app/build/outputs/apk/release/app-release.apk
 # должно быть: CN=NewDay, O=AppsWire, C=RU
 # «CN=Android Debug» — ключ не подхватился, в магазин загружать нельзя
 ```
@@ -182,7 +182,7 @@ Google Play запрещает приложениям обновлять себ�
 
 ```bash
 BT=$(ls -d "$LOCALAPPDATA/Android/Sdk/build-tools"/* | sort -V | tail -1)
-"$BT/aapt.exe" dump permissions android/app/build/outputs/apk/play/release/app-play-release.apk | grep INSTALL_PACKAGES
+"$BT/aapt.exe" dump permissions android/app/build/outputs/apk/release/app-release.apk | grep INSTALL_PACKAGES
 # ничего не должно найтись
 ```
 
@@ -193,7 +193,7 @@ BT=$(ls -d "$LOCALAPPDATA/Android/Sdk/build-tools"/* | sort -V | tail -1)
 Всё ниже — то, чего нет в коде и что консоль спросит.
 
 **Загрузка.** Тестирование → Закрытое (или Production) → создать релиз →
-загрузить `app-play-release.aab`. Про ключ подписи — пункт 4 в начале файла:
+загрузить `app-release.aab`. Про ключ подписи — пункт 4 в начале файла:
 это решается **до** первого выпуска и потом не отматывается.
 
 **Декларации разрешений** — консоль спросит по каждому:
@@ -232,7 +232,7 @@ BT=$(ls -d "$LOCALAPPDATA/Android/Sdk/build-tools"/* | sort -V | tail -1)
 
 ## Что заполнить руками в RuStore
 
-**Загрузка.** Приложения → создать → загрузить `app-rustore-release.apk` —
+**Загрузка.** Приложения → создать → загрузить `app-release.apk` —
 именно APK, а не AAB. APK доходит до людей тем же файлом и с нашей подписью,
 поэтому обновляет сборку с сайта. AAB магазин собрал бы в APK сам и подписал
 своим ключом: появилась бы третья линия обновлений, не совместимая ни с сайтом,
@@ -250,7 +250,7 @@ BT=$(ls -d "$LOCALAPPDATA/Android/Sdk/build-tools"/* | sort -V | tail -1)
 
 **Про самообновление** предупреждать не нужно: RuStore это допускает. Но если
 захотите, чтобы обновления шли только через магазин, соберите для RuStore тот же
-флейвор `play` (`./gradlew assemblePlayRelease`) — получите APK без
+флейвор `play` (`./gradlew assembleRelease`) — получите APK без
 самообновления.
 
 ---

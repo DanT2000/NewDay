@@ -146,29 +146,21 @@ android {
     }
 
     /*
-     * Два магазина — две сборки.
+     * Одна сборка на оба магазина, два формата.
      *
-     * Google Play запрещает приложениям обновлять себя в обход магазина:
-     * REQUEST_INSTALL_PACKAGES для планировщика там не пройдёт проверку.
-     * В RuStore самообновление допустимо и полезно — сайт раздаёт APK.
-     * Поэтому разрешение и весь модуль обновления живут только в сборке
-     * rustore, а сборка play физически их не содержит: проверяющему нечего
-     * найти, а нам нечего объяснять.
+     * Раньше здесь было два флейвора: сборка для RuStore умела обновлять себя
+     * с сайта и объявляла для этого REQUEST_INSTALL_PACKAGES, а сборка для
+     * Google Play — нет, потому что Play такое запрещает. Самообновление
+     * убрано: приложение раздаётся через магазины, и обновляют его они.
+     * Разрешения на установку пакетов больше нет ни в одной сборке — это
+     * самое подозрительное разрешение из всех, и объяснять его модератору
+     * ради удобства, которым никто не успел воспользоваться, незачем.
+     *
+     * Различать сборки стало нечем, поэтому флейворов нет вовсе. Форматы
+     * разные, и для этого флейворы не нужны:
+     *   ./gradlew bundleRelease     → AAB для Google Play
+     *   ./gradlew assembleRelease   → APK для RuStore и сайта
      */
-    flavorDimensions += "store"
-    productFlavors {
-        play {
-            dimension "store"
-            // магазин обновляет сам — просить об этом человека не нужно
-            buildConfigField "boolean", "SELF_UPDATE", "false"
-            manifestPlaceholders = [selfUpdate: "false"]
-        }
-        rustore {
-            dimension "store"
-            buildConfigField "boolean", "SELF_UPDATE", "true"
-            manifestPlaceholders = [selfUpdate: "true"]
-        }
-    }
 
     buildFeatures {
         buildConfig true

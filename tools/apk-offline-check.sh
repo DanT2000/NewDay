@@ -43,7 +43,7 @@ AVDMAN="$SDK/cmdline-tools/latest/bin/avdmanager.bat"
 PKG=${NEWDAY_PKG:-ru.appswire.newday}
 # Сборок стало две: для магазина Play (без самообновления) и для RuStore
 # с сайтом. Проверяем ту, что достаётся людям с сайта.
-APK=${NEWDAY_APK:-android/app/build/outputs/apk/rustore/release/app-rustore-release.apk}
+APK=${NEWDAY_APK:-android/app/build/outputs/apk/release/app-release.apk}
 API=34
 BASE="https://newday.appswire.ru"
 # Пусто по умолчанию: `set -u` иначе оборвал бы скрипт на неизвестной

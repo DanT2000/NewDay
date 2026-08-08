@@ -469,7 +469,7 @@ function versionBlock() {
 
     if (!me) return;
     if (top && Number(top.versionCode) > Number(me.versionCode)) {
-      btn.textContent = `Обновить до ${top.versionName}`;
+      btn.textContent = `Вышла ${top.versionName} — подробнее`;
       btn.classList.add('btn-primary');
       btn.onclick = () => appUpdate.offer(me, top);
       if (manual) appUpdate.offer(me, top);

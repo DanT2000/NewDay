@@ -15,8 +15,8 @@
 | Значок | `public/icons/icon-512.png` | 512×512 PNG |
 | Графическое изображение | `store/feature-1024x500.png` | 1024×500, только Play |
 | Скриншоты телефона, 10 шт. | `store/screens/01…10-*.jpg` | 9:16, JPG 1080×1920 |
-| AAB для Play | `android/app/build/outputs/bundle/playRelease/app-play-release.aab` | |
-| APK для RuStore | `android/app/build/outputs/apk/rustore/release/app-rustore-release.apk` | |
+| AAB для Play | `android/app/build/outputs/bundle/release/app-release.aab` | |
+| APK для RuStore | `android/app/build/outputs/apk/release/app-release.apk` | |
 | Политика конфиденциальности | `https://newday.appswire.ru/privacy` | обязательна в Play |
 
 Скриншоты идут в том порядке, в котором сняты, и порядок осмысленный: день →

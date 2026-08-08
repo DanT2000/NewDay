@@ -25,7 +25,7 @@ ADB="$SDK/platform-tools/adb.exe"
 EMU="$SDK/emulator/emulator.exe"
 PKG=ru.appswire.newday
 SITE=/tmp/site.apk
-NEW=android/app/build/outputs/apk/rustore/release/app-rustore-release.apk
+NEW=android/app/build/outputs/apk/release/app-release.apk
 AVD=newday_store_api34
 
 fail() { echo "ПРОВАЛ: $*"; exit 1; }

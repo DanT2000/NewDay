@@ -36,7 +36,7 @@ const EMU = `${SDK}/emulator/emulator.exe`;
 const AVDMAN = `${SDK}/cmdline-tools/latest/bin/avdmanager.bat`;
 const AVD = `newday_store_api${API}`;
 const PKG = 'ru.appswire.newday';
-const APK = 'android/app/build/outputs/apk/rustore/debug/app-rustore-debug.apk';
+const APK = 'android/app/build/outputs/apk/debug/app-debug.apk';
 const CDP_PORT = 9381;
 
 const sh = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: 'utf8', ...opts });
@@ -60,7 +60,7 @@ if (!existsSync(APK)) {
   // Полный путь, а не имя: cmd не ищет в текущем каталоге, и «gradlew.bat»
   // из cwd:'android' не находился вовсе
   const gradlew = resolve('android', process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
-  const r = sh(gradlew, ['assembleRustoreDebug'], { cwd: 'android', stdio: 'inherit', shell: true });
+  const r = sh(gradlew, ['assembleDebug'], { cwd: 'android', stdio: 'inherit', shell: true });
   if (r.status !== 0 || !existsSync(APK)) { console.error('сборка не получилась'); process.exit(1); }
 }
 

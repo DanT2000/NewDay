@@ -79,14 +79,14 @@ jobs:
           # Две сборки: AAB для Google Play (он APK не принимает вовсе) и APK
           # сборки rustore — им же раздаёт сайт. Разница между ними одна:
           # в APK есть самообновление, в AAB его нет.
-          ./gradlew bundlePlayRelease assembleRustoreRelease --no-daemon
+          ./gradlew bundleRelease assembleRelease --no-daemon
 
       - name: Проверить подписи и назвать файлы по-человечески
         run: |
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
           OUT=android/app/build/outputs
-          APK="$OUT/apk/rustore/release/app-rustore-release.apk"
-          AAB="$OUT/bundle/playRelease/app-play-release.aab"
+          APK="$OUT/apk/release/app-release.apk"
+          AAB="$OUT/bundle/release/app-release.aab"
 
           "$BT/apksigner" verify --print-certs "$APK"
           # AAB подписан jar-подписью, apksigner про него не знает

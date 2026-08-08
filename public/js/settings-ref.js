@@ -661,7 +661,7 @@ function openVersion() {
       line.textContent = parts.join(' · ');
       if (me && top && Number(top.versionCode) > Number(me.versionCode)) {
         add(body.firstChild, h('button.btn-sheet', {
-          text: `Обновить до ${top.versionName}`, onclick: () => appUpdate.offer(me, top),
+          text: `Вышла ${top.versionName} — подробнее`, onclick: () => appUpdate.offer(me, top),
         }));
       }
     })();
