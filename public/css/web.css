@@ -992,7 +992,21 @@ select.winput { appearance: auto; cursor: pointer; }
 .wpanel-list .wcap { padding: 14px 18px 6px; display: block; }
 .wpanel-label { font: 400 15px/1 var(--ui); margin-top: 20px; }
 .wpanel-label:first-of-type { margin-top: 16px; }
-.wsegline { display: flex; gap: 4px; margin-top: 11px; padding: 3px; border-radius: 10px; background: var(--raise); }
+/*
+ * Кнопки делят строку и сжимаются, а подпись не рвётся.
+ *
+ * Без min-width и nowrap четыре варианта на телефоне в 360 пикселей налезали
+ * друг на друга: «Выключено» рвалось на «Выключ / ено», а «Медленное»
+ * вылезало за край. Поймано скриншотом для магазина.
+ */
+.wsegline {
+  display: flex; gap: 4px; margin-top: 11px; padding: 3px;
+  border-radius: 10px; background: var(--raise);
+}
+.wsegline > button {
+  flex: 1 1 0; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .wsegline button {
   flex: 1; height: 38px; border-radius: 8px; border: 0; cursor: pointer;
   font: 500 13px/1 var(--ui); background: transparent; color: var(--dim);

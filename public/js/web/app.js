@@ -2045,7 +2045,7 @@ function alarmPanel() {
   if (advanced) {
     // ── Окно «просто выключить» ──
     const graceSeg = h('div.wsegline');
-    add(graceSeg, ...[[0, 'Выключено'], [30, '30 с'], [60, '1 мин'], [300, '5 мин']].map(([v, label]) =>
+    add(graceSeg, ...[[0, 'Нет'], [30, '30 с'], [60, '1 мин'], [300, '5 мин']].map(([v, label]) =>
       h('button', {
         type: 'button', text: label,
         class: (v === 0 ? !graceOn : graceOn && graceSec === v) ? 'on' : '',
@@ -2064,7 +2064,7 @@ function alarmPanel() {
     const rampOn = s.alarmVolumeRamp !== false;
     const rampSec = Number(s.alarmRampSec ?? 30);
     const rampSeg = h('div.wsegline');
-    add(rampSeg, ...[[0, 'Сразу громко'], [15, 'Быстрое'], [30, 'Среднее'], [60, 'Медленное']].map(([v, label]) =>
+    add(rampSeg, ...[[0, 'Сразу'], [15, '15 с'], [30, '30 с'], [60, '1 мин']].map(([v, label]) =>
       h('button', {
         type: 'button', text: label,
         class: (v === 0 ? !rampOn : rampOn && rampSec === v) ? 'on' : '',
@@ -2075,8 +2075,8 @@ function alarmPanel() {
     add(panel, h('div.wpanel-label', { text: 'Пробуждение' }), rampSeg,
       h('div.wclock-cap', {
         text: rampOn
-          ? `громкость нарастает и доходит до максимума за ${rampSec === 15 ? '15 секунд' : rampSec === 60 ? 'минуту' : '30 секунд'}. `
-            + 'Даже если звук на телефоне был на минимуме — будильник поднимет его сам'
+          ? `за сколько громкость дойдёт до максимума: ${rampSec === 15 ? '15 секунд' : rampSec === 60 ? 'минута' : '30 секунд'}. `
+            + 'Даже если звук на телефоне стоял на минимуме — будильник поднимет его сам'
           : 'звонит сразу на полную. Даже с минимальной громкости телефона — будильник поднимет её сам',
         style: { marginTop: '8px' },
       }));

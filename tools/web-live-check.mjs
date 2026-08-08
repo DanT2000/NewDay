@@ -435,9 +435,18 @@ await wait(800);
 проба('у задач пробуждения есть описания',
   await js(`[...document.querySelectorAll('.wrow-sw-hint')]
     .some(e => e.textContent.includes('шагомер'))`));
-проба('нарастание громкости настраивается',
-  await js(`[...document.querySelectorAll('.wsegline button')]
-    .some(b => b.textContent === 'Медленное')`));
+/*
+ * Подписи сроков, а не слова: «Сразу / 15 с / 30 с / 1 мин». Слова
+ * («Медленное», «Выключено») на телефоне в 360 пикселей налезали друг на
+ * друга, и четыре кнопки не помещались в строку.
+ */
+проба('нарастание громкости настраивается сроками',
+  await js(`(() => { const seg = [...document.querySelectorAll('.wsegline')]
+    .find(s => s.previousElementSibling?.textContent === 'Пробуждение');
+    return seg ? [...seg.children].map(b => b.textContent).join(',') : 'нет'; })()`) === 'Сразу,15 с,30 с,1 мин',
+  await js(`(() => { const seg = [...document.querySelectorAll('.wsegline')]
+    .find(s => s.previousElementSibling?.textContent === 'Пробуждение');
+    return seg ? [...seg.children].map(b => b.textContent).join(',') : 'нет'; })()`));
 
 /*
  * Переключатель не должен уводить экран вверх: раньше каждый щелчок
