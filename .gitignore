@@ -21,6 +21,13 @@ android/local.properties
 # после чего им уже нельзя пользоваться.
 *.keystore
 *.jks
+# Пути и пароли к ключу подписи: в репозитории им места нет
+android/keystore.properties
 *.p12
 *.pem
 tools/.shots/
+
+# Инструмент проверки AAB: 31 МБ, качается одной командой при надобности
+tools/bundletool.jar
+# Готовые артефакты релиза
+dist/

@@ -174,6 +174,14 @@ const setIn = patch => {
  * не откроешь. Те, что читают данные, открываются своим путём: пустая
  * шторка на снимке ничего не рассказывает.
  */
+/*
+ * Ещё две зацепки для проверок и съёмки карточки магазина: перейти на экран
+ * (и, если нужно, в раздел настроек) и сменить вид расписания. Клик по кнопке
+ * из скрипта зависит от подписи, а подписи меняются — эти два вызова нет.
+ */
+window.__wgo = (screen, page = null) => set({ screen, setPage: page, modal: null });
+window.__wsetview = view => set({ view });
+
 window.__wopen = name => {
   if (name === 'notify' || name === 'template') return openLink(name);
   if (name === 'file') return openLink('export');

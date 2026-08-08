@@ -9,18 +9,47 @@
 # другой origin, другое хранилище и другой способ достучаться до сервера.
 # Здесь то же самое проверяется в приложении: ставим APK, входим, гасим сеть
 # командой adb, перезапускаем приложение и смотрим, что осталось на экране.
+#
+# УЧЁТНЫЕ ДАННЫЕ ДЛЯ ВХОДА В ФАЙЛЕ НЕ ХРАНЯТСЯ.
+#
+# Репозиторий публичный, а скрипт входит на живой сервер под настоящим
+# аккаунтом: логин с паролем, записанные здесь, утекли бы вместе с историей
+# git — и отозвать их было бы уже нечем, кроме смены пароля. Поэтому берём
+# их из окружения:
+#
+#   Git Bash / Linux / macOS:
+#     export NEWDAY_CHECK_MAIL='вы@example.com'
+#     export NEWDAY_CHECK_PASS='ваш-пароль'
+#
+#   PowerShell:
+#     $env:NEWDAY_CHECK_MAIL = 'вы@example.com'
+#     $env:NEWDAY_CHECK_PASS = 'ваш-пароль'
+#
+# Разово, только на один запуск, не оставляя следа в окружении оболочки:
+#     NEWDAY_CHECK_MAIL=... NEWDAY_CHECK_PASS=... bash tools/apk-offline-check.sh
+#
+# Аргументы --mail и --pass по-прежнему работают и важнее переменных: они
+# разбираются после, и удобны, когда нужен другой аккаунт на один прогон.
+# Пароль в аргументе попадает в историю команд оболочки — для постоянной
+# работы лучше переменные.
 
 set -u
 SDK="${LOCALAPPDATA}/Android/Sdk"
 ADB="$SDK/platform-tools/adb.exe"
 EMU="$SDK/emulator/emulator.exe"
 AVDMAN="$SDK/cmdline-tools/latest/bin/avdmanager.bat"
-PKG=ru.appswire.newday
-APK=android/app/build/outputs/apk/release/app-release.apk
+# Идентификатор в магазине — com.newday.appswire; пакет кода остался прежним,
+# поэтому активность зовётся ru.appswire.newday.MainActivity
+PKG=${NEWDAY_PKG:-com.newday.appswire}
+# Сборок стало две: для магазина Play (без самообновления) и для RuStore
+# с сайтом. Проверяем ту, что достаётся людям с сайта.
+APK=${NEWDAY_APK:-android/app/build/outputs/apk/rustore/release/app-rustore-release.apk}
 API=34
 BASE="https://newday.appswire.ru"
-MAIL="alonecentral2001@gmail.com"
-PASS="DanT2000"
+# Пусто по умолчанию: `set -u` иначе оборвал бы скрипт на неизвестной
+# переменной, а нам нужна не трассировка bash, а внятная просьба задать логин.
+MAIL="${NEWDAY_CHECK_MAIL:-}"
+PASS="${NEWDAY_CHECK_PASS:-}"
 KEEP=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -35,6 +64,33 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+# Проверяем здесь, а не перед разбором аргументов: --mail и --pass должны
+# оставаться самодостаточными, без переменных окружения.
+#
+# И проверяем до того, как поднимется эмулятор: прогон занимает минуты, и
+# узнать про забытую переменную в конце, на шаге входа, — потерянное время.
+if [ -z "$MAIL" ] || [ -z "$PASS" ]; then
+  cat >&2 <<'КОНЕЦ'
+Не задан аккаунт для входа.
+
+Скрипт входит на живой сервер, поэтому логин и пароль он не хранит.
+Задайте их в окружении:
+
+  export NEWDAY_CHECK_MAIL='вы@example.com'
+  export NEWDAY_CHECK_PASS='ваш-пароль'
+
+в PowerShell:
+
+  $env:NEWDAY_CHECK_MAIL = 'вы@example.com'
+  $env:NEWDAY_CHECK_PASS = 'ваш-пароль'
+
+либо передайте аргументами на один прогон:
+
+  bash tools/apk-offline-check.sh --mail вы@example.com --pass ваш-пароль
+КОНЕЦ
+  exit 2
+fi
 
 PASSED=0
 FAILED=0
@@ -173,7 +229,7 @@ jsv() { node tools/webview-eval.js "$1" 2>&1 | tail -2; }
 start_app() {
   "$ADB" shell am force-stop $PKG >/dev/null 2>&1
   sleep 1
-  "$ADB" shell am start -n $PKG/.MainActivity >/dev/null 2>&1
+  "$ADB" shell am start -n $PKG/ru.appswire.newday.MainActivity >/dev/null 2>&1
   # Фиксированной паузы мало: без сети запуск идёт другим путём и занимает
   # другое время. Ждём, пока вебвью действительно ответит, — иначе проверка
   # читает пустоту и объявляет, что экран не собрался, хотя он ещё грузится.

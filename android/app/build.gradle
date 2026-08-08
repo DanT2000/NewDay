@@ -1,16 +1,53 @@
 apply plugin: 'com.android.application'
 apply plugin: 'org.jetbrains.kotlin.android'
 
+/**
+ * «1.2.3» → 10203. Тот же расчёт, что в .github/workflows/android.yml:
+ * два места на минорную версию и два на патч. Правило одно, чтобы номер,
+ * собранный руками, не разошёлся с номером из CI.
+ */
+static String versionNameToCode(String name) {
+    def parts = (name ?: '0.0.0').split('\\.')
+    int ma = parts.length > 0 ? parts[0].toInteger() : 0
+    int mi = parts.length > 1 ? parts[1].toInteger() : 0
+    int pa = parts.length > 2 ? parts[2].toInteger() : 0
+    return String.valueOf(Math.max(1, ma * 10000 + mi * 100 + pa))
+}
+
 android {
+    /*
+     * namespace и applicationId — разные вещи, и здесь они нарочно разные.
+     *
+     * namespace — это пакет кода: по нему собирается класс R и по нему же
+     * разрешаются относительные имена в манифесте («.MainActivity»).
+     * Переименовать его значило бы перенести все исходники, и незачем.
+     *
+     * applicationId — то, чем приложение зовётся в магазине. Он зарегистрирован
+     * как com.newday.appswire, менять нельзя.
+     *
+     * ВАЖНО про обновления: приложение с прежним идентификатором
+     * ru.appswire.newday (то, что раздавал сайт) — для системы другое
+     * приложение. Обновиться поверх него магазинной сборкой нельзя: у людей
+     * будет два значка, пока они не удалят старую. Об этом сказано в
+     * PUBLISHING.md, и на сайте старую сборку надо снять.
+     */
     namespace "ru.appswire.newday"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "ru.appswire.newday"
+        applicationId "com.newday.appswire"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        // Версию задаёт сборка по тегу; при локальной сборке остаются значения по умолчанию
-        versionCode Integer.parseInt(System.getenv("NEWDAY_VERSION_CODE") ?: "1")
-        versionName System.getenv("NEWDAY_VERSION_NAME") ?: "1.0"
+        /*
+         * Версия — из окружения, с осмысленными значениями по умолчанию.
+         *
+         * versionCode должен монотонно расти, иначе магазин отвергнет
+         * загрузку; считается он из версии по правилу MA*10000+MI*100+PA,
+         * как в CI. «1» по умолчанию было ловушкой: собранный руками релиз
+         * уезжал в консоль с кодом 1 и навсегда занимал самый младший номер.
+         */
+        versionName System.getenv("NEWDAY_VERSION_NAME") ?: "1.0.7"
+        versionCode Integer.parseInt(System.getenv("NEWDAY_VERSION_CODE")
+                ?: versionNameToCode(versionName))
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -30,21 +67,46 @@ android {
      *
      * Android не устанавливает неподписанный APK вообще, поэтому релизная
      * сборка обязана быть подписана хоть чем-то. Ключ берём из переменных
-     * окружения: в репозитории его быть не должно, а в CI он лежит в секретах.
+     * окружения или из android/keystore.properties (файл в .gitignore):
+     * в репозитории ключу и паролям места нет, а в CI они лежат в секретах.
+     *
      * Если ключа нет — подписываем отладочным и громко предупреждаем: собрать
-     * себе APK так можно, но обновить его потом настоящим ключом уже нельзя,
-     * Android откажется из-за несовпадения подписи.
+     * себе APK так можно, но выложить в магазин нельзя, и обновить его потом
+     * настоящим ключом уже не выйдет — Android откажется из-за несовпадения
+     * подписи.
      */
-    def ksPath = System.getenv("NEWDAY_KEYSTORE")
+    /*
+     * Читаем в UTF-8, а не потоком.
+     *
+     * Properties.load(InputStream) разбирает файл как ISO-8859-1: путь с
+     * русскими буквами («D:/Project/Настройки/…») превращался в мусор, файл
+     * ключа «не находился», и релиз молча уходил подписанным отладочным
+     * ключом. Такую сборку магазин не примет, а понять почему — негде.
+     */
+    def ksProps = new Properties()
+    def ksPropsFile = rootProject.file('keystore.properties')
+    if (ksPropsFile.exists()) ksPropsFile.withReader('UTF-8') { ksProps.load(it) }
+
+    def ksPath = System.getenv("NEWDAY_KEYSTORE") ?: ksProps.getProperty('storeFile')
     def hasKeystore = ksPath && file(ksPath).exists()
+    def ksPassword = System.getenv("NEWDAY_KEYSTORE_PASSWORD") ?: ksProps.getProperty('storePassword')
+    def ksAlias = System.getenv("NEWDAY_KEY_ALIAS") ?: ksProps.getProperty('keyAlias') ?: "newday"
+    def ksKeyPassword = System.getenv("NEWDAY_KEY_PASSWORD") ?: ksProps.getProperty('keyPassword') ?: ksPassword
 
     signingConfigs {
         if (hasKeystore) {
             release {
                 storeFile file(ksPath)
-                storePassword System.getenv("NEWDAY_KEYSTORE_PASSWORD")
-                keyAlias System.getenv("NEWDAY_KEY_ALIAS") ?: "newday"
-                keyPassword System.getenv("NEWDAY_KEY_PASSWORD") ?: System.getenv("NEWDAY_KEYSTORE_PASSWORD")
+                storePassword ksPassword
+                keyAlias ksAlias
+                keyPassword ksKeyPassword
+                /*
+                 * Обе схемы подписи. v1 нужна установке на Android 6 и 7
+                 * (minSdk 23), v2 — всему, что новее; RuStore принимает APK,
+                 * подписанный так же, как Play принимает AAB.
+                 */
+                enableV1Signing true
+                enableV2Signing true
             }
         }
     }
@@ -53,15 +115,62 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            /*
+             * Отладка вебвью в релизе выключена жёстко.
+             *
+             * Capacitor включает её сам, когда сборка debuggable, но полагаться
+             * на это нельзя: релиз с открытым инспектором — это чужой доступ ко
+             * всему, что лежит в приложении, включая токен устройства.
+             */
+            debuggable false
             if (hasKeystore) {
                 signingConfig signingConfigs.release
             } else {
-                logger.warn("NewDay: NEWDAY_KEYSTORE не задан — релиз подписан отладочным ключом. "
-                        + "Для распространения создайте свой: keytool -genkeypair -keystore newday.keystore "
-                        + "-alias newday -keyalg RSA -keysize 4096 -validity 10000")
+                /*
+                 * Громко и в глаза: сборка, подписанная отладочным ключом,
+                 * выглядит как настоящая и молча не годится для магазина.
+                 * Один раз это уже случилось — путь к ключу с русскими
+                 * буквами не прочитался, и APK ушёл с подписью «Android Debug».
+                 */
+                logger.warn("=".multiply(70))
+                logger.warn("NewDay: КЛЮЧ ПОДПИСИ НЕ НАЙДЕН — релиз подписан отладочным ключом.")
+                logger.warn("В Google Play и RuStore такую сборку загружать нельзя.")
+                logger.warn("Искали: NEWDAY_KEYSTORE в окружении и android/keystore.properties" +
+                        (ksPath ? " (путь ${ksPath} не существует)" : " (путь не задан)"))
+                logger.warn("Как настроить — PUBLISHING.md")
+                logger.warn("=".multiply(70))
                 signingConfig signingConfigs.debug
             }
         }
+    }
+
+    /*
+     * Два магазина — две сборки.
+     *
+     * Google Play запрещает приложениям обновлять себя в обход магазина:
+     * REQUEST_INSTALL_PACKAGES для планировщика там не пройдёт проверку.
+     * В RuStore самообновление допустимо и полезно — сайт раздаёт APK.
+     * Поэтому разрешение и весь модуль обновления живут только в сборке
+     * rustore, а сборка play физически их не содержит: проверяющему нечего
+     * найти, а нам нечего объяснять.
+     */
+    flavorDimensions += "store"
+    productFlavors {
+        play {
+            dimension "store"
+            // магазин обновляет сам — просить об этом человека не нужно
+            buildConfigField "boolean", "SELF_UPDATE", "false"
+            manifestPlaceholders = [selfUpdate: "false"]
+        }
+        rustore {
+            dimension "store"
+            buildConfigField "boolean", "SELF_UPDATE", "true"
+            manifestPlaceholders = [selfUpdate: "true"]
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 }
 

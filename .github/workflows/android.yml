@@ -76,15 +76,34 @@ jobs:
         working-directory: android
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleRelease --no-daemon
+          # Две сборки: AAB для Google Play (он APK не принимает вовсе) и APK
+          # сборки rustore — им же раздаёт сайт. Разница между ними одна:
+          # в APK есть самообновление, в AAB его нет.
+          ./gradlew bundlePlayRelease assembleRustoreRelease --no-daemon
 
-      - name: Проверить, что APK подписан
+      - name: Проверить подписи и назвать файлы по-человечески
         run: |
-          APK=$(ls android/app/build/outputs/apk/release/*.apk | head -1)
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          OUT=android/app/build/outputs
+          APK="$OUT/apk/rustore/release/app-rustore-release.apk"
+          AAB="$OUT/bundle/playRelease/app-play-release.aab"
+
           "$BT/apksigner" verify --print-certs "$APK"
-          mv "$APK" "android/app/build/outputs/apk/release/NewDay-$NEWDAY_VERSION_NAME.apk"
+          # AAB подписан jar-подписью, apksigner про него не знает
+          jarsigner -verify -strict "$AAB" | tail -2
+
+          # «Android Debug» в подписи значит, что ключ не подхватился, а сборка
+          # выглядит настоящей. В магазин такая не годится — падаем здесь.
+          if "$BT/apksigner" verify --print-certs "$APK" | grep -q "CN=Android Debug"; then
+            echo "::error::APK подписан отладочным ключом — проверьте ANDROID_KEYSTORE_BASE64"
+            exit 1
+          fi
+
+          mkdir -p dist
+          cp "$APK" "dist/NewDay-$NEWDAY_VERSION_NAME.apk"
+          cp "$AAB" "dist/NewDay-$NEWDAY_VERSION_NAME.aab"
           rm -f "$NEWDAY_KEYSTORE"
+          ls -la dist
 
       # Главный адрес раздачи — сам сайт: приложение обновляется со своего
       # сервера, и человеку не нужен доступ к репозиторию. Выкладываем сразу
@@ -99,7 +118,7 @@ jobs:
             echo "::warning::APK_UPLOAD_URL или APK_UPLOAD_TOKEN не заданы — APK останется только в релизе"
             exit 0
           fi
-          APK="android/app/build/outputs/apk/release/NewDay-$NEWDAY_VERSION_NAME.apk"
+          APK="dist/NewDay-$NEWDAY_VERSION_NAME.apk"
           CODE=$(curl -sS -o /tmp/upload.json -w '%{http_code}' \
             -X POST "$SITE/api/v1/app/upload?versionName=$NEWDAY_VERSION_NAME" \
             -H "X-Upload-Token: $TOKEN" \
@@ -122,7 +141,9 @@ jobs:
       - name: Приложить APK к релизу
         uses: softprops/action-gh-release@v2
         with:
-          files: android/app/build/outputs/apk/release/NewDay-*.apk
+          files: |
+            dist/NewDay-*.apk
+            dist/NewDay-*.aab
           body: |
             Приложение обновляется само: при запуске оно спрашивает сервер,
             нет ли версии новее. Этот файл — на случай первой установки

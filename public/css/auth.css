@@ -52,3 +52,16 @@
   font: var(--t-small); color: var(--ink-3);
 }
 .auth-footer + .auth-footer { margin-top: var(--s-2); }
+
+/* ── Свой сервер: строчка под формой ───────────────────────── */
+
+/*
+ * Кнопка, которая выглядит ссылкой: это переключатель вида, а не действие,
+ * и рисовать под него настоящую кнопку значило бы звать нажать её.
+ */
+.link-btn {
+  border: 0; background: none; padding: 0; cursor: pointer;
+  color: var(--c-day); font: inherit; text-decoration: underline;
+}
+.link-btn:hover { text-decoration: none; }
+.form-hint { font: var(--t-small); color: var(--ink-3); margin-top: var(--s-1); }

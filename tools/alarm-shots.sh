@@ -13,8 +13,12 @@ SDK="${LOCALAPPDATA}/Android/Sdk"
 ADB="$SDK/platform-tools/adb.exe"
 EMU="$SDK/emulator/emulator.exe"
 AVDMAN="$SDK/cmdline-tools/latest/bin/avdmanager.bat"
-PKG=ru.appswire.newday
-APK=android/app/build/outputs/apk/release/app-release.apk
+# Идентификатор в магазине — com.newday.appswire; пакет кода остался прежним,
+# поэтому активность зовётся ru.appswire.newday.MainActivity
+PKG=${NEWDAY_PKG:-com.newday.appswire}
+# Сборок стало две: для магазина Play (без самообновления) и для RuStore
+# с сайтом. Проверяем ту, что достаётся людям с сайта.
+APK=${NEWDAY_APK:-android/app/build/outputs/apk/rustore/release/app-rustore-release.apk}
 OUT=tools/.shots
 API=34
 while [ $# -gt 0 ]; do
@@ -73,7 +77,7 @@ cdp() {
 
 start_app() {
   "$ADB" shell am force-stop $PKG >/dev/null 2>&1
-  "$ADB" shell am start -n $PKG/.MainActivity >/dev/null 2>&1
+  "$ADB" shell am start -n $PKG/ru.appswire.newday.MainActivity >/dev/null 2>&1
   sleep 6
   local w=0
   while [ "$w" -lt 20 ]; do

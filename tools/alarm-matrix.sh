@@ -24,8 +24,12 @@ ADB="$SDK/platform-tools/adb.exe"
 EMU="$SDK/emulator/emulator.exe"
 AVDMAN="$SDK/cmdline-tools/latest/bin/avdmanager.bat"
 SDKMAN="$SDK/cmdline-tools/latest/bin/sdkmanager.bat"
-PKG=ru.appswire.newday
-APK=android/app/build/outputs/apk/release/app-release.apk
+# Идентификатор в магазине — com.newday.appswire; пакет кода остался прежним,
+# поэтому активность зовётся ru.appswire.newday.MainActivity
+PKG=${NEWDAY_PKG:-com.newday.appswire}
+# Сборок стало две: для магазина Play (без самообновления) и для RuStore
+# с сайтом. Проверяем ту, что достаётся людям с сайта.
+APK=${NEWDAY_APK:-android/app/build/outputs/apk/rustore/release/app-rustore-release.apk}
 
 APIS="32,33,34,35,36"
 WITH_REBOOT=""

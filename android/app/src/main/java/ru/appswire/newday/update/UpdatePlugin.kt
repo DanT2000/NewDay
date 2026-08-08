@@ -1,5 +1,7 @@
 package ru.appswire.newday.update
 
+import ru.appswire.newday.BuildConfig
+
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -51,17 +53,38 @@ class UpdatePlugin : Plugin() {
                 .put("versionCode", code)
                 .put("packageName", context.packageName)
                 .put("canInstall", canInstall())
+                /*
+                 * Умеет ли эта сборка обновлять себя.
+                 *
+                 * В сборке для Google Play — нет: магазин запрещает обновляться
+                 * в обход себя, и разрешения на установку в ней просто нет.
+                 * Веб-часть по этому признаку не показывает ни проверку
+                 * обновлений, ни полосу загрузки: кнопка, ведущая в отказ,
+                 * хуже отсутствующей.
+                 */
+                .put("selfUpdate", BuildConfig.SELF_UPDATE)
                 .put("debuggable", (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0),
         )
     }
 
-    /** Разрешена ли установка из этого приложения. */
-    private fun canInstall(): Boolean =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+    /**
+     * Разрешена ли установка из этого приложения.
+     *
+     * `canRequestPackageInstalls()` не отвечает «нет», когда разрешение вообще
+     * не объявлено, — она бросает SecurityException. В сборке для Google Play
+     * разрешения нет нарочно, и этот вызов ронял приложение на первом же
+     * запуске: экран входа даже не появлялся. Поймано установкой настоящей
+     * сборки на устройство, а не тестами.
+     */
+    private fun canInstall(): Boolean {
+        if (!BuildConfig.SELF_UPDATE) return false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
+        return try {
             context.packageManager.canRequestPackageInstalls()
-        } else {
-            true
+        } catch (e: SecurityException) {
+            false
         }
+    }
 
     /** Ведёт в системный экран «установка неизвестных приложений». */
     @PluginMethod
@@ -88,6 +111,11 @@ class UpdatePlugin : Plugin() {
      */
     @PluginMethod
     fun downloadAndInstall(call: PluginCall) {
+        // В сборке для Play устанавливать нечем — не тянем зря файл
+        if (!BuildConfig.SELF_UPDATE) {
+            call.reject("Эта сборка обновляется через магазин")
+            return
+        }
         val url = call.getString("url")
         val versionName = call.getString("versionName") ?: "new"
         if (url.isNullOrBlank()) {

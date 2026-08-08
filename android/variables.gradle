@@ -1,8 +1,22 @@
 ext {
-    kotlinVersion = '1.9.24'
-    minSdkVersion = 22
-    compileSdkVersion = 34
-    targetSdkVersion = 34
+    kotlinVersion = '2.1.10'
+    /*
+     * minSdk 23, а не 22.
+     *
+     * Android 5.1 — это меньше десятой доли процента устройств, а разрешения
+     * там выдаются при установке: код с runtime-запросами камеры и шагомера
+     * на нём всё равно работал бы вслепую. Тянуть версию, которую нельзя
+     * проверить и на которой половина функций бессмысленна, дороже, чем
+     * отказаться от неё.
+     *
+     * compileSdk и targetSdk 36 (Android 16): с 31 августа 2026 Google Play
+     * не принимает обновления с targetSdk ниже 36, а новое приложение имеет
+     * смысл публиковать сразу на актуальном — иначе первое же обновление
+     * придётся выпускать ради цифры.
+     */
+    minSdkVersion = 23
+    compileSdkVersion = 36
+    targetSdkVersion = 36
     androidxActivityVersion = '1.8.0'
     androidxAppCompatVersion = '1.6.1'
     androidxCoordinatorLayoutVersion = '1.2.0'

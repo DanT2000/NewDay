@@ -86,25 +86,17 @@
             </intent-filter>
         </receiver>
 
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths"></meta-data>
-        </provider>
     </application>
 
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!--
-        Установка обновления. Без этого разрешения система не даст приложению
-        даже предложить установку скачанного APK. Само разрешение установку
-        не выполняет: человек всё равно подтверждает её в системном окне.
+        Установки обновлений здесь нет нарочно: REQUEST_INSTALL_PACKAGES и
+        FileProvider объявлены только во флейворе rustore
+        (src/rustore/AndroidManifest.xml). Google Play запрещает приложениям
+        обновлять себя в обход магазина, и сборка для Play этого разрешения
+        физически не содержит — проверяющему нечего найти.
     -->
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Будильник -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
@@ -118,7 +110,16 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!--
+        REQUEST_IGNORE_BATTERY_OPTIMIZATIONS здесь нет нарочно.
+
+        Оно нужно только тому, кто показывает системный диалог «разрешить
+        работу в фоне» напрямую. Мы этого не делаем: состояние читается
+        (isIgnoringBatteryOptimizations разрешения не требует), а человека
+        ведём в системный список настроек — тоже без разрешения. Google Play
+        считает это разрешение чувствительным и требует обоснования; объявлять
+        то, чем не пользуешься, значит просить проверку на пустом месте.
+    -->
 
     <!--
         «Показывать поверх других приложений».

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Самообновление — только для сборки RuStore.
+
+    Приложение умеет скачать новую версию со своего сайта и предложить её
+    установить. Google Play такое запрещает прямо: обновляться приложение
+    обязано через магазин. RuStore это допускает, и для людей, которые
+    поставили APK с сайта, обновление изнутри — единственный удобный путь.
+
+    Разрешение и FileProvider живут здесь, а не в общем манифесте: так сборка
+    для Play их не содержит вовсе, и объяснять проверяющему нечего.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        Без этого разрешения система не даст даже предложить установку
+        скачанного файла. Само разрешение ничего не устанавливает: человек
+        подтверждает установку в системном окне.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <application>
+        <!-- Через него системный установщик читает скачанный файл -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>

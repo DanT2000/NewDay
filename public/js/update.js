@@ -65,6 +65,12 @@ export async function check(mode = 'startup') {
 
   const [me, top] = await Promise.all([installed(), latest()]);
   if (!me) return { state: 'unknown' };
+  /*
+   * Сборка из Google Play обновляется магазином, а не собой: разрешения на
+   * установку в ней нет вовсе. Спрашивать «поставить новую версию?» там
+   * значит вести человека в отказ — молчим и уходим.
+   */
+  if (me.selfUpdate === false) return { state: 'store-managed', installed: me };
   if (!top) return { state: 'no-info', installed: me };
 
   if (Number(top.versionCode) <= Number(me.versionCode)) {

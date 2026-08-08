@@ -43,14 +43,27 @@
         своего сервера у страницы нет: без явного адреса регистрация уходила
         в никуда.
       -->
-      <div class="form-group" id="server-group" style="display:none">
-        <label for="server">Адрес сервера</label>
+      <!--
+        Свой сервер — по кнопке, а не полем на виду.
+
+        Почти все пользуются нашим, и поле с адресом на входе пугает: человек
+        видит его и думает, что должен что-то заполнить. Поэтому по умолчанию
+        внизу одна строчка «Сервер: newday.appswire.ru», и только тем, у кого
+        свой, она разворачивается в поле.
+      -->
+      <div class="form-group" id="server-group" hidden>
+        <label for="server">Адрес своего сервера</label>
         <input type="url" id="server" value="https://newday.appswire.ru" placeholder="https://newday.example.com">
+        <p class="form-hint">Полный адрес с https:// — тот, где стоит ваш NewDay</p>
       </div>
       <div id="error-msg" class="form-error" style="display:none"></div>
       <button type="submit" class="btn btn-primary btn-block">Зарегистрироваться</button>
     </form>
 
+    <p class="auth-footer" id="server-line" hidden>
+      Сервер: <b id="server-now">newday.appswire.ru</b> ·
+      <button type="button" class="link-btn" id="server-switch">свой сервер</button>
+    </p>
     <p class="auth-footer">Уже есть аккаунт? <a href="/login.html">Войти</a></p>
   </div>
 
@@ -65,12 +78,42 @@
      * Человек нажимал «Зарегистрироваться» и получал тишину.
      */
     const native = Boolean(window.Capacitor?.isNativePlatform?.());
+    // внутри приложения предлагать его скачать незачем
+    if (native) document.getElementById('get-app')?.remove();
+
+    /*
+     * Свой сервер прячется, пока не понадобится.
+     *
+     * Строчка «Сервер: newday.appswire.ru · свой сервер» стоит под формой:
+     * тем, кто пользуется нашим, ничего заполнять не надо, а у кого свой —
+     * одно нажатие разворачивает поле. Прежнее поле на виду читалось как
+     * обязательное и пугало на первом же экране.
+     *
+     * Показываем строчку только в приложении: в браузере страница уже лежит
+     * на нужном сервере, и выбирать нечего.
+     */
     if (native) {
-      document.getElementById('server-group').style.display = 'grid';
-      const saved = localStorage.getItem('newday.apiBase');
-      if (saved) document.getElementById('server').value = saved;
-      // внутри приложения предлагать скачать приложение незачем
-      document.getElementById('get-app')?.remove();
+      const line = document.getElementById('server-line');
+      const group = document.getElementById('server-group');
+      const input = document.getElementById('server');
+      const now = document.getElementById('server-now');
+      const DEFAULT_BASE = 'https://newday.appswire.ru';
+      const saved = (localStorage.getItem('newday.apiBase') || '').replace(/\/+$/, '');
+      if (saved) input.value = saved;
+
+      const host = url => String(url || '').replace(/^https?:\/\//, '').replace(/\/+$/, '');
+      now.textContent = host(saved || DEFAULT_BASE);
+      line.hidden = false;
+      // адрес уже свой — поле открыто сразу: человек его и так задал
+      if (saved && saved !== DEFAULT_BASE) group.hidden = false;
+
+      document.getElementById('server-switch').addEventListener('click', () => {
+        group.hidden = !group.hidden;
+        if (!group.hidden) input.focus();
+      });
+      input.addEventListener('input', () => {
+        now.textContent = host(input.value) || host(DEFAULT_BASE);
+      });
     }
 
     /*

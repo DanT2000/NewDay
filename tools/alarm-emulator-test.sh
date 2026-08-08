@@ -14,7 +14,9 @@
 
 set -u
 ADB="${LOCALAPPDATA}/Android/Sdk/platform-tools/adb.exe"
-PKG=ru.appswire.newday
+# Идентификатор в магазине — com.newday.appswire; пакет кода остался прежним,
+# поэтому активность зовётся ru.appswire.newday.MainActivity
+PKG=${NEWDAY_PKG:-com.newday.appswire}
 WITH_REBOOT=0
 ONLY=""
 while [ $# -gt 0 ]; do
@@ -46,7 +48,7 @@ restart() {
   "$ADB" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1
   "$ADB" shell wm dismiss-keyguard >/dev/null 2>&1
   sleep 1
-  "$ADB" shell am start -n $PKG/.MainActivity >/dev/null 2>&1
+  "$ADB" shell am start -n $PKG/ru.appswire.newday.MainActivity >/dev/null 2>&1
   # Запуск сразу после force-stop иногда теряется (замечено на 13-м): запрос
   # цепляется к ещё умирающему процессу, и приложение не стартует вовсе —
   # pid пуст, вебвью нет, и провал выглядит как «экран не поднялся».
@@ -54,7 +56,7 @@ restart() {
   local tries=0
   sleep 2
   while [ -z "$("$ADB" shell pidof $PKG 2>/dev/null | tr -d '\r')" ] && [ "$tries" -lt 6 ]; do
-    "$ADB" shell am start -n $PKG/.MainActivity >/dev/null 2>&1
+    "$ADB" shell am start -n $PKG/ru.appswire.newday.MainActivity >/dev/null 2>&1
     sleep 3
     tries=$((tries + 1))
   done
@@ -101,7 +103,7 @@ wv() {
     if [ -z "$pid" ]; then
       "$ADB" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1
       "$ADB" shell wm dismiss-keyguard >/dev/null 2>&1
-      "$ADB" shell am start -n $PKG/.MainActivity >/dev/null 2>&1
+      "$ADB" shell am start -n $PKG/ru.appswire.newday.MainActivity >/dev/null 2>&1
       sleep 4
     fi
     cdp
