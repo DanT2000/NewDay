@@ -89,6 +89,16 @@ class UpdatePlugin : Plugin() {
     /** Ведёт в системный экран «установка неизвестных приложений». */
     @PluginMethod
     fun openInstallSettings(call: PluginCall) {
+        /*
+         * В сборке для Play вести туда некуда: REQUEST_INSTALL_PACKAGES в ней
+         * не объявлено вовсе, и системный переключатель ничего не включит.
+         * Веб-часть эту кнопку там и не рисует, но отказывать надо в плагине:
+         * единственный путь к установке должен быть закрыт с обеих сторон.
+         */
+        if (!BuildConfig.SELF_UPDATE) {
+            call.reject("Эта сборка обновляется через магазин")
+            return
+        }
         val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + context.packageName))
         } else {
@@ -155,7 +165,14 @@ class UpdatePlugin : Plugin() {
         }
 
         conn.inputStream.use { input ->
-            val total = conn.contentLengthLong
+            // contentLengthLong появился в Android 7, а minSdk у нас 23: на
+            // Android 6 обновление падало бы с NoSuchMethodError на первом же
+            // байте. APK меньше двух гигабайт, поэтому Int здесь достаточно
+            val total = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                conn.contentLengthLong
+            } else {
+                conn.contentLength.toLong()
+            }
             var done = 0L
             var lastReported = -1
             target.outputStream().use { out ->

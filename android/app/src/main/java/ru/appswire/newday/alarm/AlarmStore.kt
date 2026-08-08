@@ -1,6 +1,10 @@
 package ru.appswire.newday.alarm
 
 import android.content.Context
+import android.content.SharedPreferences
+import android.os.Build
+import android.os.UserManager
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -12,6 +16,7 @@ import org.json.JSONObject
  * После перезагрузки телефона всё перепланируется отсюда же.
  */
 object AlarmStore {
+    private const val TAG = "NewDayAlarm"
     private const val PREFS = "newday_alarms"
     private const val KEY_ALARMS = "alarms"
     private const val KEY_CONFIG = "dismiss_config"
@@ -19,7 +24,67 @@ object AlarmStore {
     private const val KEY_ACCENT = "accent"
     private const val KEY_FIRED = "fired_ids"
 
-    private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    /*
+     * Перенос в device-protected пробуется один раз на запуск процесса.
+     *
+     * moveSharedPreferencesFrom требует, чтобы файл не был открыт, поэтому
+     * трогаем его до первого обращения к настройкам и больше в этом процессе
+     * не возвращаемся: удавшийся перенос второй раз не нужен (источника уже
+     * нет), а неудавшийся будет повторён при следующем запуске.
+     */
+    @Volatile private var moveTried = false
+    @Volatile private var moveOk = false
+
+    private fun prefs(ctx: Context): SharedPreferences =
+        storageCtx(ctx).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    /**
+     * Где лежат будильники: в device-protected, а не в обычном хранилище.
+     *
+     * Обычное (credential-protected) на телефонах с шифрованием файлов — а это
+     * почти всё, начиная с Android 10 — недоступно до первой разблокировки.
+     * Телефон, перезагрузившийся ночью сам, утром до разблокировки не смог бы
+     * даже прочитать список будильников: приёмник просыпался бы и ничего не
+     * находил. Device-protected доступно сразу после включения, ещё до ввода
+     * пина, — там же, где живёт приёмник с directBootAware.
+     *
+     * Уже стоящие будильники переносим на новое место один раз
+     * (moveSharedPreferencesFrom). Перенос может не удаться — например, файл
+     * занят, — и тогда старые данные остаются целыми на прежнем месте: пока
+     * телефон отперт, работаем с ними там, а перенос повторится при следующем
+     * запуске. До разблокировки прежнего места нет вовсе, поэтому остаётся
+     * device-protected: пустой список хуже настоящего, но падение приёмника
+     * сразу после включения телефона — хуже всего.
+     */
+    private fun storageCtx(ctx: Context): Context {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return ctx   // до 7 шифрования файлов нет
+        if (ctx.isDeviceProtectedStorage) return ctx                    // уже оно
+        val dev = try {
+            ctx.createDeviceProtectedStorageContext()
+        } catch (e: Exception) {
+            Log.e(TAG, "Нет device-protected хранилища: " + e.message)
+            return ctx
+        }
+        if (!moveTried) {
+            moveTried = true
+            moveOk = try {
+                // true и когда переносить было нечего — на чистой установке
+                dev.moveSharedPreferencesFrom(ctx, PREFS)
+            } catch (e: Exception) {
+                Log.e(TAG, "Перенос будильников в device-protected сорвался: " + e.message)
+                false
+            }
+            if (!moveOk) Log.e(TAG, "Будильники остались в обычном хранилище — повторю при следующем запуске")
+        }
+        if (moveOk) return dev
+        return if (userUnlocked(ctx)) ctx else dev
+    }
+
+    private fun userUnlocked(ctx: Context): Boolean = try {
+        (ctx.getSystemService(Context.USER_SERVICE) as UserManager).isUserUnlocked
+    } catch (e: Exception) {
+        false
+    }
 
     /**
      * Список будильников пишем сразу на диск, а не отложенно.
@@ -94,6 +159,20 @@ object AlarmStore {
         fired.add(key)
         // держим сотню последних: список не должен расти бесконечно
         prefs(ctx).edit().putStringSet(KEY_FIRED, fired.takeLast(100).toSet()).commit()
+    }
+
+    /**
+     * Снять отметку: срабатывания не было.
+     *
+     * Нужно приёмнику, когда система отказалась поднять службу и будильник не
+     * зазвонил вовсе. Без этого он остаётся «отработавшим» и логика пропущенных
+     * о нём уже не вспомнит.
+     */
+    fun unmarkFired(ctx: Context, id: Long, fireAt: Long) {
+        val key = "$id@$fireAt"
+        val fired = firedKeys(ctx)
+        if (!fired.contains(key)) return
+        prefs(ctx).edit().putStringSet(KEY_FIRED, (fired - key).toSet()).commit()
     }
 
     fun hasFired(ctx: Context, id: Long, fireAt: Long): Boolean =

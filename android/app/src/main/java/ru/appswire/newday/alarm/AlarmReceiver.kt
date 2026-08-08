@@ -32,7 +32,24 @@ class AlarmReceiver : BroadcastReceiver() {
             action = AlarmService.ACTION_START
             putExtra("alarmId", id)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(svc)
-        else ctx.startService(svc)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(svc)
+            else ctx.startService(svc)
+        } catch (e: Exception) {
+            /*
+             * Система может отказать в запуске службы из фона.
+             *
+             * С Android 12 право поднять foreground-службу из фона даёт именно
+             * точный будильник; если человек отключил точные будильники, звонок
+             * приходит неточным — и отказ роняет приёмник вместе с приложением,
+             * а будильник при этом уже помечен отработавшим и пропадает молча.
+             *
+             * Поэтому не падаем, а снимаем отметку: логика пропущенных
+             * подхватит этот будильник после перезагрузки — или зазвонит, если
+             * прошло меньше получаса, или хотя бы скажет, что он не прозвенел.
+             */
+            Log.e("NewDayAlarm", "Служба будильника не запустилась: " + e.message)
+            AlarmStore.unmarkFired(ctx, alarm.id, alarm.fireAt)
+        }
     }
 }

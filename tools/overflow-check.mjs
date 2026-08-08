@@ -11,8 +11,8 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import tmp from './lib/tmp.js';
 
 const arg = (name, def) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -30,7 +30,12 @@ const BROWSERS = [
 ];
 const EDGE = BROWSERS.find(b => { try { fsSync.accessSync(b); return true; } catch { return false; } });
 
-const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'newday-overflow-'));
+/*
+ * Профиль браузера — в .tmp проекта, не в системном %TEMP%.
+ * Модуль сам уберёт каталог: и по release() ниже, и хуком на выходе,
+ * если прогон закончится раньше — через process.exit() или падением.
+ */
+const profile = tmp.tempDir('overflow');
 const proc = spawn(EDGE, ['--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
   '--window-size=1440,900', '--hide-scrollbars', '--no-first-run', 'about:blank'], { stdio: 'ignore' });
 
@@ -206,12 +211,32 @@ const ЭКРАНЫ = [
   ['Расписание · месяц', `[...document.querySelectorAll('.wseg button')].find(b=>b.textContent==='Месяц')?.click()`],
   ['Привычки', nav('Привычки')],
   ['Заметки', nav('Заметки')],
+  ['Заметки · без даты', `[...document.querySelectorAll('.wchips .wchip, .wwrap .wchip')].find(c=>c.textContent==='Без даты')?.click()`],
   ['Настройки', nav('Настройки')],
+  /*
+   * Разделы настроек — по одному.
+   *
+   * Раньше здесь стояли только «Настройки», и обход смотрел на оглавление (а
+   * на компьютере — на «Аккаунт»). Шесть разделов не проверялись вовсе, и
+   * самый плотный из них — будильник с четырёхкнопочными сегментами и
+   * длинными подписями — оставался непроверенным именно на 360 px.
+   */
+  ...['account', 'look', 'alarm', 'sounds', 'day', 'data', 'devices'].map(k =>
+    [`Настройки · ${k}`, `window.__wgo('settings', ${JSON.stringify(k)})`]),
+  // Продвинутый будильник добавляет к разделу задачи, разрешения и сроки
+  ['Настройки · будильник продвинутый', `window.__wgo('settings','alarm');
+    setTimeout(()=>[...document.querySelectorAll('.wsegline button, .wseg button')].find(b=>b.textContent==='Продвинутый')?.click(),400)`],
+  // «Дела» есть только в телефонной раскладке — на компьютере шаг пустой
+  ['Дела (телефон)', `window.__wgo('tasks')`],
 ];
 
 const ШТОРКИ = [
   ['строка расписания', `${nav('Сейчас')};setTimeout(()=>${openRowLike},600)`],
+  ['строка расписания · длится', `[...document.querySelectorAll('.wmodal .wtile-cap')].find(c=>c.textContent==='длится')?.parentElement.click()`],
+  ['строка расписания · повтор по дням', `[...document.querySelectorAll('.wmodal .wchip-sheet')].find(c=>c.textContent==='Еженедельно')?.click()`],
   ['строка расписания · закрыть', closeSheet],
+  ['напоминание', `window.__wopen('reminder')`],
+  ['напоминание · закрыть', closeSheet],
   ['приём пищи', `[...document.querySelectorAll('.wadd')].find(b=>b.textContent.includes('приём пищи'))?.click()`],
   ['приём пищи · окно', `[...document.querySelectorAll('.wmodal .wopt')].find(o=>o.textContent.includes('Окно'))?.click()`],
   ['приём пищи · точное время', `[...document.querySelectorAll('.wmodal .wopt')].find(o=>o.textContent.includes('Точное'))?.click()`],
@@ -226,6 +251,15 @@ const ШТОРКИ = [
   ['аккаунт · закрыть', closeSheet],
   ['печать', `[...document.querySelectorAll('.wtop .wbtn-ghost, .wpbtn')].find(b=>b.textContent.includes('Печать'))?.click()`],
   ['печать · закрыть', closeSheet],
+  /*
+   * Остальные шторки открываем зацепкой: кнопки к ним лежат в разных разделах,
+   * и путь «зайти-нажать» ломался бы от любой смены подписи. Не проверялись
+   * вовсе: календарь, звуки, выгрузка, загрузка, общее расписание, строка
+   * шаблона, заметка, питание на день, расписание дня целиком.
+   */
+  ...['calendar', 'sound', 'file', 'import', 'template', 'tplRow', 'note', 'food', 'schedule'].map(m =>
+    [`шторка ${m}`, `document.querySelector('.wmodal-x')?.click(); window.__wopen(${JSON.stringify(m)})`]),
+  ['последняя шторка · закрыть', closeSheet],
 ];
 
 for (const scale of SCALES) {
@@ -286,4 +320,5 @@ await fs.writeFile(path.join(OUT, 'overflow.json'), JSON.stringify(найден�
 console.log('Подробности: tools/.shots/overflow.json');
 
 proc.kill();
+await tmp.release(profile);
 process.exit(найдено.length ? 1 : 0);

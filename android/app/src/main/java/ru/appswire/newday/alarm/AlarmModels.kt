@@ -18,6 +18,30 @@ data class Alarm(
     val kind: String,          // "alarm" | "notify"
     val profile: String,       // "wakeup" | "gentle"
     val date: String,          // YYYY-MM-DD, для перехода в нужный день
+    /*
+     * Переставлен кнопкой «Отложить» на самом телефоне.
+     *
+     * Веб-часть о такой перестановке не знает и знать не может: она присылает
+     * расписание, а не то, что человек нажал на экране будильника в 07:02.
+     * Присланный список заменяет всё, что стоит на устройстве, — и отложенный
+     * будильник, чьё исходное время уже прошло, снимался первой же
+     * синхронизацией. Отметка велит планировщику его сохранить.
+     */
+    val snoozed: Boolean = false,
+    /*
+     * Местное время, которое человек видел, когда будильник ставился, — «07:00».
+     *
+     * Веб-часть присылает только момент эпохи (fireAt), и этого достаточно,
+     * пока телефон стоит на месте. После перелёта тот же момент — уже другое
+     * местное время: «подъём в 07:00» звонит по прежнему поясу, пока
+     * приложение не откроют. Отметку выводит нативная часть при постановке —
+     * из fireAt и текущего пояса, — и по ней пересчитывает fireAt, когда пояс
+     * меняется. Формат обмена с вебом от этого не меняется вовсе.
+     *
+     * Пусто — отметки нет: так выглядят будильники, поставленные прежней
+     * сборкой, проверочный и отложенные. Они продолжают звонить по fireAt.
+     */
+    val localHm: String = "",
 ) {
     val isAlarm get() = kind == "alarm"
     val isWakeup get() = profile == "wakeup"
@@ -30,6 +54,8 @@ data class Alarm(
         put("kind", kind)
         put("profile", profile)
         put("date", date)
+        put("snoozed", snoozed)
+        put("localHm", localHm)
     }
 
     companion object {
@@ -41,6 +67,8 @@ data class Alarm(
             kind = o.optString("kind", "alarm"),
             profile = o.optString("profile", "gentle"),
             date = o.optString("date", ""),
+            snoozed = o.optBoolean("snoozed", false),
+            localHm = o.optString("localHm", ""),
         )
 
         fun listFromJson(arr: JSONArray): List<Alarm> =

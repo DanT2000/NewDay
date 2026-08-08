@@ -125,10 +125,23 @@ function createApp({ db, config, fetchImpl, env = process.env }) {
    */
   app.use('/api/admin', adminPanelRouter({ db, config, ai, access, push, cleanup }));
 
+  /**
+   * Пишущий метод требует scope=write. Одна и та же проверка нужна и старым
+   * путям, и /api/v1: она была только на /api/v1, и токен «только чтение»
+   * спокойно переписывал день через /api/days, а через /api/import в режиме
+   * «заменить» стирал человеку всё. Ставится всегда после requireAuth —
+   * без req.auth проверять нечего.
+   */
+  const requireWrite = (req, res, next) =>
+    ['GET', 'HEAD', 'OPTIONS'].includes(req.method)
+      ? next()
+      : auth.requireScope('write')(req, res, next);
+
   // Старые пути — до конца этапа 2, пока фронтенд не переписан.
   app.use('/api/auth', authRouter({ db, config, mailer, auth }));
-  app.use('/api', legacyRouter({ db, auth }));
-  app.use('/api', auth.requireAuth, exportRouter({ db }));   // /api/export/all — алиас внутри роутера
+  app.use('/api', legacyRouter({ db, auth, requireWrite }));
+  // /api/export/all — алиас внутри роутера
+  app.use('/api', auth.requireAuth, requireWrite, exportRouter({ db }));
 
   /*
    * Данные не кешируются браузером.
@@ -146,10 +159,7 @@ function createApp({ db, config, fetchImpl, env = process.env }) {
 
   // Всё остальное под /api/v1 требует аутентификации; пишущие методы — ещё и scope=write.
   app.use('/api/v1', auth.requireAuth);
-  app.use('/api/v1', (req, res, next) =>
-    ['GET', 'HEAD', 'OPTIONS'].includes(req.method)
-      ? next()
-      : auth.requireScope('write')(req, res, next));
+  app.use('/api/v1', requireWrite);
 
   app.use('/api/v1', tokensRouter({ db, auth }));
   /**
@@ -187,6 +197,12 @@ function createApp({ db, config, fetchImpl, env = process.env }) {
   app.get('/pair', (_req, res) => res.sendFile(path.join(__dirname, '../public/pair.html')));
   // админка живёт по короткому пути: /admin вводится руками, а не по ссылке
   app.get('/admin', (_req, res) => res.sendFile(path.join(__dirname, '../public/admin.html')));
+  /*
+   * Политика конфиденциальности — без расширения: этот адрес вписан в карточки
+   * Google Play и RuStore, и менять его потом нельзя, а «.html» в постоянной
+   * ссылке привязывал бы её к тому, чем страница сделана сегодня.
+   */
+  app.get('/privacy', (_req, res) => res.sendFile(path.join(__dirname, '../public/privacy.html')));
   /*
    * Заголовки кеша.
    *

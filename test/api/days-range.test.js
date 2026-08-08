@@ -120,3 +120,38 @@ test('чужие дни в период не попадают', async () => {
     assert.strictEqual(r.days[0].schedule.length, 0);
   } finally { await s.close(); }
 });
+
+/*
+ * Край календаря не должен ронять сервер.
+ *
+ * Сдвиг даты в getRange считался своей копией addDays, а не общей из
+ * lib/dates: она собирала результат через toISOString(), и 9999-12-31 + 1
+ * день превращалось в «+010000-01». Такая строка по-прежнему меньше конца
+ * периода, цикл шёл дальше — и на следующем шаге разбор этой строки
+ * заканчивался «внутренней ошибкой сервера» на совершенно законной дате.
+ */
+test('период у края календаря отвечает, а не падает', async () => {
+  const s = await loggedIn();
+  try {
+    for (const [from, to] of [['9999-12-31', '9999-12-31'], ['9999-12-01', '9999-12-31']]) {
+      const r = await api(s.url, s.cookie, 'GET',
+        `/api/v1/days/range?from=${from}&to=${to}`, undefined, {}, true);
+      assert.strictEqual(r.status, 200, `range ${from}..${to}`);
+      const body = await r.json();
+      assert.strictEqual(body.days[0].date, from);
+      assert.strictEqual(body.days.at(-1).date, to, 'последний день — запрошенный конец');
+      assert.strictEqual(body.truncated, false);
+    }
+  } finally { await s.close(); }
+});
+
+test('период не отдаёт дней больше, чем запрошено', async () => {
+  const s = await loggedIn();
+  try {
+    const r = await getJson(s.url, s.cookie,
+      `/api/v1/days/range?from=${today()}&to=${dayFromToday(2)}`);
+    assert.strictEqual(r.days.length, 3);
+    assert.strictEqual(r.to, dayFromToday(2));
+    assert.strictEqual(r.truncated, false);
+  } finally { await s.close(); }
+});

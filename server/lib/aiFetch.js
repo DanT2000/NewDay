@@ -40,10 +40,18 @@ function createAiFetch(db, { fetchImpl, now = () => Date.now() } = {}) {
       try {
         return await viaProxy(p, url, init);
       } catch (e) {
-        // Общий срок запроса вышел — перебирать остальных бессмысленно,
-        // человек уже получил таймаут
-        if (init.signal?.aborted) throw e;
+        /*
+         * Сбойным прокси считается и тот, на котором вышел общий срок
+         * запроса. Раньше эта ветка уходила наружу, ничего не запомнив, и
+         * прокси, который принимает соединение и молчит, забирал по целому
+         * таймауту у каждого следующего обращения — то есть помощник ломался
+         * навсегда, хотя рядом были живые прокси и прямой путь. Десять минут
+         * тишины лечат и этот случай: если срок съел не прокси, а сам
+         * провайдер, через десять минут прокси вернётся в перебор сам.
+         */
         failedUntil.set(p.id, now() + RETRY_MS);
+        // Перебирать остальных уже бессмысленно: человек получил свой таймаут
+        if (init.signal?.aborted) throw e;
       }
     }
     return plain(url, init);
@@ -69,11 +77,21 @@ async function viaProxy(p, url, init) {
   const cred = p.login
     ? `${encodeURIComponent(p.login)}:${encodeURIComponent(p.password || '')}@`
     : '';
+  /*
+   * Сигнал уходит и агенту, а не только запросу.
+   *
+   * Пока агент договаривается с прокси о туннеле, у запроса ещё нет сокета,
+   * и рвать по сигналу нечего: сокет к прокси живёт внутри агента. Без
+   * сигнала здесь прокси, принявший соединение и замолчавший, оставлял этот
+   * сокет открытым до конца жизни процесса. С сигналом net.connect гасит его
+   * сам, и туннель честно заканчивается ошибкой.
+   */
+  const { signal } = init;
   // socks5h, а не socks5: имена должны резолвиться на прокси. Локальный DNS
   // может не знать провайдера вовсе — сети, где нужен SOCKS, обычно такие.
   const agent = p.type === 'socks5'
-    ? new SocksProxyAgent(`socks5h://${cred}${p.host}:${p.port}`)
-    : new HttpsProxyAgent(`${p.type}://${cred}${p.host}:${p.port}`);
+    ? new SocksProxyAgent(`socks5h://${cred}${p.host}:${p.port}`, { socketOptions: { signal } })
+    : new HttpsProxyAgent(`${p.type}://${cred}${p.host}:${p.port}`, { signal });
 
   const target = new URL(url);
   const lib = target.protocol === 'http:' ? http : https;
@@ -94,9 +112,22 @@ async function viaProxy(p, url, init) {
       });
     });
 
-    // Таймаут снаружи (AbortSignal.timeout в aiService) должен рвать и
-    // туннель, и наружу уйти той же ошибкой TimeoutError
-    const onAbort = () => req.destroy(init.signal?.reason ?? new Error('aborted'));
+    /*
+     * Таймаут снаружи (AbortSignal.timeout в aiService) должен рвать и
+     * туннель, и наружу уйти той же ошибкой TimeoutError.
+     *
+     * Отказываем здесь сами, а не ждём события от запроса. Пока агент ещё
+     * договаривается с прокси о туннеле, у запроса нет сокета, и destroy()
+     * в этот момент не даёт ни 'error', ни 'close' — промис не завершался
+     * никогда. Прокси, который принял соединение и замолчал, так и держал
+     * каждое обращение к помощнику до конца жизни процесса, несмотря на
+     * таймаут: человек не получал ни ответа, ни отказа.
+     */
+    const onAbort = () => {
+      const reason = init.signal?.reason ?? new Error('aborted');
+      req.destroy(reason);
+      reject(reason);
+    };
     init.signal?.addEventListener('abort', onAbort, { once: true });
 
     req.on('error', err => {

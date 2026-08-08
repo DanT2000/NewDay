@@ -149,6 +149,17 @@
 .adm-user b { font: var(--t-body-md); }
 .adm-user span { font: var(--t-small); color: var(--ink-3); }
 
+/*
+ * Состояние доступа — под адресом, а не в столбце действий.
+ *
+ * В действиях остались два значка, и место там узкое: подписи «Закрыть доступ»
+ * и «Удалить окончательно» там не помещались и разъезжались в две строки. А
+ * рядом с адресом по вертикали место есть, и «доступ закрыт» читается там как
+ * свойство человека, а не как кнопка.
+ */
+.adm-user-state { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; margin-top: 3px; }
+.adm-user-till { font: var(--t-small); color: var(--ink-3); }
+
 /* ── Приглашения ──────────────────────────────────────────── */
 .adm-invite { display: grid; gap: var(--s-2); padding: var(--s-3) var(--s-2); }
 .adm-invite + .adm-invite { border-top: 1px solid var(--hairline); }
@@ -251,8 +262,33 @@
   border-color: var(--c-danger);
 }
 
-/* Действия над пользователем: кнопки в строку, на узком — переносом */
-.adm-user-actions { display: flex; gap: var(--s-2); align-items: center; flex-wrap: wrap; }
+/* Действия над пользователем: два значка, в одну строку и без переносов */
+.adm-user-actions { display: flex; gap: var(--s-2); align-items: center; white-space: nowrap; }
+/* Корзина опасная — краснеет под курсором, но только когда ей можно нажать */
+.adm-kill:not(:disabled):hover { background: var(--c-danger-soft, var(--surface-2)); color: var(--c-danger); }
+.adm-user-actions .icon-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/*
+ * Окно подтверждения перед удалением.
+ *
+ * Нативный `<dialog>`: затемнение, Esc и захват фокуса достаются бесплатно, а
+ * `confirm()` не даёт перечислить, что именно исчезнет.
+ */
+.adm-ask {
+  max-width: min(440px, calc(100vw - 2 * var(--s-4)));
+  padding: var(--s-4);
+  border: 1px solid var(--hairline-firm);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 24px 60px rgb(0 0 0 / .35);
+}
+.adm-ask::backdrop { background: rgb(0 0 0 / .5); }
+.adm-ask h3 { margin: 0 0 var(--s-2); font: var(--t-title); }
+.adm-ask p { margin: 0 0 var(--s-2); }
+.adm-ask-what { font: var(--t-small); color: var(--ink-2); line-height: 1.5; }
+.adm-ask-warn { font: var(--t-small); color: var(--c-danger); }
+.adm-ask-row { display: flex; gap: var(--s-2); justify-content: flex-end; margin-top: var(--s-3); }
 
 /* Секрет показывается один раз — пусть его будет удобно выделить целиком */
 .adm-token {

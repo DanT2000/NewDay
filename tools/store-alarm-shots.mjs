@@ -134,6 +134,32 @@ if (sh(ADB, ['install', '-r', '-g', APK]).status !== 0) {
 adb('shell', 'appops', 'set', PKG, 'SYSTEM_ALERT_WINDOW', 'allow');
 adb('shell', 'appops', 'set', PKG, 'SCHEDULE_EXACT_ALARM', 'allow');
 
+/*
+ * Переводим часы эмулятора на утро.
+ *
+ * На снимке будет крупное время, и «Подъём» в 16:01 читается как ошибка. Часы
+ * ставим ДО постановки будильника: приёмник смены времени пересчитывает уже
+ * стоящие будильники на то же местное время, и если поменять часы после, снимок
+ * поймает этот пересчёт вместо звонка.
+ *
+ * Права на смену времени есть только у root, и на google_apis-образах `adb root`
+ * проходит. Не прошло — не беда: снимок выйдет с той датой, что есть, и об этом
+ * сказано вслух, а не проглочено.
+ */
+{
+  sh(ADB, ['root']);
+  await wait(2500);
+  adb('wait-for-device');
+  const утро = '06:38:00';
+  adb('shell', 'su', '0', 'toybox', 'date', '-s', утро);
+  const стало = adb('shell', 'date', '+%H:%M');
+  if (/^0?6:3/.test(стало)) console.log(`часы эмулятора переведены на ${стало}`);
+  else console.log(`СТЕНД: часы перевести не удалось (на телефоне ${стало || 'неизвестно'}), снимаю как есть`);
+  sh(ADB, ['unroot']);
+  await wait(2500);
+  adb('wait-for-device');
+}
+
 // ── мост в вебвью ─────────────────────────────────────────────────────
 function forward() {
   const pid = adb('shell', 'pidof', PKG);
@@ -187,7 +213,15 @@ const cdp = (method, params = {}) => new Promise((res, rej) => {
 });
 
 let n = FROM - 1;
-async function shot(name) {
+/**
+ * Снять экран телефона и положить кадром 1080×1920 JPEG.
+ *
+ * `окно` — прямоугольник в долях кадра, яркость которого надо проверить. Нужен
+ * для видоискателя QR: первый прогон снял его чёрным с подписью «Открываю
+ * камеру…» — камера открывается не мгновенно, а по числам такой кадр ничем не
+ * отличается от нормального и молча уехал бы в магазин.
+ */
+async function shot(name, окно = null) {
   n += 1;
   adb('shell', 'screencap', '-p', '/sdcard/shot.png');
   const raw = join(chromeDir, 'shot.png');
@@ -199,6 +233,31 @@ async function shot(name) {
     <img src="data:image/png;base64,${b64}">`);
   await cdp('Page.navigate', { url: `file:///${page.replace(/\\/g, '/')}` });
   await wait(900);
+
+  if (окно) {
+    const r = await cdp('Runtime.evaluate', {
+      expression: `(() => {
+        const img = document.querySelector('img');
+        const c = document.createElement('canvas');
+        c.width = 1080; c.height = 1920;
+        c.getContext('2d').drawImage(img, 0, 0, 1080, 1920);
+        const [x, y, w, h] = [${окно.join(',')}].map((v, i) => Math.round(v * (i % 2 ? 1920 : 1080)));
+        const d = c.getContext('2d').getImageData(x, y, w, h).data;
+        let sum = 0;
+        for (let i = 0; i < d.length; i += 4) sum += (d[i] + d[i + 1] + d[i + 2]) / 3;
+        return Math.round(sum / (d.length / 4));
+      })()`,
+      returnByValue: true,
+    });
+    const яркость = r.result?.value ?? -1;
+    if (яркость < 12) {
+      console.error(`  ${name}: видоискатель почти чёрный (яркость ${яркость}) — камера не успела открыться`);
+      process.exitCode = 1;
+    } else {
+      console.log(`  ${name}: яркость видоискателя ${яркость} — картинка есть`);
+    }
+  }
+
   const s = await cdp('Page.captureScreenshot', { format: 'jpeg', quality: 92 });
   const file = join(OUT, `${String(n).padStart(2, '0')}-${name}.jpg`);
   const buf = Buffer.from(s.data, 'base64');
@@ -222,11 +281,35 @@ try {
 
   const base = "timeoutSec: 120, snoozeAllowed: false, volumeRamp: true, graceEnabled: false";
 
+  /*
+   * Ставим НАСТОЯЩИЙ будильник, а не проверочный.
+   *
+   * testAlarm показывает «⏰ Проверка будильника / Если вы это видите и слышите
+   * — будильник работает»: это текст диагностики из настроек, и в карточке
+   * магазина он читается как тестовая сборка. Метод schedule — тот самый путь,
+   * которым расписание приходит из веб-части, так что на снимке будет ровно то,
+   * что человек увидит утром. Менять текст в testAlarm ради снимка нельзя:
+   * приложение от этого не должно меняться.
+   */
+  const настоящий = (подпись, задержкаСек = 9) => `
+    Capacitor.Plugins.NewDayAlarm.schedule({
+      enabled: true,
+      alarms: [{
+        id: 900001,
+        fireAt: Date.now() + ${задержкаСек * 1000},
+        title: 'Подъём',
+        body: ${JSON.stringify(подпись)},
+        kind: 'alarm',
+        profile: 'wakeup',
+        date: new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10),
+      }],
+    }).then(r => JSON.stringify(r))`;
+
   // 1. Математика — то, чем будильник держит человека, пока он не проснётся
   await startApp();
   evalJs(`Capacitor.Plugins.NewDayAlarm.setConfig({ config: { types: ['math'], count: 2, difficulty: 2, ${base} } }).then(() => 'ok')`);
   adb('logcat', '-c');
-  evalJs(`Capacitor.Plugins.NewDayAlarm.testAlarm({ delaySec: 8, profile: 'wakeup' })`);
+  evalJs(настоящий('Зарядка и душ'));
   adb('shell', 'input', 'keyevent', 'KEYCODE_SLEEP');
   if (await awaitScreen()) await shot('будильник-задача');
   else console.log('  экран будильника не поднялся');
@@ -235,10 +318,15 @@ try {
   await startApp();
   evalJs(`Capacitor.Plugins.NewDayAlarm.setConfig({ config: { types: ['qr'], count: 1, ${base}, qrValue: 'кухня', qrLabel: 'на чайнике', rescueAfterSec: 300 } }).then(() => 'ok')`);
   adb('logcat', '-c');
-  evalJs(`Capacitor.Plugins.NewDayAlarm.testAlarm({ delaySec: 8, profile: 'wakeup' })`);
+  evalJs(настоящий('Зарядка и душ'));
   adb('shell', 'input', 'keyevent', 'KEYCODE_SLEEP');
-  if (await awaitScreen()) await shot('будильник-qr');
-  else console.log('  экран QR не поднялся');
+  if (await awaitScreen()) {
+    // Камере нужно время открыться: сразу после появления экрана видоискатель
+    // ещё чёрный, и подпись под ним честно говорит «Открываю камеру…»
+    await wait(8000);
+    // Окно проверки — сам видоискатель: доли кадра x, y, ширина, высота
+    await shot('будильник-qr', [0.12, 0.48, 0.76, 0.28]);
+  } else console.log('  экран QR не поднялся');
 
   adb('shell', 'am', 'force-stop', PKG);
 } finally {

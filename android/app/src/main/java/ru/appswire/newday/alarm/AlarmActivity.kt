@@ -12,6 +12,8 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import android.widget.FrameLayout
 import android.widget.GridLayout
 import android.widget.LinearLayout
@@ -60,6 +62,7 @@ class AlarmActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         showOverLockScreen()
+        blockBackExit()
 
         ui = Ui(this)
         accent = Style.accent(AlarmStore.accent(this))
@@ -647,7 +650,30 @@ class AlarmActivity : Activity() {
         startActivity(launch)
     }
 
-    /** Кнопка «назад» будильник не выключает. */
+    /**
+     * Кнопка «назад» будильник не выключает.
+     *
+     * С Android 13 появился второй способ уйти назад — жест, и он идёт мимо
+     * `onBackPressed`: система зовёт зарегистрированный OnBackInvokedCallback, а
+     * если его нет, сама закрывает экран. Приложениям с targetSdk 36 (наш
+     * случай) этот путь включён по умолчанию, то есть на Android 16 будильник
+     * смахивался жестом: экран закрывался, задача не решалась, а звук
+     * продолжал играть из службы — выключить его было уже нечем, кроме
+     * уведомления, которое поднимает тот же экран заново.
+     *
+     * Поэтому на 13+ вешаем пустой обработчик: он перехватывает и жест, и
+     * кнопку. `onBackPressed` остаётся для Android 6..12, где этого механизма
+     * ещё нет.
+     */
+    private fun blockBackExit() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        onBackInvokedDispatcher.registerOnBackInvokedCallback(
+            OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+            OnBackInvokedCallback { /* игнорируем: экран нельзя покинуть, не решив задачу */ },
+        )
+    }
+
+    @Suppress("GestureBackNavigation")
     @Deprecated("Намеренно: экран нельзя покинуть, не решив задачу")
     override fun onBackPressed() { /* игнорируем */ }
 

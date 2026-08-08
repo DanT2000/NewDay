@@ -53,7 +53,38 @@
 }
 .auth-footer + .auth-footer { margin-top: var(--s-2); }
 
-/* ── Свой сервер: строчка под формой ───────────────────────── */
+/* ── Выбор сервера: два варианта, один выбран ───────────────── */
+
+/*
+ * Не строчка «Сервер: newday.appswire.ru», а выбор из двух.
+ *
+ * Строчка с адресом ничего не предлагала выбрать, а поле под ней открывалось
+ * уже заполненным нашим же адресом — и всё вместе читалось как «поле было тут
+ * всегда». Здесь наш сервер назван по имени и выглядит выбранным, а поле для
+ * адреса появляется только под вторым вариантом.
+ */
+.srv-pick {
+  display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-2);
+  margin-top: var(--s-5);
+}
+.srv-opt {
+  display: grid; gap: 2px; padding: 10px 12px; text-align: left;
+  border: 1px solid var(--hairline-firm); border-radius: 12px;
+  background: var(--surface); color: var(--ink-2);
+  cursor: pointer; transition: border-color .12s, background .12s, color .12s;
+}
+.srv-opt b { font: var(--t-body-md); }
+.srv-opt span { font: var(--t-micro); color: var(--ink-3); }
+.srv-opt:hover { border-color: var(--c-day); }
+/* Выбранный вариант — заливкой, а не только рамкой: рамку на телефоне не видно */
+.srv-opt[aria-pressed="true"] {
+  border-color: var(--c-day); background: var(--c-day-soft); color: var(--c-day);
+}
+.srv-opt[aria-pressed="true"] span { color: var(--c-day); opacity: .75; }
+/* Совсем узкий экран: два варианта в столбик, иначе подписи ломаются */
+@media (max-width: 360px) {
+  .srv-pick { grid-template-columns: 1fr; }
+}
 
 /*
  * Кнопка, которая выглядит ссылкой: это переключатель вида, а не действие,

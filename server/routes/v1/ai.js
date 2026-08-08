@@ -31,7 +31,7 @@ module.exports = function aiRouter({ ai, access }) {
     const text = String(req.body?.text ?? '').trim();
     if (!text) throw badRequest('Нет текста');
     if (text.length > MAX_TEXT) throw badRequest('Слишком длинный текст');
-    access.gate(req.user);
+    access.gate(req.user, res);
     ready(ai);
 
     const r = await ai.parse({
@@ -51,7 +51,7 @@ module.exports = function aiRouter({ ai, access }) {
     const text = String(req.body?.text ?? '').trim();
     if (!text) throw badRequest('Нет текста');
     if (text.length > MAX_TEXT) throw badRequest('Слишком длинный текст');
-    access.gate(req.user);
+    access.gate(req.user, res);
     ready(ai);
 
     const r = await ai.improve({ userId: req.user.id, text });
@@ -65,7 +65,7 @@ module.exports = function aiRouter({ ai, access }) {
    * а хранить чужие голоса на сервере — лишняя ответственность.
    */
   router.post('/transcribe', wrap(async (req, res) => {
-    access.gate(req.user);
+    access.gate(req.user, res);
     if (!ai.status().voice) {
       throw new ApiError(503, 'AI_OFF', 'Распознавание речи не подключено');
     }

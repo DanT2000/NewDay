@@ -2,9 +2,17 @@ const { notFound } = require('../lib/errors');
 const { generateSecret, formatToken, parseToken, hashToken, safeEqual } = require('../lib/secrets');
 
 const LAST_USED_THROTTLE_MS = 60 * 1000;
-const lastUsedCache = new Map(); // id → timestamp, чтобы не писать в базу на каждый запрос
 
 function tokensRepo(db) {
+  /*
+   * Троттлинг last_used_at — на экземпляр репозитория, а не на модуль (то же,
+   * что у devices): общий на процесс кеш ключуется одним номером строки и
+   * путал токены разных баз, когда в одном процессе живут несколько
+   * экземпляров. Второй токен с тем же номером считался только что
+   * отмеченным и навсегда оставался в списке «ни разу не использованным» —
+   * а это единственный признак, по которому забытый токен отличают от живого.
+   */
+  const lastUsedCache = new Map();   // id → когда отметку писали в базу
   const self = {
     list(userId) {
       return db.prepare(`

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { loggedIn, api, getJson, post } = require('../helpers/client');
+const { loggedIn, api, getJson, post, today } = require('../helpers/client');
 
 test('токен создаётся, секрет показывается один раз', async () => {
   const s = await loggedIn();
@@ -29,6 +29,75 @@ test('read-токен читает, но не пишет', async () => {
     assert.strictEqual(write.status, 403);
     assert.strictEqual((await write.json()).error.code, 'INSUFFICIENT_SCOPE');
   } finally { await s.close(); }
+});
+
+/*
+ * Прав «только чтение» не должно хватать нигде, а не только под /api/v1.
+ *
+ * Проверка scope висела на одном мониторе — /api/v1, — а старые пути (/api/days,
+ * /api/habits) и выгрузка с загрузкой смонтированы прямо под /api и требовали
+ * лишь входа. Токен, выданный для чтения, мог переписать день, завести привычку
+ * и — через /api/import в режиме «заменить» — стереть человеку всё.
+ */
+test('read-токен не пишет и на старых путях', async () => {
+  const s = await loggedIn();
+  try {
+    const { token } = await api(s.url, s.cookie, 'POST', '/api/v1/tokens', { name: 'ro', scope: 'read' });
+    const h = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    const d = today();
+
+    // сначала кладём день сессией — потом смотрим, что токен его не тронул
+    await api(s.url, s.cookie, 'PUT', `/api/days/${d}`, { title: 'Мой день' });
+
+    const cases = [
+      ['POST', `/api/days`, { date: d, title: 'угнал' }],
+      ['PUT', `/api/days/${d}`, { title: 'угнал' }],
+      ['DELETE', `/api/days/${d}`, undefined],
+      ['POST', '/api/habits', { title: 'чужая привычка' }],
+      ['POST', '/api/import', { mode: 'replace', data: { formatVersion: 1, days: [] } }],
+    ];
+    for (const [method, path, body] of cases) {
+      const res = await fetch(`${s.url}${path}`, {
+        method, headers: h, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      assert.strictEqual(res.status, 403, `${method} ${path} должен быть закрыт для read-токена`);
+      assert.strictEqual((await res.json()).error.code, 'INSUFFICIENT_SCOPE', `${method} ${path}`);
+    }
+
+    // читать по-прежнему можно, и день остался на месте
+    const read = await fetch(`${s.url}/api/days/${d}`, { headers: h });
+    assert.strictEqual(read.status, 200);
+    assert.strictEqual((await read.json()).title, 'Мой день');
+    const habits = await fetch(`${s.url}/api/habits`, { headers: h });
+    assert.strictEqual((await habits.json()).length, 0, 'привычка не завелась');
+  } finally { await s.close(); }
+});
+
+/*
+ * «Когда пользовались» — единственное, по чему в списке видно живой токен и
+ * забытый. Троттлинг записи держался в кеше на весь процесс и ключевался
+ * одним номером строки, поэтому токены разных баз с одинаковым номером
+ * считались одним и тем же: второй показывался как ни разу не использованный.
+ * Ровно это уже исправляли у устройств (repos/devices) — здесь осталось.
+ */
+test('«когда пользовались» пишется у каждого экземпляра базы', async () => {
+  const a = await loggedIn({ email: 'a@example.com' });
+  const b = await loggedIn({ email: 'b@example.com' });
+  try {
+    const ta = await api(a.url, a.cookie, 'POST', '/api/v1/tokens', { name: 'A', scope: 'read' });
+    const tb = await api(b.url, b.cookie, 'POST', '/api/v1/tokens', { name: 'B', scope: 'read' });
+    assert.strictEqual(ta.id, tb.id, 'номера строк в разных базах совпадают — на этом и ловилось');
+
+    for (const [srv, t] of [[a, ta], [b, tb]]) {
+      const r = await fetch(`${srv.url}/api/v1/tokens`, { headers: { Authorization: `Bearer ${t.token}` } });
+      assert.strictEqual(r.status, 200);
+    }
+
+    for (const srv of [a, b]) {
+      const list = await getJson(srv.url, srv.cookie, '/api/v1/tokens');
+      assert.ok(list[0].last_used_at, 'токеном только что пользовались — это должно быть видно');
+    }
+  } finally { await a.close(); await b.close(); }
 });
 
 test('отозванный токен не работает', async () => {

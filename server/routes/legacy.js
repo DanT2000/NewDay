@@ -18,8 +18,21 @@ const { statsService } = require('../services/statsService');
  * секции, которых нет в теле запроса. Старое поведение и было багом — обрыв связи
  * приводил к отправке {date} и уничтожал день целиком.
  */
-module.exports = function legacyRouter({ db, auth }) {
+module.exports = function legacyRouter({ db, auth, requireWrite }) {
   const router = express.Router();
+  /*
+   * Пишущим маршрутам нужен не только вход, но и scope=write.
+   *
+   * requireAuth здесь стоит на каждом маршруте по отдельности, поэтому
+   * проверку прав нельзя повесить на роутер целиком — она сработала бы
+   * раньше, чем появится req.auth. Отсюда пара «вход + права» на каждую
+   * запись: без неё токен «только чтение» переписывал день через /api/days.
+   *
+   * Падаем сразу, если проверку не передали. Мягкое «нет так нет» вернуло бы
+   * ту же дыру молча — а найти её потом можно только чужим токеном.
+   */
+  if (!requireWrite) throw new Error('legacyRouter: нужен requireWrite, иначе запись открыта токену «только чтение»');
+  const write = [auth.requireAuth, requireWrite];
   const days = daysRepo(db);
   const schedule = scheduleRepo(db);
   const tasks = tasksRepo(db);
@@ -103,7 +116,7 @@ module.exports = function legacyRouter({ db, auth }) {
     })));
   }));
 
-  router.post('/days', auth.requireAuth, wrap((req, res) => {
+  router.post('/days', write, wrap((req, res) => {
     const { date, ...rest } = req.body || {};
     writeSections(req.user, v.date(date, { field: 'дата' }), rest);
     res.json({ success: true, date });
@@ -124,13 +137,13 @@ module.exports = function legacyRouter({ db, auth }) {
     res.json(legacyDay(req.user, date));
   }));
 
-  router.put('/days/:date', auth.requireAuth, wrap((req, res) => {
+  router.put('/days/:date', write, wrap((req, res) => {
     const date = v.date(req.params.date, { field: 'дата' });
     writeSections(req.user, date, req.body || {});
     res.json({ success: true, date });
   }));
 
-  router.delete('/days/:date', auth.requireAuth, wrap((req, res) => {
+  router.delete('/days/:date', write, wrap((req, res) => {
     days.remove(req.user.id, v.date(req.params.date, { field: 'дата' }));
     res.json({ success: true });
   }));
@@ -140,7 +153,7 @@ module.exports = function legacyRouter({ db, auth }) {
     res.json(habits.list(req.user.id));
   }));
 
-  router.post('/habits', auth.requireAuth, wrap((req, res) => {
+  router.post('/habits', write, wrap((req, res) => {
     res.json(habits.create(req.user.id, {
       title: v.str(req.body.title, { max: 120, field: 'название' }),
       description: v.str(req.body.description, { max: 500, field: 'описание' }),
@@ -178,14 +191,14 @@ module.exports = function legacyRouter({ db, auth }) {
     })));
   }));
 
-  router.put('/habits/logs/:date/:habitId', auth.requireAuth, wrap((req, res) => {
+  router.put('/habits/logs/:date/:habitId', write, wrap((req, res) => {
     const date = v.date(req.params.date, { field: 'дата' });
     const id = v.int(req.params.habitId, { min: 1, field: 'id' });
     habits.setLog(req.user.id, id, date, { status: req.body.done ? 'done' : 'missed' });
     res.json({ success: true, done: Boolean(req.body.done) });
   }));
 
-  router.put('/habits/:id', auth.requireAuth, wrap((req, res) => {
+  router.put('/habits/:id', write, wrap((req, res) => {
     const data = {};
     if (req.body.title !== undefined) data.title = v.str(req.body.title, { max: 120, field: 'название' });
     if (req.body.description !== undefined) data.description = v.str(req.body.description, { max: 500, field: 'описание' });
@@ -195,7 +208,7 @@ module.exports = function legacyRouter({ db, auth }) {
     res.json(habits.update(req.user.id, v.int(req.params.id, { min: 1, field: 'id' }), data));
   }));
 
-  router.delete('/habits/:id', auth.requireAuth, wrap((req, res) => {
+  router.delete('/habits/:id', write, wrap((req, res) => {
     habits.archive(req.user.id, v.int(req.params.id, { min: 1, field: 'id' }));
     res.json({ success: true });
   }));

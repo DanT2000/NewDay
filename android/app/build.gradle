@@ -16,25 +16,26 @@ static String versionNameToCode(String name) {
 
 android {
     /*
-     * namespace и applicationId — разные вещи, и здесь они нарочно разные.
+     * ru.appswire.newday — и пакет кода, и идентификатор в магазине.
      *
-     * namespace — это пакет кода: по нему собирается класс R и по нему же
-     * разрешаются относительные имена в манифесте («.MainActivity»).
-     * Переименовать его значило бы перенести все исходники, и незачем.
+     * Правило простое: идентификатор — это домен владельца, записанный
+     * наоборот. Домен здесь appswire.ru, значит ru.appswire.newday. Вариант
+     * com.appswire.newday занимал бы appswire.com — чужой домен; вариант
+     * com.newday.appswire читается как домен appswire.newday.com, которого
+     * не существует.
      *
-     * applicationId — то, чем приложение зовётся в магазине. Он зарегистрирован
-     * как com.newday.appswire, менять нельзя.
+     * Полезное следствие: сборка с сайта раздавалась под этим же именем,
+     * поэтому магазинная встанет обновлением поверх неё — без двух значков
+     * и без просьбы «удалите старую версию».
      *
-     * ВАЖНО про обновления: приложение с прежним идентификатором
-     * ru.appswire.newday (то, что раздавал сайт) — для системы другое
-     * приложение. Обновиться поверх него магазинной сборкой нельзя: у людей
-     * будет два значка, пока они не удалят старую. Об этом сказано в
-     * PUBLISHING.md, и на сайте старую сборку надо снять.
+     * namespace (пакет кода: по нему собирается класс R и разрешается
+     * «.MainActivity» в манифесте) приходится писать отдельной строкой —
+     * AGP 8 требует его явно и из applicationId не выводит. Значение то же.
      */
     namespace "ru.appswire.newday"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.newday.appswire"
+        applicationId "ru.appswire.newday"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         /*
@@ -45,7 +46,7 @@ android {
          * как в CI. «1» по умолчанию было ловушкой: собранный руками релиз
          * уезжал в консоль с кодом 1 и навсегда занимал самый младший номер.
          */
-        versionName System.getenv("NEWDAY_VERSION_NAME") ?: "1.0.7"
+        versionName System.getenv("NEWDAY_VERSION_NAME") ?: "1.0.8"
         versionCode Integer.parseInt(System.getenv("NEWDAY_VERSION_CODE")
                 ?: versionNameToCode(versionName))
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"

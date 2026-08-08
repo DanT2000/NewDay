@@ -171,7 +171,13 @@ export const habits = day => (day?.habits ?? []).map(h => ({
 function habitMeta(h) {
   if (h.activeToday === false) return 'сегодня по графику выходной';
   const parts = [];
-  if (h.challenge) parts.push(`челлендж ${h.challenge.done ?? 0} из ${h.challenge.target ?? 0} дней`);
+  /*
+   * Поле зовётся `day`, а не `done`: сервер отдаёт «какой это день челленджа».
+   * С `done` счётчик всегда показывал ноль — «челлендж 0 из 300 дней» при
+   * серии в 46 дней, — и это выглядело поломкой самого челленджа. Остальные
+   * экраны (habits.js, stats.js) читают `day` и показывали правду.
+   */
+  if (h.challenge) parts.push(`челлендж ${h.challenge.day ?? 0} из ${h.challenge.target ?? 0} дней`);
   /*
    * У свободного графика серия подряд ничего не значит: обещание считается
    * за неделю. Поэтому вместо серии — норма недели.

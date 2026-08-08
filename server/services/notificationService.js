@@ -61,14 +61,35 @@ function inQuietHours(minutes, from, to) {
     : minutes >= from || minutes < to;
 }
 
+/**
+ * Настройки человека — свободный мешок ключ-значение (user_settings), и
+ * положить туда можно что угодно. А отсюда число уходит прямо в арифметику
+ * момента отправки, поэтому здесь у него обязаны быть границы: срок
+ * предупреждения в минус сто миллиардов минут уводил момент за предел
+ * представимых дат, и планирование падало «внутренней ошибкой» — вместе с
+ * подпиской на уведомления, то есть своими же настройками человек отрезал
+ * себе напоминания насовсем.
+ *
+ * Пределы те же, что у сроков отдельной строки (routes/v1/entities): неделя
+ * на срок предупреждения, сутки на тихие часы. Всё, что вне, — мусор, и
+ * читается как умолчание.
+ */
+const LEAD_MAX = 7 * 24 * 60;
+const DAY_MINUTES = 24 * 60;
+
 function settingsOf(users, user) {
   const raw = users.getSettings(user.id);
-  const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
+  const num = (v, d, max) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 && n <= max ? n : d;
+  };
   return {
     notifyEnabled: raw.notifyEnabled === undefined ? DEFAULTS.notifyEnabled : Boolean(raw.notifyEnabled),
-    notifyDefaultBeforeMin: num(raw.notifyDefaultBeforeMin, DEFAULTS.notifyDefaultBeforeMin),
-    quietFrom: raw.quietFrom === undefined || raw.quietFrom === null ? null : num(raw.quietFrom, null),
-    quietTo: raw.quietTo === undefined || raw.quietTo === null ? null : num(raw.quietTo, null),
+    notifyDefaultBeforeMin: num(raw.notifyDefaultBeforeMin, DEFAULTS.notifyDefaultBeforeMin, LEAD_MAX),
+    quietFrom: raw.quietFrom === undefined || raw.quietFrom === null
+      ? null : num(raw.quietFrom, null, DAY_MINUTES - 1),
+    quietTo: raw.quietTo === undefined || raw.quietTo === null
+      ? null : num(raw.quietTo, null, DAY_MINUTES - 1),
   };
 }
 

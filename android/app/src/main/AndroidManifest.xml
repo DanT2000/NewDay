@@ -9,8 +9,13 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
 
+        <!--
+            fontScale и density в configChanges: размер шрифта и размер экрана
+            человек меняет системным ползунком, и без них экран пересоздаётся —
+            начатое пропадает.
+        -->
         <activity
-            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|fontScale|density"
             android:name=".MainActivity"
             android:label="@string/title_activity_main"
             android:theme="@style/AppTheme.NoActionBarLaunch"
@@ -32,12 +37,25 @@
             configChanges обязателен: без него автопереключение тёмной темы
             «по рассвету» — ровно утреннее время — пересоздаёт экран, и
             человек, прошедший 28 шагов из 30, начинает считать с нуля.
+            По той же причине там fontScale и density: размер шрифта и размер
+            экрана меняются системным ползунком, и сделать это можно ровно в
+            момент звонка — спросонья по ошибке или чтобы разглядеть пример.
+            Проверено на эмуляторе: без них `settings put system font_scale
+            1.3` пересоздавал экран, и решённая задача «2 из 3» возвращалась
+            к «1 из 3».
+
+            directBootAware: до первой разблокировки система не пускает
+            обычные активности. Экран отключения умеет работать в этом
+            состоянии — всё, что ему нужно, лежит в device-protected
+            хранилище, — а без отметки он бы просто не поднялся, и телефон,
+            перезагрузившийся ночью, утром молчал бы.
         -->
         <activity
             android:name=".alarm.AlarmActivity"
             android:exported="false"
             android:launchMode="singleInstance"
-            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+            android:directBootAware="true"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|fontScale|density"
             android:excludeFromRecents="true"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
@@ -55,10 +73,18 @@
             android:screenOrientation="portrait"
             android:theme="@android:style/Theme.Material.NoActionBar" />
 
-        <!-- Держит звук и экран, пока будильник звонит -->
+        <!--
+            Держит звук и экран, пока будильник звонит.
+
+            directBootAware: звонок до первой разблокировки идёт через эту
+            службу, а неотмеченную службу система в этом состоянии не запустит.
+            Credential-хранилища она не касается: список и настройки читает из
+            device-protected, звук берёт из ассетов APK.
+        -->
         <service
             android:name=".alarm.AlarmService"
             android:exported="false"
+            android:directBootAware="true"
             android:foregroundServiceType="mediaPlayback|specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
@@ -81,8 +107,33 @@
             android:directBootAware="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <!--
+                    LOCKED_BOOT_COMPLETED — тот же смысл, но раньше и без пина.
+
+                    На телефонах с шифрованием файлов (почти всё, начиная с
+                    Android 10) BOOT_COMPLETED приходит только после первой
+                    разблокировки. Телефон, перезагрузившийся сам в три ночи —
+                    обновление системы, паника ядра, — до утра никто не
+                    отпирает: BOOT_COMPLETED не приходит, будильник никто не
+                    ставит заново, и в семь утра его нет вообще. Проверено на
+                    эмуляторе с пином: без этой строки после перезагрузки не
+                    звонило ничего, с ней — звонит поверх локскрина.
+                -->
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <!--
+                    Смена пояса и перевод часов: будильники стоят по абсолютному
+                    времени, и «подъём в 07:00» после перелёта звонит по прежнему
+                    поясу.
+
+                    У перевода часов действие называется TIME_SET, хотя константа
+                    в коде — ACTION_TIME_CHANGED. Действия
+                    «android.intent.action.TIME_CHANGED» не существует, и такой
+                    фильтр не сработал бы ни разу — молча, без единой ошибки.
+                -->
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
             </intent-filter>
         </receiver>
 

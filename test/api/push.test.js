@@ -359,3 +359,84 @@ test('приём пищи со своим блоком в расписании �
     assert.strictEqual(status.pending.length, 1, 'напоминает блок, а не оба');
   } finally { await s.close(); }
 });
+
+/*
+ * Настройки уведомлений — свободный мешок ключ-значение, и число оттуда
+ * попадает прямо в арифметику момента отправки. Никто его не проверял:
+ * «напомнить за» в минус сто миллиардов минут уводило момент за пределы
+ * представимых дат, и планирование падало «внутренней ошибкой». Ломался
+ * при этом не только пересчёт по кнопке — с той же настройкой перестала
+ * бы работать и подписка на уведомления, то есть человек своими же
+ * настройками отрезал бы себе напоминания насовсем.
+ */
+test('мусор в настройках уведомлений не роняет планирование', async () => {
+  const s = await loggedIn(withPush());
+  try {
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/schedule`,
+      { title: 'Созвон', startMin: 600, alarmMode: 'notify' });
+
+    for (const settings of [
+      { notifyDefaultBeforeMin: -1e20 },
+      { notifyDefaultBeforeMin: 1e20 },
+      { notifyDefaultBeforeMin: 'не число' },
+      { quietFrom: 1e18, quietTo: -5 },
+    ]) {
+      await api(s.url, s.cookie, 'PATCH', '/api/v1/settings', { settings });
+      const r = await api(s.url, s.cookie, 'POST', '/api/v1/push/replan', {}, {}, true);
+      assert.strictEqual(r.status, 200, `настройки ${JSON.stringify(settings)}`);
+      const sub = await api(s.url, s.cookie, 'POST', '/api/v1/push/subscribe',
+        { subscription: SUB }, {}, true);
+      assert.strictEqual(sub.status, 201, `подписка при ${JSON.stringify(settings)}`);
+    }
+
+    // с невозможным значением работает умолчание: за 10 минут до начала
+    const status = await getJson(s.url, s.cookie, '/api/v1/push/status');
+    assert.strictEqual(status.settings.notifyDefaultBeforeMin, 10);
+    const planned = status.pending.find(p => p.payload.body.includes('Созвон'));
+    assert.ok(planned, 'напоминание всё-таки запланировано');
+    assert.strictEqual(new Date(planned.fireAt).toISOString(), `${tomorrow}T06:50:00.000Z`);
+  } finally { await s.close(); }
+});
+
+/*
+ * Блок расписания, за который цепляется приём пищи, обязан быть своим.
+ *
+ * Номер блока приходит от клиента и никем не сверялся. А планировщик по
+ * этой ссылке решает «за него напомнит блок» и сам молчит — значит, чужой
+ * или несуществующий номер выключал напоминание насовсем: колокольчик у
+ * приёма пищи горит, срок задан, а уведомление не приходит никогда.
+ */
+test('приём пищи нельзя привязать к чужому блоку расписания', async () => {
+  const s = await loggedIn(withPush());
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/push/subscribe', { subscription: SUB });
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+
+    const other = await loggedIn({ email: 'other@example.com', server: s.srv });
+    const alien = await api(other.url, other.cookie, 'POST', `/api/v1/days/${tomorrow}/schedule`,
+      { title: 'Чужой блок', startMin: 720 });
+
+    const bad = await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/meals`,
+      { title: 'Обед', timeMin: 780, remindBefore: [15], scheduleItemId: alien.id }, {}, true);
+    assert.strictEqual(bad.status, 404, 'чужой блок не подходит');
+
+    const ghost = await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/meals`,
+      { title: 'Обед', timeMin: 780, remindBefore: [15], scheduleItemId: 100500 }, {}, true);
+    assert.strictEqual(ghost.status, 404, 'несуществующий блок тоже');
+
+    // свой приём пищи без блока напоминает как обычно
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/meals`,
+      { title: 'Обед', timeMin: 780, remindBefore: [15] });
+    const status = await getJson(s.url, s.cookie, '/api/v1/push/status');
+    assert.strictEqual(status.pending.length, 1, 'напоминание об обеде на месте');
+
+    // и правкой чужой номер тоже не подсунуть
+    const mine = (await getJson(s.url, s.cookie, `/api/v1/days/${tomorrow}/full`)).meals[0];
+    const patched = await api(s.url, s.cookie, 'PATCH', `/api/v1/days/${tomorrow}/meals/${mine.id}`,
+      { scheduleItemId: alien.id }, {}, true);
+    assert.strictEqual(patched.status, 404);
+    const after = await getJson(s.url, s.cookie, '/api/v1/push/status');
+    assert.strictEqual(after.pending.length, 1, 'напоминание не потерялось');
+  } finally { await s.close(); }
+});

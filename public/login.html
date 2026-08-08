@@ -35,26 +35,22 @@
         <input type="password" id="password" name="password" autocomplete="current-password" placeholder="Ваш пароль" required>
       </div>
       <!--
-        Свой сервер — по кнопке, а не полем на виду.
+        Поле адреса — пустое и только под выбором «Свой сервер».
 
-        Почти все пользуются нашим, и поле с адресом на входе пугает: человек
-        видит его и думает, что должен что-то заполнить. Поэтому по умолчанию
-        внизу одна строчка «Сервер: newday.appswire.ru», и только тем, у кого
-        свой, она разворачивается в поле.
+        Заполненным нашим же адресом оно читалось так, будто было тут всегда, а
+        «свой сервер» лишь добавляет строчку ввода. Сам выбор рисует
+        /js/server-pick.js под формой.
       -->
       <div class="form-group" id="server-group" hidden>
-        <label for="server">Адрес своего сервера</label>
-        <input type="url" id="server" value="https://newday.appswire.ru" placeholder="https://newday.example.com">
+        <label for="server">Адрес вашего сервера</label>
+        <input type="url" id="server" placeholder="https://newday.example.com" autocomplete="url">
         <p class="form-hint">Полный адрес с https:// — тот, где стоит ваш NewDay</p>
       </div>
       <div id="error-msg" class="form-error" style="display:none"></div>
       <button type="submit" class="btn btn-primary btn-block">Войти</button>
     </form>
 
-    <p class="auth-footer" id="server-line" hidden>
-      Сервер: <b id="server-now">newday.appswire.ru</b> ·
-      <button type="button" class="link-btn" id="server-switch">свой сервер</button>
-    </p>
+    <div id="server-pick" hidden></div>
     <p class="auth-footer" id="reg-link">Нет аккаунта? <a href="/register.html">Зарегистрироваться</a></p>
     <p class="auth-footer"><a href="/reset.html">Забыли пароль?</a></p>
     <!--
@@ -70,16 +66,19 @@
      * Проверка обновления и на экране входа.
      *
      * Устаревшее приложение может не суметь войти вовсе, а обновиться должно —
-     * поэтому вопрос задаём до входа, а не только внутри. Адрес сервера уже
-     * известен: он либо сохранён с прошлого раза, либо стоит в поле.
+     * поэтому вопрос задаём до входа, а не только внутри.
      */
     if (window.Capacitor?.isNativePlatform?.()) {
       // приложение уже здесь — предлагать его скачать незачем
       document.getElementById('get-app')?.remove();
-      const saved = localStorage.getItem('newday.apiBase');
-      if (!saved) {
-        const fallback = document.getElementById('server')?.value?.trim();
-        if (fallback) localStorage.setItem('newday.apiBase', fallback.replace(/\/+$/, ''));
+      /*
+       * Первый запуск: адреса ещё нет, и проверке обновления надо куда-то
+       * идти. Раньше он брался из поля, но поле теперь пустое — пишем наш
+       * адрес прямо. Свой сервер человек выберет ниже, и он же запишется при
+       * входе.
+       */
+      if (!localStorage.getItem('newday.apiBase')) {
+        localStorage.setItem('newday.apiBase', 'https://newday.appswire.ru');
       }
       import('/js/update.js')
         .then(u => u.check('startup'))
@@ -87,7 +86,9 @@
     }
   </script>
 
-  <script>
+  <script type="module">
+    import { mountServerPick, DEFAULT_BASE } from '/js/server-pick.js';
+
     /*
      * Ссылка «Зарегистрироваться» — только когда регистрация открыта.
      * Администратор может закрыть её и впускать по приглашениям; вести
@@ -97,7 +98,7 @@
     (() => {
       // в приложении API живёт на сервере, а не на localhost вебвью
       const cfgBase = window.Capacitor?.isNativePlatform?.()
-        ? (localStorage.getItem('newday.apiBase') || 'https://newday.appswire.ru').replace(/\/+$/, '')
+        ? (localStorage.getItem('newday.apiBase') || DEFAULT_BASE).replace(/\/+$/, '')
         : '';
       fetch(cfgBase + '/api/v1/auth/config').then(r => r.json()).then(c => {
         if (c && c.registrationOpen === false) document.getElementById('reg-link')?.remove();
@@ -107,37 +108,15 @@
     const native = Boolean(window.Capacitor?.isNativePlatform?.());
 
     /*
-     * Свой сервер прячется, пока не понадобится.
-     *
-     * Строчка «Сервер: newday.appswire.ru · свой сервер» стоит под формой:
-     * тем, кто пользуется нашим, ничего заполнять не надо, а у кого свой —
-     * одно нажатие разворачивает поле. Прежнее поле на виду читалось как
-     * обязательное и пугало на первом же экране.
-     *
-     * Показываем строчку только в приложении: в браузере страница уже лежит
-     * на нужном сервере, и выбирать нечего.
+     * Выбор сервера — только в приложении: в браузере страница уже лежит на
+     * нужном сервере, и выбирать нечего.
      */
+    let pick = null;
     if (native) {
-      const line = document.getElementById('server-line');
-      const group = document.getElementById('server-group');
-      const input = document.getElementById('server');
-      const now = document.getElementById('server-now');
-      const DEFAULT_BASE = 'https://newday.appswire.ru';
-      const saved = (localStorage.getItem('newday.apiBase') || '').replace(/\/+$/, '');
-      if (saved) input.value = saved;
-
-      const host = url => String(url || '').replace(/^https?:\/\//, '').replace(/\/+$/, '');
-      now.textContent = host(saved || DEFAULT_BASE);
-      line.hidden = false;
-      // адрес уже свой — поле открыто сразу: человек его и так задал
-      if (saved && saved !== DEFAULT_BASE) group.hidden = false;
-
-      document.getElementById('server-switch').addEventListener('click', () => {
-        group.hidden = !group.hidden;
-        if (!group.hidden) input.focus();
-      });
-      input.addEventListener('input', () => {
-        now.textContent = host(input.value) || host(DEFAULT_BASE);
+      pick = mountServerPick({
+        mount: document.getElementById('server-pick'),
+        group: document.getElementById('server-group'),
+        input: document.getElementById('server'),
       });
     }
 
@@ -152,10 +131,13 @@
       const errEl = document.getElementById('error-msg');
       errEl.style.display = 'none';
 
-      const serverInput = document.getElementById('server');
-      const base = native
-        ? (serverInput?.value || 'https://newday.appswire.ru').replace(/\/+$/, '')
-        : '';
+      /*
+       * Адрес берём у переключателя, а не из поля.
+       *
+       * Из поля он уходил в запрос даже когда поле было скрыто: свернул выбор
+       * обратно на NewDay — а вход всё равно шёл на чужой сервер.
+       */
+      const base = native ? pick.base() : '';
       if (native) localStorage.setItem('newday.apiBase', base);
 
       const body = {

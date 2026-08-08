@@ -17,8 +17,8 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import tmp from './lib/tmp.js';
 
 const PORT = 9337;
 const BASE = 'http://127.0.0.1:4010';
@@ -30,7 +30,12 @@ const EDGE = BROWSERS.find(b => { try { fsSync.accessSync(b); return true; } cat
 if (!EDGE) { console.error('Не нашёл ни Edge, ни Chrome'); process.exit(1); }
 const OUT = path.join(import.meta.dirname, '.shots');
 
-const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'newday-web2-'));
+/*
+ * Профиль браузера — в .tmp проекта, не в системном %TEMP%.
+ * Модуль сам уберёт каталог: и по release() ниже, и хуком на выходе,
+ * если прогон закончится раньше — через process.exit() или падением.
+ */
+const profile = tmp.tempDir('web-live');
 const proc = spawn(EDGE, [
   '--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
   '--window-size=1440,900', '--hide-scrollbars', '--no-first-run', 'about:blank',
@@ -98,6 +103,11 @@ const DAY_LABEL = (() => {
   const [, m, d] = DAY.split('-').map(Number);
   return `${d} ${MONTHS_RU[m - 1]}`;
 })();
+/** Так же подписан следующий день: им проверяется переход суток. */
+const подписьДня = key => {
+  const [, m, d] = key.split('-').map(Number);
+  return `${d} ${MONTHS_RU[m - 1]}`;
+};
 /** Тот же день через год: им проверяется ежегодный повтор. */
 const NEXT_YEAR = `${Number(DAY.slice(0, 4)) + 1}${DAY.slice(4)}`;
 
@@ -1163,6 +1173,30 @@ const питаниеУбрано = await js(`fetch('/api/v1/days/${DAY}/full').t
 await nav('Привычки');
 await waitFor('Boolean(document.querySelector(".whabits"))');
 await wait(600);
+
+/*
+ * Счётчик челленджа сверяем с тем, что отдал сервер.
+ *
+ * Подпись читала `challenge.done`, которого в ответе нет — поле зовётся `day`.
+ * Из-за этого на экране всегда стоял ноль: «челлендж 0 из 300 дней» при серии
+ * в 46 дней. Поймать такое можно только сверкой с сервером: сама по себе
+ * подпись выглядит совершенно правдоподобно.
+ */
+const челлендж = await js(`(async () => {
+  const r = await fetch('/api/v1/days/${DAY}/full').then(x => x.json());
+  const h = (r.habits ?? []).find(x => x.challenge);
+  if (!h) return 'челленджа нет в засеве';
+  const подпись = [...document.querySelectorAll('.whabit-meta')]
+    .map(m => m.textContent ?? '').find(t => t.includes('челлендж'));
+  const видно = (подпись ?? '').match(/челлендж (\\d+) из (\\d+)/);
+  return JSON.stringify({ ждём: h.challenge.day, видно: видно ? Number(видно[1]) : null });
+})()`, true);
+{
+  const c = челлендж.startsWith('{') ? JSON.parse(челлендж) : null;
+  проба('счётчик челленджа показывает день с сервера, а не ноль',
+    Boolean(c && c.ждём > 0 && c.видно === c.ждём), челлендж);
+}
+
 await js(`document.querySelector('.whabit-more').click()`);
 // заголовок честный: у существующей — «Привычка», «Новая» только у новой
 проба('правка привычки открывается из карточки',
@@ -1290,10 +1324,328 @@ const спека = await js(`fetch('/api/v1/openapi.json').then(r=>r.json())`, t
 проба('в описании больше шестидесяти путей',
   Object.keys(спека?.paths ?? {}).length >= 60, `${Object.keys(спека?.paths ?? {}).length}`);
 
+// ── Ввод времени с клавиатуры ────────────────────────────────
+
+/*
+ * Плитку времени правят двойным нажатием. Проверяем не «удобно ли», а то,
+ * чего человек увидеть не должен: набранную ерунду, оставшуюся на экране.
+ *
+ * Так и было: «25:00» разбору не поддавалось, поле с ним же и оставалось, а
+ * состояние держало прежние 10:00 — экран показывал одно, сервер получал
+ * другое, и узнать об этом можно было, только открыв строку заново.
+ */
+await js(`document.querySelector('.wmodal-x')?.click()`);
+await waitFor('!document.querySelector(".wveil")');
+
+const плитка = подпись => js(`(() => {
+  const t = [...document.querySelectorAll('.wmodal .wtile')]
+    .find(x => x.querySelector('.wtile-cap')?.textContent === ${JSON.stringify(подпись)});
+  return t?.querySelector('input')?.value ?? null;
+})()`);
+const набрать = (подпись, текст) => js(`(() => {
+  const t = [...document.querySelectorAll('.wmodal .wtile')]
+    .find(x => x.querySelector('.wtile-cap')?.textContent === ${JSON.stringify(подпись)});
+  const f = t.querySelector('input');
+  f.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+  f.value = ${JSON.stringify(текст)};
+  f.dispatchEvent(new Event('blur'));
+})()`);
+
+for (const [текст, что, ждём] of [
+  ['25:00', 'часов больше 23', null],
+  ['-5', 'минус', null],
+  ['', 'пусто', null],
+  ['абв', 'буквы', null],
+  ['7:5', 'один разряд минут', '07:05'],
+  ['947', 'без двоеточия', '09:47'],
+  ['9.47', 'через точку', '09:47'],
+  ['19', 'только часы', '19:00'],
+]) {
+  await js(`window.__wopen('row')`);
+  await waitFor(`Boolean(document.querySelector('.wmodal .wtile'))`);
+  await wait(250);
+  const было = await плитка('начало');
+  await набрать('начало', текст);
+  await wait(350);
+  const стало = await плитка('начало');
+  проба(`время «${текст}» (${что})`, стало === (ждём ?? было), `${было} → ${стало}`);
+  await js(`document.querySelector('.wmodal-x').click()`);
+  await wait(250);
+}
+
+/*
+ * Конец суток. Сутки для сервера — минуты от 0 до 1439, и 1440 он не берёт:
+ * набранное «23:30» при часовой длительности давало конец 24:00, и «Готово»
+ * отвечало «Поле „конец“ должно быть целым числом от 0 до 1439». Проверяем
+ * оба конца: и что плитка показывает 23:59, и что строка правда сохранилась.
+ */
+await js(`window.__wopen('row')`);
+await waitFor(`Boolean(document.querySelector('.wmodal .wtile'))`);
+await wait(250);
+await набрать('начало', '23:30');
+await wait(500);
+проба('конец не выходит за сутки', (await плитка('конец')) === '23:59', `конец ${await плитка('конец')}`);
+await js(`(() => { const f = document.querySelector('.wmodal [name=rowTitle]');
+  f.value = 'Проба ночного конца'; f.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+await js(`[...document.querySelectorAll('.wmodal button')].find(b => b.textContent === 'Готово')?.click()`);
+await wait(1800);
+проба('строка с началом 23:30 сохраняется',
+  !(await js(`Boolean(document.querySelector('.wveil'))`)),
+  await js(`document.querySelector('.wnotice')?.textContent?.slice(0, 70) ?? 'без замечаний'`));
+проба('она пришла на сервер концом 1439',
+  (await js(`fetch('/api/v1/days/${DAY}/full').then(r=>r.json())
+    .then(d => d.schedule.find(r => r.title === 'Проба ночного конца')?.end_min ?? null)`, true)) === 1439);
+await js(`(async () => {
+  const d = await (await fetch('/api/v1/days/${DAY}/full')).json();
+  for (const r of d.schedule.filter(x => x.title === 'Проба ночного конца'))
+    await fetch('/api/v1/days/${DAY}/schedule/' + r.id, { method: 'DELETE' });
+})()`, true);
+await wait(600);
+
+// ── Сообщение под затемнением ────────────────────────────────
+
+/*
+ * Шторка лежит поверх затемнения, а экранное сообщение — под ним. Отказы и
+ * удачи писались именно туда: «Данные заменены», «Токен выпущен», «Поле „конец“
+ * должно быть от 0 до 1439» — всё уходило за затемнение, и нажатие «Готово»
+ * выглядело как «ничего не произошло».
+ *
+ * Проверяем не наличие текста, а то, что его видно: спрашиваем у браузера, кто
+ * лежит сверху в середине полосы. Если это шторка или затемнение — сообщения
+ * человек не читает.
+ */
+const видноСообщение = () => js(`(() => {
+  const ns = [...document.querySelectorAll('.wnotice')].filter(n => !n.classList.contains('calm'));
+  if (!ns.length) return 'полосы нет';
+  for (const n of ns) {
+    const r = n.getBoundingClientRect();
+    const top = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
+    if (n.contains(top)) return 'видно: ' + n.textContent.slice(0, 60);
+  }
+  return 'закрыто: ' + ns[0].textContent.slice(0, 60);
+})()`);
+
+await js(`window.__wopen('import')`);
+await waitFor(`Boolean(document.querySelector('.wmodal input[type=file]'))`, 40);
+await wait(400);
+await js(`(() => {
+  const inp = document.querySelector('.wmodal input[type=file]');
+  const f = new File(['{"это":"не выгрузка"}'], 'проба.json', { type: 'application/json' });
+  const dt = new DataTransfer(); dt.items.add(f);
+  inp.files = dt.files;
+  inp.dispatchEvent(new Event('change', { bubbles: true }));
+})()`);
+await wait(2500);
+проба('отказ, случившийся в шторке, виден в ней же',
+  (await видноСообщение()).startsWith('видно'), await видноСообщение());
+await js(`document.querySelector('.wmodal-x')?.click()`);
+await wait(400);
+
+// ── Прокрутка длинной шторки ─────────────────────────────────
+
+/*
+ * Прокручивается сама шторка: `overflow-y` стоит на `.wmodal`, а не на её
+ * содержимом. Перерисовка запоминала прокрутку `.wmodal-body`, у которой она
+ * всегда ноль, — и любое действие в конце длинной шторки отправляло человека
+ * читать её с самого верха. Заметнее всего в аккаунте: нажал «Выпустить
+ * токен» — и ищи, куда нажимал.
+ */
+await rpc(ws, 'Emulation.setDeviceMetricsOverride', { width: 1440, height: 620, deviceScaleFactor: 1, mobile: false });
+await wait(400);
+await js(`window.__wopen('account')`);
+await waitFor(`Boolean(document.querySelector('.wmodal .wtoken'))`, 40);
+await wait(900);
+const доПрокрутки = await js(`(() => { const m = document.querySelector('.wmodal');
+  m.scrollTop = m.scrollHeight; return m.scrollTop; })()`);
+await js(`[...document.querySelectorAll('.wmodal .wtoken button')]
+  .find(b => /Выпустить|Перевыпустить/.test(b.textContent))?.click()`);
+await wait(2000);
+const послеПрокрутки = await js(`document.querySelector('.wmodal')?.scrollTop ?? -1`);
+проба('действие в шторке не роняет её прокрутку',
+  доПрокрутки > 0 && Math.abs(послеПрокрутки - доПрокрутки) <= 3,
+  `${доПрокрутки} → ${послеПрокрутки}`);
+/*
+ * Сообщение об удаче лежит в шторке, а не под затемнением. Наверх за ним не
+ * тянем нарочно: результат — сам выпущенный токен — виден там, где нажимали,
+ * и уехать от него к полосе значило бы спрятать то, за чем пришли.
+ */
+проба('сообщение об удаче ушло в шторку, а не под затемнение',
+  await js(`Boolean([...document.querySelectorAll('.wmodal .wnotice')]
+    .find(n => n.textContent.includes('Токен')))`),
+  await js(`document.querySelector('.wmodal .wnotice')?.textContent?.slice(0, 60) ?? 'полосы в шторке нет'`));
+// убираем за собой выпущенный токен
+await js(`fetch('/api/v1/tokens').then(r => r.json()).then(l =>
+  Promise.all(l.map(t => fetch('/api/v1/tokens/' + t.id, { method: 'DELETE' }))))`, true);
+
+/*
+ * А вот отказ подкручиваем к глазам. Поля пароля стоят в самом низу аккаунта,
+ * полоса с сообщением — сверху: не сдвинув шторку, человек нажимал «Сменить
+ * пароль» второй и третий раз и считал кнопку сломанной.
+ */
+const вКонце = await js(`(() => { const m = document.querySelector('.wmodal');
+  m.scrollTop = m.scrollHeight; return m.scrollTop; })()`);
+await wait(300);
+await js(`(() => {
+  const set = (name, v) => { const f = document.querySelector('.wmodal [name=' + name + ']');
+    if (f) { f.value = v; f.dispatchEvent(new Event('input', { bubbles: true })); } };
+  set('passOld', 'demo1234'); set('passNew', 'newpass1234'); set('passNew2', 'другое-другое');
+})()`);
+await wait(300);
+await js(`[...document.querySelectorAll('.wmodal button')].find(b => /Сменить пароль/.test(b.textContent))?.click()`);
+/*
+ * Смотрим на прокрутку самой шторки, а не на попадание точкой: подкрутка
+ * плавная, и мерить её отмеренной паузой значит получать разные ответы на
+ * разных машинах. Уехала шторка к началу, где стоит полоса, — значит человек
+ * сообщение увидит.
+ */
+проба('отказ в конце длинной шторки подкручивает её к сообщению',
+  await waitFor(`document.querySelector('.wmodal')?.scrollTop < ${Math.max(1, вКонце - 40)}`, 30),
+  `${вКонце} → ${await js(`document.querySelector('.wmodal')?.scrollTop`)}; ${await видноСообщение()}`);
+проба('и сама полоса лежит в шторке',
+  await js(`Boolean([...document.querySelectorAll('.wmodal .wnotice')]
+    .find(n => n.textContent.includes('Пароли не совпали')))`));
+await js(`document.querySelector('.wmodal-x')?.click()`);
+await rpc(ws, 'Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+await wait(500);
+
+// ── Помощник: кнопка оживает по мере набора ──────────────────
+
+/*
+ * Текст помощника не идёт через перерисовку — иначе на каждой букве шторка
+ * пересобиралась бы и отбирала курсор. Но вместе с этим молчала и кнопка:
+ * «Разобрать» оставалась погашенной, а под ней висело «напишите — и кнопка
+ * оживёт». Набрать день было можно, отправить — нет.
+ *
+ * Подключение задаём заведомо мёртвым локальным адресом: нужен только признак
+ * «помощник настроен», к провайдеру никто не идёт.
+ */
+const былоAi = await js(`fetch('/api/v1/admin/ai').then(r => r.json())`, true);
+await js(`fetch('/api/v1/admin/ai', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ enabled: true, baseUrl: 'http://127.0.0.1:1/v1', model: 'проба', apiKey: 'проба' }) })
+  .then(r => r.status)`, true);
+await rpc(ws, 'Page.navigate', { url: `${BASE}/web.html` });
+await waitFor('Boolean(document.querySelector(".wside"))');
+await wait(900);
+await js(`window.__wopen('ai')`);
+const шторкаAi = await waitFor(`Boolean(document.querySelector('.wai-input'))`, 40);
+await wait(400);
+const кнопкаAi = () => js(`(() => { const b = document.querySelector('.wmodal .wai-go');
+  return b ? b.disabled : 'кнопки нет'; })()`);
+const подсказкаAi = () => js(`(() => { const x = document.querySelector('.wmodal .wai-hint');
+  return x ? !x.hidden : 'подсказки нет'; })()`);
+проба('на пустом поле «Разобрать» погашена, и сказано почему',
+  шторкаAi && (await кнопкаAi()) === true && (await подсказкаAi()) === true,
+  `погашена: ${await кнопкаAi()}, подсказка: ${await подсказкаAi()}`);
+await js(`(() => { const a = document.querySelector('.wai-input'); a.focus();
+  a.value = 'завтра подъём в семь'; a.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+await wait(400);
+проба('набрал текст — кнопка ожила', (await кнопкаAi()) === false, `погашена: ${await кнопкаAi()}`);
+проба('и подсказка «кнопка оживёт» ушла', (await подсказкаAi()) === false);
+проба('курсор при этом остался в поле',
+  await js(`document.activeElement?.classList.contains('wai-input')`));
+await js(`(() => { const a = document.querySelector('.wai-input'); a.value = '   ';
+  a.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+await wait(300);
+проба('одни пробелы за текст не считаются', (await кнопкаAi()) === true);
+await js(`document.querySelector('.wmodal-x')?.click()`);
+// возвращаем подключение помощника как было
+await js(`fetch('/api/v1/admin/ai', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ enabled: ${Boolean(былоAi?.enabled)}, baseUrl: ${JSON.stringify(былоAi?.baseUrl ?? '')},
+    model: ${JSON.stringify(былоAi?.model ?? '')}, apiKey: ${былоAi?.hasKey ? '""' : 'null'} }) }).then(r => r.status)`, true);
+await wait(400);
+
+// ── «Сейчас» — это всегда сегодня ────────────────────────────
+
+/*
+ * На телефоне полоса разделов не возвращала на сегодняшний день: человек
+ * листал неделю вперёд, уходил в заметки, возвращался в «Сейчас» — и попадал
+ * туда, где остановился. В боковом меню на компьютере это давно исправлено,
+ * а в телефонной полосе — нет.
+ */
+await rpc(ws, 'Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
+await rpc(ws, 'Page.navigate', { url: `${BASE}/web.html` });
+await waitFor('Boolean(document.querySelector(".wpbody"))');
+await wait(1200);
+const телДень0 = await js(`document.querySelector('.wphead-num')?.textContent`);
+await js(`(() => { const ds = [...document.querySelectorAll('.wpday')];
+  const i = ds.findIndex(d => d.classList.contains('on'));
+  ds[(i + 2) % ds.length].click(); })()`);
+await wait(1500);
+const телДень1 = await js(`document.querySelector('.wphead-num')?.textContent`);
+await js(`[...document.querySelectorAll('.wpnav-item')].find(b => b.textContent.includes('Заметки')).click()`);
+await wait(900);
+await js(`[...document.querySelectorAll('.wpnav-item')].find(b => b.textContent.includes('Сейчас')).click()`);
+await wait(1500);
+проба('телефон: «Сейчас» возвращает на сегодня',
+  (await js(`document.querySelector('.wphead-num')?.textContent`)) === телДень0,
+  `${телДень0} → ${телДень1} → ${await js(`document.querySelector('.wphead-num')?.textContent`)}`);
+
+await rpc(ws, 'Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+await wait(400);
+
+// ── Часовой пояс и переход суток ─────────────────────────────
+
+/*
+ * «Сейчас» считалось по часам устройства, а день человека живёт по поясу
+ * профиля: с телефона, привезённого в другой пояс, карточка «сейчас»
+ * показывала чужой блок, а прошедшие строки не были прошедшими.
+ *
+ * Ставим устройству пояс за океаном и сверяем число прошедших строк с тем,
+ * что даёт пояс профиля. Ждём — по профилю: сервер и приложение обязаны
+ * сходиться.
+ */
+const строкиДня = await js(`fetch('/api/v1/days/${DAY}/full').then(r => r.json())
+  .then(d => d.schedule.map(r => [r.start_min, r.end_min]))`, true);
+const прошлоПри = мин => строкиДня.filter(([s, e]) => {
+  const конец = e ?? null;
+  const сейчас = s <= мин && (конец ?? s + 1) > мин;
+  return !сейчас && (конец ?? s) <= мин;
+}).length;
+const минутПоПрофилю = (() => {
+  const [hh, mm] = new Intl.DateTimeFormat('en-GB', {
+    timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).format(new Date()).split(':').map(Number);
+  return hh * 60 + mm;
+})();
+await rpc(ws, 'Emulation.setTimezoneOverride', { timezoneId: 'America/Los_Angeles' });
+await rpc(ws, 'Page.navigate', { url: `${BASE}/web.html` });
+await waitFor('Boolean(document.querySelector(".wside"))');
+await wait(1200);
+const минутУстройства = await js(`(() => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); })()`);
+const прошлоНаЭкране = await js(`document.querySelectorAll('.wsched-row.past').length`);
+проба('прошедшие строки считаются по поясу профиля, а не устройства',
+  прошлоНаЭкране === прошлоПри(минутПоПрофилю),
+  `на экране ${прошлоНаЭкране}, по профилю ${прошлоПри(минутПоПрофилю)} (${минутПоПрофилю} мин), `
+  + `по устройству было бы ${прошлоПри(минутУстройства)} (${минутУстройства} мин)`);
+await rpc(ws, 'Emulation.setTimezoneOverride', { timezoneId: '' });
+
+/*
+ * Переход суток при открытом приложении. «Сегодня» бралось из ответа сервера,
+ * снятого один раз при запуске: приложение, открытое с вечера, после полуночи
+ * продолжало считать сегодняшним прошедший день. Часы страницы переводим на
+ * сутки вперёд — «Сегодня» обязано повести на новый день.
+ */
+await rpc(ws, 'Page.navigate', { url: `${BASE}/web.html` });
+await waitFor('Boolean(document.querySelector(".wside"))');
+await wait(1000);
+await js(`(() => {
+  const Настоящий = Date;
+  const сутки = 86400000;
+  window.Date = new Proxy(Настоящий, {
+    construct: (T, args) => (args.length ? new T(...args) : new T(Настоящий.now() + сутки)),
+    get: (T, k) => (k === 'now' ? () => Настоящий.now() + сутки : T[k]),
+  });
+})()`);
+await js(`[...document.querySelectorAll('.wtop .wchip-icon')].find(b => b.textContent.includes('Сегодня'))?.click()`);
+await wait(1800);
+проба('после полуночи «Сегодня» ведёт на новый день',
+  (await js(`document.querySelector('.wtop-num').textContent`)) === подписьДня(dayIn(1)),
+  `${DAY_LABEL} → ${await js(`document.querySelector('.wtop-num').textContent`)}, ждём ${подписьДня(dayIn(1))}`);
+
 console.log('\n── Итог ──');
 const плохо = пробы.filter(([, ok]) => !ok).length;
 console.log(`${пробы.length - плохо} из ${пробы.length}`);
 
 ws.close(); proc.kill();
-await fs.rm(profile, { recursive: true, force: true }).catch(() => {});
+await tmp.release(profile);
 process.exit(плохо ? 1 : 0);

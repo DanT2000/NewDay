@@ -1,5 +1,13 @@
 const { ApiError, notFound } = require('../lib/errors');
-const { todayFor } = require('../lib/dates');
+/*
+ * Сдвиг и разность дат берём из lib/dates, а не считаем здесь своей копией.
+ *
+ * Копия жила прямо в этом файле и собирала результат через toISOString():
+ * на 9999-12-31 + 1 день это давало «+010000-01» вместо даты, следующий же
+ * разбор такой строки заканчивался «внутренней ошибкой», и запрос периода
+ * у края календаря отвечал пятисоткой.
+ */
+const { todayFor, addDays, diffDays } = require('../lib/dates');
 const { daysRepo, bumpRev } = require('../repos/days');
 const { scheduleRepo } = require('../repos/schedule');
 const { tasksRepo } = require('../repos/tasks');
@@ -9,14 +17,6 @@ const { statsService } = require('./statsService');
 const { seriesService } = require('./seriesService');
 
 const SECTIONS = ['schedule', 'tasks', 'meals', 'sport'];
-
-/** Сдвиг даты строкой: считать через Date значит поймать переход на зиму. */
-function addDays(date, n) {
-  const [y, m, d] = date.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  dt.setUTCDate(dt.getUTCDate() + n);
-  return dt.toISOString().slice(0, 10);
-}
 
 function dayService(db, opts = {}) {
   const days = daysRepo(db);
@@ -71,8 +71,15 @@ function dayService(db, opts = {}) {
   function getRange(user, from, to, { limit = 62 } = {}) {
     const today = todayFor(user.timezone);
     const days = [];
+    /*
+     * Сколько дней считаем, решаем разностью дат, а не сравнением строк на
+     * каждом шаге. Строковое `cur <= to` доверяло виду даты: стоило шагу
+     * выйти за 9999 год, и «10000-01-01» оказывалось меньше конца периода —
+     * цикл продолжался и наливал в ответ дни, которых в календаре нет.
+     */
+    const total = Math.min(limit, diffDays(from, to) + 1);
     let cur = from;
-    for (let i = 0; i < limit && cur <= to; i++) {
+    for (let i = 0; i < total; i++) {
       series.materializeDay(user.id, cur, { today });
       const rows = schedule.list(user.id, cur);
       days.push({
@@ -83,7 +90,7 @@ function dayService(db, opts = {}) {
           done: rows.filter(r => r.done === 1).length,
         },
       });
-      cur = addDays(cur, 1);
+      if (i + 1 < total) cur = addDays(cur, 1);
     }
     /*
      * `to` в ответе — конец того, что действительно посчитано, а не то, что

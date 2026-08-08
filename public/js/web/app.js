@@ -93,8 +93,40 @@ let MEALS = [];
 let HABITS = [];
 let NOTES = [];
 
-/** Сегодня по часовому поясу человека, а не браузера. */
-const todayKey = () => store.settings?.today ?? data.todayFor();
+/**
+ * Сегодня по часовому поясу человека, а не браузера.
+ *
+ * Считаем каждый раз, а не берём `settings.today` из ответа сервера: тот
+ * снимается один раз при запуске и больше не обновляется. Приложение, открытое
+ * с вечера, после полуночи продолжало считать сегодняшним прошедший день —
+ * «Сейчас» и «Сегодня» уводили на вчера, а сегодняшняя отметка привычки
+ * ложилась в прошлые сутки. Часовой пояс берём из профиля, поэтому ответ тот
+ * же, что у сервера.
+ */
+const todayKey = () => {
+  try { return data.todayFor(store.settings?.timezone); }
+  // незнакомый пояс из старой локальной копии — тогда хотя бы то, что знаем
+  catch { return store.settings?.today ?? data.todayFor(); }
+};
+
+/**
+ * Минуты от полуночи по часовому поясу человека.
+ *
+ * `new Date().getHours()` отвечает по поясу устройства, а день у человека
+ * живёт по поясу профиля: с телефона, привезённого в другой пояс, карточка
+ * «сейчас» показывала чужой блок и «до конца» считалось от чужого времени.
+ */
+function minutesNow() {
+  const now = new Date();
+  const tz = store.settings?.timezone;
+  if (!tz) return now.getHours() * 60 + now.getMinutes();
+  try {
+    const [hh, mm] = new Intl.DateTimeFormat('en-GB', {
+      timeZone: tz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).format(now).split(':').map(Number);
+    return hh * 60 + mm;
+  } catch { return now.getHours() * 60 + now.getMinutes(); }
+}
 
 // ── Мелкие помощники ─────────────────────────────────────────
 
@@ -114,6 +146,31 @@ const set = patch => {
  * Курсор возвращаем по имени поля: без этого набор в «своё: N минут»
  * обрывался бы на первой цифре.
  */
+/**
+ * Сказать что-то в открытой шторке.
+ *
+ * Отказ подкручиваем к глазам: длинная шторка прокручена туда, где человек
+ * нажимал, а полоса с сообщением стоит сверху — и «Готово» опять выглядит как
+ * «ничего не произошло». Об удаче так не делаем: её результат обычно тут же, в
+ * шторке (выпущенный токен виден там, где нажимали), и уезжать от него наверх
+ * значит спрятать то, за чем пришли.
+ */
+function sheetNotice(text, bad = false) {
+  setIn({ notice: text, noticeBad: bad });
+  if (!bad) return;
+  /*
+   * Сдвиг считаем сами, а не зовём `scrollIntoView`: прокручивается сама
+   * шторка, а «ближайшая» прокрутка зависит от того, что браузер сочтёт
+   * контейнером, — в проверке она молча не срабатывала. Здесь всё однозначно:
+   * полоса стоит первой в шторке, и если её не видно, подводим её к началу.
+   */
+  const шторка = document.querySelector('.wmodal');
+  const полоса = шторка?.querySelector('.wnotice');
+  if (!шторка || !полоса) return;
+  const сдвиг = полоса.getBoundingClientRect().top - шторка.getBoundingClientRect().top;
+  if (сдвиг < 0 || сдвиг + полоса.offsetHeight > шторка.clientHeight) шторка.scrollTop += сдвиг - 10;
+}
+
 /**
  * Сказать, что поле не заполнено, — и показать, какое именно.
  *
@@ -179,14 +236,41 @@ const setIn = patch => {
  * (и, если нужно, в раздел настроек) и сменить вид расписания. Клик по кнопке
  * из скрипта зависит от подписи, а подписи меняются — эти два вызова нет.
  */
-window.__wgo = (screen, page = null) => set({ screen, setPage: page, modal: null });
+/*
+ * Раздел настроек ставим вторым заходом: приход на экран настроек сбрасывает
+ * `setPage` (см. render — новый заход открывается оглавлением), и просьба
+ * «настройки, раздел будильника» одним `set` теряла раздел. Из-за этого обход
+ * переполнений семь раз смотрел на один и тот же «Аккаунт», а шесть остальных
+ * разделов не проверялись вовсе.
+ */
+window.__wgo = (screen, page = null) => {
+  set({ screen, setPage: null, modal: null });
+  if (page) set({ setPage: page });
+};
 window.__wsetview = view => set({ view });
 
+/*
+ * Редакторы открываем их же путём, а не одним `set({ modal })`.
+ *
+ * Голая подстановка шторки оставляла её без начального состояния: `rowId`
+ * держал `null` вместо «новая», и «Готово» отвечало «Поле „id“ должно быть
+ * целым числом от 1 до 1000000000» — то есть и проверка, и снимок смотрели на
+ * состояние, в которое человек попасть не может.
+ */
 window.__wopen = name => {
   if (name === 'notify' || name === 'template') return openLink(name);
   if (name === 'file') return openLink('export');
+  if (name === 'import') return openLink('import');
+  if (name === 'food') return openFood();
   if (name === 'tplRow') return openTplRow('new');
   if (name === 'reminder') return newRow({ kind: 'reminder' });
+  if (name === 'row') return newRow();
+  if (name === 'note') return openNote(null);
+  if (name === 'meal') return openMeal(null);
+  if (name === 'habit') return openHabit(null);
+  if (name === 'account') return openAccount();
+  if (name === 'sound') return openLink('sound', 'Звук будильника');
+  if (name === 'task') return set({ modal: 'task', taskId: 'new', taskCat: 'work', taskTitle: '' });
   return set({ modal: name });
 };
 
@@ -283,7 +367,7 @@ function askOwnLead() {
   if (raw === null) return;
   const n = Number(String(raw).replace(/\D+/g, ''));
   // сутки — потолок: дальше это уже не «предупредить», а другой день
-  if (!n || n < 1 || n > 1440) { setIn({ notice: 'Нужно число от 1 до 1440 минут' }); return; }
+  if (!n || n < 1 || n > 1440) { sheetNotice('Нужно число от 1 до 1440 минут', true); return; }
   setIn({ rowLeads: toggleLead(state.rowLeads, String(n)) });
 }
 
@@ -334,7 +418,20 @@ const hasPlans = date => {
  * оставалось висеть над днём: человек уходил в другой раздел, листал дни, а
  * сообщение шло за ним и читалось как поломка экрана.
  */
-function note(text) {
+/*
+ * Пока открыта шторка, говорить надо в ней.
+ *
+ * Экранное сообщение рисуется внутри `.wbody`, а шторка лежит поверх
+ * затемнения с z-index 80 — то есть сообщение оказывается под ней и человек
+ * его не видит вовсе. Так молчали и удачи, и отказы: «Токен выпущен»,
+ * «Данные заменены», «Поле „конец“ должно быть от 0 до 1439» — всё уходило
+ * за затемнение, и нажатие «Готово» выглядело как «ничего не произошло».
+ *
+ * `setIn` вместо `render`: он перерисовывает только содержимое шторки и
+ * возвращает курсор в поле, поэтому сообщение не сбивает набор.
+ */
+function note(text, bad = false) {
+  if (state.modal) { sheetNotice(text, bad); return; }
   state.toast = text;
   render();
   setTimeout(() => { if (state.toast === text) { state.toast = null; render(); } }, 4000);
@@ -348,7 +445,7 @@ function note(text) {
  */
 const fail = e => note(navigator.onLine === false
   ? 'Нет связи — правка не ушла на сервер. Появится связь, попробуйте снова'
-  : (e?.message || 'Не удалось сохранить'));
+  : (e?.message || 'Не удалось сохранить'), true);
 
 /**
  * Действие в шторке: кнопка занята, пока запрос в пути, исход виден.
@@ -423,8 +520,7 @@ async function reload() {
 
 /** Разложить ответы сервера по спискам, которыми рисует разметка. */
 function fill() {
-  const now = new Date();
-  const minutes = now.getHours() * 60 + now.getMinutes();
+  const minutes = minutesNow();
   SCHEDULE = adapt.schedule(store.day, { minutes, todayKey: todayKey() });
   TASKS = adapt.tasks(store.day);
   MEALS = adapt.meals(store.day);
@@ -492,7 +588,7 @@ function sideBar() {
          * где остановился. Раздел называется «Сейчас», и открывать он должен
          * именно сейчас.
          */
-        if (n.key === 'today') state.date = store.settings?.today ?? state.date;
+        if (n.key === 'today') state.date = todayKey();
         state.screen = n.key;
         state.modal = null;
         render();
@@ -723,8 +819,7 @@ function nowCard() {
   const { percent, empty } = progress();
   const C = 2 * Math.PI * 34;
 
-  const now = new Date();
-  const minutes = now.getHours() * 60 + now.getMinutes();
+  const minutes = minutesNow();
   const isToday = state.date === todayKey();
   const cur = isToday ? SCHEDULE.find(r => r.now) : null;
   const next = isToday
@@ -1121,8 +1216,7 @@ function phoneWeek() {
  * прокрутка на главном экране означает, что главное в ней теряется.
  */
 function phoneToday() {
-  const now = new Date();
-  const minutes = now.getHours() * 60 + now.getMinutes();
+  const minutes = minutesNow();
   const isToday = state.date === todayKey();
 
   const past = isToday ? [...SCHEDULE].reverse().find(r => (r.end ?? r.start) <= minutes) : null;
@@ -1210,8 +1304,20 @@ function phoneNav() {
     const b = h('button.wpnav-item', {
       type: 'button',
       class: [on ? 'on' : '', on && n.key === 'today' ? 'mid' : ''].filter(Boolean).join(' '),
+      /*
+       * «Сейчас» — это всегда сегодня, как и в боковом меню на компьютере.
+       *
+       * Здесь этого не было: человек листал полоску недели вперёд, уходил в
+       * заметки, возвращался в «Сейчас» — и попадал в тот день, где
+       * остановился. Раздел, который называется «Сейчас», обязан открывать
+       * сейчас. Нажатие на уже открытый раздел тоже возвращает домой: это
+       * привычный на телефоне ход, а иначе с чужого дня не уйти ничем, кроме
+       * полоски недели.
+       */
       onclick: () => {
-        if (state.screen === n.key) return;
+        const домой = n.key === 'today' && state.date !== todayKey();
+        if (state.screen === n.key && !домой) return;
+        if (n.key === 'today') state.date = todayKey();
         set({ screen: n.key, modal: null });
         reload();
       },
@@ -1301,8 +1407,7 @@ function lanesFor(rows) {
  * блоки внахлёст без предупреждения.
  */
 function rowsForDate(date) {
-  const now = new Date();
-  const minutes = now.getHours() * 60 + now.getMinutes();
+  const minutes = minutesNow();
   const day = (store.range?.days ?? []).find(d => d.date === date);
   const rows = day?.schedule ?? (store.day?.date === date ? store.day.schedule : null);
   if (!rows) return [];
@@ -1420,8 +1525,7 @@ function planColumn(index, dateKey) {
   }
 
   if (dateKey === todayKey()) {
-    const now = new Date();
-    const minutes = now.getHours() * 60 + now.getMinutes();
+    const minutes = minutesNow();
     if (minutes >= FROM_MIN && minutes <= FROM_MIN + HOURS * 60) {
       add(col, h('div.wnowline', { style: { top: `${(minutes - FROM_MIN) * PX_PER_MIN}px` } }, h('i')));
     }
@@ -1972,7 +2076,7 @@ function pickAvatar() {
       avaCrop.y = 0;
       set({ modal: 'avatar' });
     };
-    img.onerror = () => setIn({ notice: 'Это не похоже на картинку' });
+    img.onerror = () => sheetNotice('Это не похоже на картинку', true);
     img.src = url;
   };
   input.click();
@@ -2578,8 +2682,8 @@ function saveName() {
  * запирает человека снаружи, и заметит он это уже при следующем входе.
  */
 function savePassword() {
-  if (state.passNew.length < 8) { setIn({ notice: 'Новый пароль — не короче восьми знаков' }); return; }
-  if (state.passNew !== state.passNew2) { setIn({ notice: 'Пароли не совпали' }); return; }
+  if (state.passNew.length < 8) { sheetNotice('Новый пароль — не короче восьми знаков', true); return; }
+  if (state.passNew !== state.passNew2) { sheetNotice('Пароли не совпали', true); return; }
   act(
     api.POST('/auth/password', { currentPassword: state.passOld, newPassword: state.passNew })
       .then(() => set({ passOld: '', passNew: '', passNew2: '' })),
@@ -2998,7 +3102,7 @@ function openNote(n) {
     // новая заметка по умолчанию на дату, и дата эта — сегодня: человек чаще
     // пишет про сегодняшний день, а не про тот, который листал неделю назад
     noteDated: n ? n.dated : true,
-    noteDate: n?.dateKey ?? store.settings?.today ?? state.date,
+    noteDate: n?.dateKey ?? todayKey(),
     notice: null,
   });
 }
@@ -3025,7 +3129,7 @@ function saveNote() {
   if (state.noteDated && state.noteId !== date) {
     const busyDay = NOTES.find(n => n.dateKey === date);
     if (busyDay) {
-      setIn({ notice: `На ${adapt.shortDate(date)} уже есть заметка «${busyDay.title}» — откройте её и дополните` });
+      sheetNotice(`На ${adapt.shortDate(date)} уже есть заметка «${busyDay.title}» — откройте её и дополните`, true);
       return;
     }
   }
@@ -3329,12 +3433,21 @@ function timeInput(value, key, onDone) {
       el.tabIndex = 0;
       el.select();
     },
+    /*
+     * Не разобрали — возвращаем прежнее время.
+     *
+     * `onDone` отвечает `false`, если из набранного времени не вышло: «25:00»,
+     * «-5», пусто, буквы. Раньше такой набор просто ничего не менял, но и с
+     * поля не уходил: плитка показывала «25:00», состояние держало прежние
+     * 10:00, и сохранялось именно оно. Экран говорил одно, сервер получал
+     * другое — а человек узнавал об этом, только открыв строку заново.
+     */
     onblur: e => {
       const el = e.target;
       if (el.readOnly) return;
       el.readOnly = true;
       el.tabIndex = -1;
-      onDone(el.value);
+      if (onDone(el.value) === false) el.value = value;
     },
     onkeydown: e => {
       if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
@@ -3593,20 +3706,31 @@ const BODIES = {
     ].filter(([k]) => !moment || k === 'start').map(([k, label, value]) => {
       const tile = h('div.wtile', { class: field === k ? 'on' : '', onclick: () => setIn({ rowField: k }) });
       add(tile, h('span.wtile-cap', { text: label }),
+        /*
+         * Конец прижимаем к 23:59, а не к 24:00.
+         *
+         * Сутки для сервера — минуты от 0 до 1439, и 1440 он не принимает:
+         * набранное «23:30» при часовой длительности давало конец 1440, и
+         * «Готово» отвечало «Поле „конец“ должно быть целым числом от 0 до
+         * 1439». Сетка часов рядом прижимает к 1439 давно — здесь этого не
+         * делали, и с клавиатуры строку было не сохранить.
+         */
         timeInput(value, k, next => {
           if (k === 'dur') {
             const mins = parseDur(next);
-            if (mins !== null) setIn({ rowEnd: rs + Math.min(Math.max(mins, 5), 1440 - rs) });
-            return;
+            if (mins === null) return false;
+            setIn({ rowEnd: rs + Math.min(Math.max(mins, 5), 1439 - rs) });
+            return true;
           }
           const t = parseTime(next);
-          if (t === null) return;
+          if (t === null) return false;
           if (k === 'start') {
             // сдвиг начала тянет конец за собой, сохраняя длительность
-            setIn({ rowStart: t, rowEnd: moment ? state.rowEnd : Math.min(1440, t + dur) });
+            setIn({ rowStart: t, rowEnd: moment ? state.rowEnd : Math.min(1439, t + dur) });
           } else {
-            setIn({ rowEnd: Math.max(rs + 5, t) });
+            setIn({ rowEnd: Math.min(1439, Math.max(rs + 5, t)) });
           }
+          return true;
         }));
       return tile;
     }));
@@ -3839,10 +3963,18 @@ const BODIES = {
     }
 
     const listening = state.aiStep === 'listening';
+    /*
+     * Кнопку оживляем на месте, а не перерисовкой шторки.
+     *
+     * Перерисовка на каждую букву отбирала бы курсор, поэтому текст ложился в
+     * состояние молча — но вместе с ним молчала и кнопка: «Разобрать» оставалась
+     * погашенной, а под ней висело «напишите — и кнопка оживёт». Набрать день
+     * было можно, отправить — нет.
+     */
     const area = h('textarea.wai-input', {
       value: state.aiText,
       placeholder: 'Опишите день словами — например, «завтра подъём в семь, в два созвон на час, вечером зал»',
-      oninput: e => { state.aiText = e.target.value; },
+      oninput: e => { state.aiText = e.target.value; paintAiReady(); },
     });
     const mic = h('button.wmic', {
       type: 'button', class: listening ? 'listening' : '',
@@ -3876,7 +4008,11 @@ const BODIES = {
         ? h('div.wlevel-row', meter,
           h('span.wlevel-hint', { text: 'слушаю — нажмите микрофон, чтобы закончить' }))
         : null,
-      state.notice ? h('div.whint', { text: state.notice, style: { color: 'var(--accent)' } }) : null,
+      /*
+       * Сообщение здесь не рисуем: его уже показывает сама шторка (см.
+       * `modalBody`). Вторая копия того же текста читалась как две разные
+       * жалобы на одно действие — «Слишком коротко» дважды подряд.
+       */
       /*
        * Кнопка на месте всегда, даже пока текста нет.
        *
@@ -3885,17 +4021,16 @@ const BODIES = {
        * ругалась в ответ. Теперь она погашена, а под ней написано, чего не
        * хватает: видно и что делать, и почему пока нельзя.
        */
-      h('button.wbtn-wide', {
+      h('button.wbtn-wide.wai-go', {
         type: 'button', text: state.busy ? 'Разбираю…' : 'Разобрать',
-        disabled: state.busy || !store.ai.ready || !state.aiText.trim(),
+        disabled: aiNotReady(),
         onclick: () => aiSend(null),
       }),
-      !store.ai.ready || state.aiText.trim() || state.busy
-        ? null
-        : h('div.wclock-cap', {
-          text: 'напишите или продиктуйте — и кнопка оживёт',
-          style: { margin: '0' },
-        }));
+      h('div.wclock-cap.wai-hint', {
+        text: 'напишите или продиктуйте — и кнопка оживёт',
+        hidden: !store.ai.ready || Boolean(state.aiText.trim()) || state.busy,
+        style: { margin: '0' },
+      }));
   },
 
   // ── Новая привычка ──
@@ -4020,7 +4155,7 @@ const BODIES = {
      */
     const dated = state.noteDated;
     const [y, m, d] = String(state.noteDate ?? state.date).split('-').map(Number);
-    const thisYear = Number(String(store.settings?.today ?? state.date).slice(0, 4));
+    const thisYear = Number(String(todayKey()).slice(0, 4));
     const dateText = `${d} ${MONTHS[m - 1]}${y === thisYear ? '' : ` ${y}`}`;
 
     const kinds = h('div.wrow');
@@ -4475,7 +4610,7 @@ const BODIES = {
           const f = input.files?.[0];
           if (!f) return;
           if (f.size > 10 * 1048576) {
-            setIn({ notice: `Файл весит ${(f.size / 1048576).toFixed(1)} МБ, а будильнику хватает 10: это десять минут звука в хорошем качестве` });
+            sheetNotice(`Файл весит ${(f.size / 1048576).toFixed(1)} МБ, а будильнику хватает 10: это десять минут звука в хорошем качестве`, true);
             return;
           }
           act(async () => {
@@ -4858,8 +4993,12 @@ async function importFile(file, mode) {
     await api.POST('/import', { data: parsed, mode });
     state.busy = false;
     state.modal = null;
-    state.notice = mode === 'replace' ? 'Данные заменены' : 'Данные добавлены';
-    render();
+    /*
+     * `note`, а не `state.notice`: сообщение шторки рисуется внутри шторки, а
+     * она к этому моменту уже закрыта — и «Данные заменены» не показывалось
+     * никому. Заодно оно не оставалось висеть в следующей открытой шторке.
+     */
+    note(mode === 'replace' ? 'Данные заменены' : 'Данные добавлены');
     await reload();
   } catch (e) {
     state.busy = false;
@@ -4870,6 +5009,20 @@ async function importFile(file, mode) {
 // ── Помощник ─────────────────────────────────────────────────
 
 const AI_TAG = { schedule: 'расписание', reminder: 'напоминание', task: 'дело' };
+
+/** Почему «Разобрать» пока нельзя нажать: занято, не подключён или пусто. */
+const aiNotReady = () => state.busy || !store.ai.ready || !state.aiText.trim();
+
+/**
+ * Подкрутить кнопку и подсказку под набранный текст, не перерисовывая шторку.
+ * Так же, как `paintTiles` правит подписи плиток: чтобы набор не прерывался.
+ */
+function paintAiReady() {
+  const go = document.querySelector('.wmodal .wai-go');
+  if (go) go.disabled = aiNotReady();
+  const hint = document.querySelector('.wmodal .wai-hint');
+  if (hint) hint.hidden = !store.ai.ready || Boolean(state.aiText.trim()) || state.busy;
+}
 
 const aiMeta = p => {
   const when = p.start ? `${p.start}${p.end ? '–' + p.end : ''}` : 'без времени';
@@ -5245,9 +5398,19 @@ function render() {
       if (el?.scrollTop) keepScroll.push([sel, el.scrollTop]);
     }
   }
+  /*
+   * Прокручивается сама шторка, а не её содержимое: `overflow-y: auto` стоит
+   * на `.wmodal` (см. web.css) — из-за скруглённого угла и своей полосы.
+   * Здесь же запоминалась прокрутка `.wmodal-body`, а она всегда ноль, и
+   * длинная шторка на каждой полной перерисовке улетала в начало: нажал
+   * «Выпустить токен» в конце аккаунта — и читаешь шторку с самого верха,
+   * заново ища, куда нажимал. То же в звуках, устройствах и печати.
+   */
   if (sameModal && state.modal) {
-    const el = root.querySelector('.wmodal-body');
-    if (el?.scrollTop) keepScroll.push(['.wmodal-body', el.scrollTop]);
+    for (const sel of ['.wmodal', '.wmodal-body']) {
+      const el = root.querySelector(sel);
+      if (el?.scrollTop) keepScroll.push([sel, el.scrollTop]);
+    }
   }
   renderedAt.screen = state.screen;
   renderedAt.modal = state.modal;

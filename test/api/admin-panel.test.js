@@ -415,6 +415,83 @@ test('рубильник и тариф off закрывают помощника
   } finally { await s.close(); }
 });
 
+/*
+ * Лимит нельзя обойти, отправив всё разом.
+ *
+ * Между проверкой лимита и записью расхода живёт настоящий запрос к модели —
+ * секунды. Пока он шёл, следующие запросы успевали пройти проверку по старому
+ * счётчику, и «пятьдесят в сутки» превращалось в «сколько успеешь запустить
+ * параллельно». Поэтому провайдер здесь отвечает не мгновенно: без задержки
+ * обработчик добегает до записи в том же тике и гонки не видно.
+ */
+test('лимит помощника не обходится параллельными запросами', async () => {
+  const slowProvider = () => async () => {
+    await new Promise(r => setTimeout(r, 40));
+    return {
+      ok: true, status: 200,
+      json: async () => ({
+        choices: [{ message: { content: '{"items":[]}' } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      }),
+    };
+  };
+  const s = await startTestServer({ fetchImpl: slowProvider() });
+  try {
+    const userCookie = await makeUser(s.url);
+    const admin = await adminLogin(s.url);
+    await connectAi(s.url, admin.cookie);
+
+    const users = await getJson(s.url, admin.cookie, '/api/admin/users');
+    const me = users.find(u => u.email === 'user@example.com');
+    await api(s.url, admin.cookie, 'PATCH', `/api/admin/users/${me.id}`, { aiTier: 'limited' });
+    // остаток лимита — пять обращений
+    s.db.prepare('INSERT INTO ai_daily_usage (user_id, day, count) VALUES (?, ?, 45)').run(me.id, today());
+
+    const results = await Promise.all(Array.from({ length: 10 }, () =>
+      api(s.url, userCookie, 'POST', '/api/v1/ai/parse', { text: 'дела' }, {}, true)));
+    const ok = results.filter(r => r.status === 200).length;
+
+    assert.strictEqual(ok, 5, 'проходят ровно пять — столько и оставалось');
+    assert.strictEqual(results.filter(r => r.status === 429).length, 5);
+
+    const spent = s.db.prepare('SELECT count FROM ai_daily_usage WHERE user_id = ? AND day = ?')
+      .get(me.id, today()).count;
+    assert.strictEqual(spent, 50, 'счётчик не перескочил лимит');
+
+    // лимит освободился под следующий день, а не залип на «в работе»
+    s.db.prepare('UPDATE ai_daily_usage SET count = 0 WHERE user_id = ?').run(me.id);
+    const later = await api(s.url, userCookie, 'POST', '/api/v1/ai/parse', { text: 'ещё' }, {}, true);
+    assert.strictEqual(later.status, 200, 'заявки в полёте не остались висеть навсегда');
+  } finally { await s.close(); }
+});
+
+/*
+ * Неудачный запрос лимита не тратит: человек не виноват, что провайдер
+ * не ответил. Это то свойство, из-за которого проверка и запись разнесены,
+ * и оно должно уцелеть после починки гонки.
+ */
+test('отказ провайдера не съедает лимит', async () => {
+  const failing = () => async () => ({
+    ok: false, status: 500, json: async () => ({ error: { message: 'провайдер лёг' } }),
+  });
+  const s = await startTestServer({ fetchImpl: failing() });
+  try {
+    const userCookie = await makeUser(s.url);
+    const admin = await adminLogin(s.url);
+    await connectAi(s.url, admin.cookie);
+    const users = await getJson(s.url, admin.cookie, '/api/admin/users');
+    const me = users.find(u => u.email === 'user@example.com');
+    await api(s.url, admin.cookie, 'PATCH', `/api/admin/users/${me.id}`, { aiTier: 'limited' });
+
+    for (let i = 0; i < 3; i++) {
+      const r = await api(s.url, userCookie, 'POST', '/api/v1/ai/parse', { text: 'дела' }, {}, true);
+      assert.strictEqual(r.status, 502);
+    }
+    const status = await getJson(s.url, userCookie, '/api/v1/ai/status');
+    assert.strictEqual(status.usedToday, 0, 'три отказа подряд лимита не тронули');
+  } finally { await s.close(); }
+});
+
 // ── Подключение ИИ и прокси ──────────────────────────────────
 
 test('панель ИИ: ключ не отдаётся, socks5 принимается, мёртвые прокси не мешают', async () => {

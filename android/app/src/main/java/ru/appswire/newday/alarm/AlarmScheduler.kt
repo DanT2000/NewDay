@@ -24,18 +24,29 @@ object AlarmScheduler {
 
     fun scheduleAll(ctx: Context, incoming: List<Alarm>) {
         /*
-         * Проверочный будильник переживает синхронизацию.
+         * Проверочный и отложенный будильники переживают синхронизацию.
          *
          * Список из веб-части заменяет всё, что стоит на устройстве, — иначе
-         * удалённые строки продолжали бы звонить. Но проверочный будильник в
-         * этом списке никогда не приходит, и раньше его снимала первая же
-         * синхронизация: человек нажимал «тестовый будильник через минуту»,
-         * открывал день — и будильник молча не срабатывал.
+         * удалённые строки продолжали бы звонить. Но есть будильники, которые
+         * веб-часть прислать не может, потому что о них не знает:
+         *
+         *  - проверочный: человек нажимал «тестовый будильник через минуту»,
+         *    открывал день — и будильник молча не срабатывал;
+         *  - отложенный кнопкой «Отложить»: его исходное время уже прошло,
+         *    поэтому в присланном списке его нет вовсе. Человек откладывал
+         *    напоминание на пять минут, за эти пять минут открывал приложение —
+         *    и будильник больше не звонил никогда.
+         *
+         * Оба остаются, пока их время в будущем и пока веб-часть не прислала
+         * строку с тем же номером: присланная — это правка расписания, и она
+         * старше местной перестановки.
          */
         val now = System.currentTimeMillis()
-        val keepTest = AlarmStore.load(ctx)
-            .filter { it.id == TEST_ALARM_ID && it.fireAt > now && incoming.none { n -> n.id == it.id } }
-        val alarms = incoming + keepTest
+        val keepLocal = AlarmStore.load(ctx).filter {
+            (it.id == TEST_ALARM_ID || it.snoozed) && it.fireAt > now &&
+                incoming.none { n -> n.id == it.id }
+        }
+        val alarms = incoming + keepLocal
 
         cancelAll(ctx, AlarmStore.load(ctx))
         AlarmStore.save(ctx, alarms)
@@ -50,6 +61,28 @@ object AlarmScheduler {
         Log.i(TAG, "SYNCED запланировано: ${alarms.count { it.fireAt > now }}")
 
         fireMissed(ctx, alarms, now)
+    }
+
+    /**
+     * Переставить готовый список, ничего не досочиняя.
+     *
+     * Отличие от [scheduleAll] в том, чего здесь нет: за пропущенные не звоним.
+     * Нужно это смене пояса и переводу часов — они могут отправить будущий
+     * будильник в прошлое, и звонок «за пропущенный» разбудил бы человека в
+     * самолёте. После включения телефона такой звонок нужен, после перелёта —
+     * нет. Список здесь уже готов (пересчитан), поэтому и «оставить местное»
+     * тоже не наше дело.
+     */
+    fun rearm(ctx: Context, alarms: List<Alarm>) {
+        cancelAll(ctx, AlarmStore.load(ctx))
+        AlarmStore.save(ctx, alarms)
+        if (!AlarmStore.isEnabled(ctx)) {
+            Log.i(TAG, "REARMED будильники выключены в настройках — ничего не ставим")
+            return
+        }
+        val now = System.currentTimeMillis()
+        alarms.filter { it.fireAt > now }.forEach { schedule(ctx, it) }
+        Log.i(TAG, "REARMED переставлено: ${alarms.count { it.fireAt > now }}")
     }
 
     /**
@@ -85,8 +118,19 @@ object AlarmScheduler {
                 action = AlarmService.ACTION_START
                 putExtra("alarmId", recent.id)
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(svc)
-            else ctx.startService(svc)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(svc)
+                else ctx.startService(svc)
+            } catch (e: Exception) {
+                /*
+                 * Отказ в запуске службы — не повод падать: этот код работает в
+                 * приёмнике загрузки, и исключение здесь уронило бы приложение
+                 * сразу после включения телефона. Раз дозвонить не удалось,
+                 * говорим то же, что и о слишком старых: будильник не прозвенел.
+                 */
+                Log.e(TAG, "Пропущенный будильник не зазвонил: " + e.message)
+                tellMissed(ctx, recent, now)
+            }
         }
 
         // о слишком старых просто сообщаем и больше о них не вспоминаем
@@ -162,8 +206,23 @@ object AlarmScheduler {
         )
     }
 
-    private fun openAppIntent(ctx: Context): PendingIntent {
-        val intent = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
+    /**
+     * Куда ведёт нажатие на системную иконку будильника в часах.
+     *
+     * До первой разблокировки его нет и быть не может: главный экран
+     * приложения — вебвью, он не directBootAware, и система в этом состоянии
+     * запуск обычной активности не отдаёт — `getLaunchIntentForPackage`
+     * возвращает null. Раньше этот null уходил в `PendingIntent.getActivity`, а
+     * тот падал с NullPointerException — то есть приёмник, разбуженный
+     * LOCKED_BOOT_COMPLETED, ронял приложение и не ставил ни одного будильника.
+     * Ровно в том случае, для которого всё это и делалось.
+     *
+     * `AlarmClockInfo` пустой showIntent принимает: сам звонок от него не
+     * зависит, теряется только переход в приложение из системных часов — и
+     * только до разблокировки.
+     */
+    private fun openAppIntent(ctx: Context): PendingIntent? {
+        val intent = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName) ?: return null
         return PendingIntent.getActivity(
             ctx, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )

@@ -473,6 +473,50 @@ function healthRows(health) {
 
 /* ── Пользователи ───────────────────────────────────────────── */
 
+/**
+ * Спросить перед окончательным удалением. Возвращает true, если подтвердили.
+ *
+ * Своё окно, а не `confirm()`: тот показывает одну строку без переносов и без
+ * возможности перечислить, что именно исчезнет, — а исчезает всё, что человек
+ * вносил. Нативный `<dialog>` даёт и Esc, и фокус, и затемнение бесплатно.
+ *
+ * По умолчанию выбрана «Отмена»: у необратимого действия опасная кнопка не
+ * должна срабатывать от случайного Enter.
+ */
+function askDelete(email) {
+  return new Promise(resolve => {
+    const кого = email || 'этого пользователя';
+    const cancel = el('button', { class: 'btn btn-sm', type: 'button', text: 'Отмена' });
+    const ok = el('button', { class: 'btn btn-sm btn-danger', type: 'button', text: 'Удалить навсегда' });
+    const dlg = el('dialog', { class: 'adm-ask' },
+      el('h3', { text: 'Удалить пользователя?' }),
+      el('p', {}, el('b', { text: кого })),
+      el('p', {
+        class: 'adm-ask-what',
+        text: 'Вместе с ним исчезнет всё, что он вносил: расписание и дела, '
+            + 'привычки и отметки, заметки, питание и вес, загруженные звуки, '
+            + 'устройства и токены доступа.',
+      }),
+      el('p', { class: 'adm-ask-warn', text: 'Отменить это будет нечем.' }),
+      el('div', { class: 'adm-ask-row' }, cancel, ok));
+
+    const close = ответ => {
+      dlg.close();
+      dlg.remove();
+      resolve(ответ);
+    };
+    cancel.addEventListener('click', () => close(false));
+    ok.addEventListener('click', () => close(true));
+    // Esc и нажатие мимо окна — это «нет»
+    dlg.addEventListener('cancel', e => { e.preventDefault(); close(false); });
+    dlg.addEventListener('click', e => { if (e.target === dlg) close(false); });
+
+    document.body.append(dlg);
+    dlg.showModal();
+    cancel.focus();
+  });
+}
+
 async function renderUsers() {
   const users = await api('GET', '/api/admin/users');
   const err = errBox();
@@ -499,51 +543,64 @@ async function renderUsers() {
     });
 
     /*
-     * Удаление — двумя шагами и с паузой. Первый шаг лишь закрывает доступ:
-     * данные человека целы, и передумать можно кнопкой «Вернуть». Насовсем —
-     * только после блокировки, отдельным нажатием; а кто заблокирован и
-     * забыт — удалится сам через 60 дней.
+     * Два действия — два значка, а не две кнопки с подписями.
+     *
+     * Подписи «Закрыть доступ» и «Удалить окончательно» не влезали в столбец и
+     * разъезжались в две строки. Замок сам показывает состояние: открыт —
+     * доступ есть, закрыт — доступ закрыт; нажатие переключает. Корзина рядом.
+     *
+     * Порядок шагов остался прежним, он же и на сервере: сначала закрыть
+     * доступ, только потом удалять. Пока доступ открыт, корзина неактивна и
+     * говорит почему — блокировка обратима, удаление нет.
      */
+    const state = el('div', { class: 'adm-user-state' });
     const actions = el('td', { class: 'adm-user-actions' });
+
     const redraw = () => {
-      actions.replaceChildren();
-      if (!u.blockedAt) {
-        const block = el('button', { class: 'btn btn-sm btn-danger', type: 'button', text: 'Закрыть доступ' });
-        block.addEventListener('click', async () => {
-          hideErr(err);
-          block.disabled = true;
-          try {
-            await api('POST', `/api/admin/users/${encodeURIComponent(u.id)}/block`);
-            u.blockedAt = new Date().toISOString();
-            toast(`Доступ закрыт: ${u.email || 'пользователь'}`);
-            redraw();
-          } catch (ex) {
-            showErr(err, 'Не получилось закрыть доступ: ' + ex.message);
-            block.disabled = false;
-          }
-        });
-        actions.append(block);
-        return;
+      const blocked = Boolean(u.blockedAt);
+      state.replaceChildren();
+      if (blocked) {
+        state.append(el('span', { class: 'pill bad', text: 'доступ закрыт' }));
+        if (u.deleteAfter) {
+          state.append(el('span', { class: 'adm-user-till', text: `удалится сам ${fmtDate(u.deleteAfter)}` }));
+        }
       }
-      const till = u.deleteAfter ? `, удалится сам ${fmtDate(u.deleteAfter)}` : '';
-      const unblock = el('button', { class: 'btn btn-sm', type: 'button', text: 'Вернуть доступ' });
-      unblock.addEventListener('click', async () => {
+
+      const lock = el('button', {
+        class: 'icon-btn',
+        type: 'button',
+        'aria-pressed': blocked ? 'true' : 'false',
+        title: blocked ? 'Доступ закрыт. Нажмите, чтобы вернуть' : 'Закрыть доступ',
+        'aria-label': blocked ? 'Вернуть доступ' : 'Закрыть доступ',
+      }, icon(blocked ? 'lock-simple' : 'lock-simple-open', { size: '16px' }));
+      lock.addEventListener('click', async () => {
         hideErr(err);
-        unblock.disabled = true;
+        lock.disabled = true;
+        const путь = `/api/admin/users/${encodeURIComponent(u.id)}/${blocked ? 'unblock' : 'block'}`;
         try {
-          await api('POST', `/api/admin/users/${encodeURIComponent(u.id)}/unblock`);
-          u.blockedAt = null;
-          u.deleteAfter = null;
-          toast('Доступ возвращён');
+          const r = await api('POST', путь);
+          u.blockedAt = blocked ? null : (r?.blockedAt || new Date().toISOString());
+          u.deleteAfter = blocked ? null : (r?.deleteAfter ?? null);
+          toast(blocked ? 'Доступ возвращён' : `Доступ закрыт: ${u.email || 'пользователь'}`);
           redraw();
         } catch (ex) {
-          showErr(err, 'Не получилось вернуть доступ: ' + ex.message);
-          unblock.disabled = false;
+          showErr(err, (blocked ? 'Не получилось вернуть доступ: ' : 'Не получилось закрыть доступ: ') + ex.message);
+          lock.disabled = false;
         }
       });
-      const kill = el('button', { class: 'btn btn-sm btn-danger', type: 'button', text: 'Удалить окончательно' });
+
+      const kill = el('button', {
+        class: 'icon-btn adm-kill',
+        type: 'button',
+        disabled: !blocked,
+        title: blocked
+          ? 'Удалить вместе со всеми данными'
+          : 'Сначала закройте доступ — удаление необратимо',
+        'aria-label': 'Удалить пользователя',
+      }, icon('trash', { size: '16px' }));
       kill.addEventListener('click', async () => {
         hideErr(err);
+        if (!await askDelete(u.email)) return;
         kill.disabled = true;
         try {
           await api('DELETE', `/api/admin/users/${encodeURIComponent(u.id)}`);
@@ -554,16 +611,16 @@ async function renderUsers() {
           kill.disabled = false;
         }
       });
-      actions.append(
-        el('span', { class: 'pill bad', text: 'доступ закрыт' + till }),
-        unblock, kill);
+
+      actions.replaceChildren(lock, kill);
     };
     redraw();
 
     tbody.append(el('tr', {},
       el('td', {}, el('div', { class: 'adm-user' },
         el('b', { text: u.email || '—' }),
-        u.displayName ? el('span', { text: u.displayName }) : null)),
+        u.displayName ? el('span', { text: u.displayName }) : null,
+        state)),
       el('td', { text: fmtDate(u.createdAt) }),
       el('td', { text: u.lastSeen ? fmtDateTime(u.lastSeen) : '—' }),
       el('td', { class: 'mono', text: fmtInt(u.aiUsedToday) }),

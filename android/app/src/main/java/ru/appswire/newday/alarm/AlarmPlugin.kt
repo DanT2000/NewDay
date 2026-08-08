@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.result.ActivityResult
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -41,7 +42,17 @@ class AlarmPlugin : Plugin() {
     @PluginMethod
     fun schedule(call: PluginCall) {
         val arr: JSONArray = call.getArray("alarms") ?: JSONArray()
-        val alarms = Alarm.listFromJson(arr)
+        /*
+         * Отметку местного времени ставим здесь, а не в планировщике.
+         *
+         * Это единственное место, куда приходит расписание из веб-части, — то
+         * есть единственное, где известно, что будильник действительно должен
+         * звонить в это местное время. Планировщик зовут ещё и после
+         * перезагрузки: размечать там значило бы переписать «07:00» тем
+         * временем, которое получилось после смены пояса, и следующая смена
+         * увезла бы будильник ещё дальше.
+         */
+        val alarms = TimeShift.stampAll(Alarm.listFromJson(arr))
         call.getObject("config")?.let { AlarmStore.saveConfig(context, incoming(it)) }
         call.getBoolean("enabled")?.let { AlarmStore.setEnabled(context, it) }
 
@@ -120,7 +131,10 @@ class AlarmPlugin : Plugin() {
 
         val exact = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) am.canScheduleExactAlarms() else true
         val battery = pm.isIgnoringBatteryOptimizations(context.packageName)
-        val notifications = nm.areNotificationsEnabled()
+        // Через Compat, а не nm.areNotificationsEnabled(): тот появился только в
+        // Android 7, а minSdk у нас 23 — на Android 6 экран разрешений падал бы
+        // с NoSuchMethodError, не показав ни одной строки
+        val notifications = NotificationManagerCompat.from(context).areNotificationsEnabled()
         val fullScreen = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             nm.canUseFullScreenIntent()
         } else true
