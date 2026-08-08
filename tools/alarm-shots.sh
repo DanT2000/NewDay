@@ -9,13 +9,16 @@
 # приходится судить по описанию.
 
 set -u
+
+# Временные файлы — в .tmp проекта, с уборкой на выходе
+. "$(dirname "$0")/lib/tmp.sh"
 SDK="${LOCALAPPDATA}/Android/Sdk"
 ADB="$SDK/platform-tools/adb.exe"
 EMU="$SDK/emulator/emulator.exe"
 AVDMAN="$SDK/cmdline-tools/latest/bin/avdmanager.bat"
-# Идентификатор в магазине — com.newday.appswire; пакет кода остался прежним,
-# поэтому активность зовётся ru.appswire.newday.MainActivity
-PKG=${NEWDAY_PKG:-com.newday.appswire}
+# Одно имя и для пакета кода, и для магазина, поэтому активность зовётся
+# ru.appswire.newday.MainActivity
+PKG=${NEWDAY_PKG:-ru.appswire.newday}
 # Сборок стало две: для магазина Play (без самообновления) и для RuStore
 # с сайтом. Проверяем ту, что достаётся людям с сайта.
 APK=${NEWDAY_APK:-android/app/build/outputs/apk/rustore/release/app-rustore-release.apk}
@@ -116,7 +119,7 @@ shot() {
 # нажать по тексту на экране
 tap_text() {
   local ui bounds nums
-  ui=$(mktemp -t newday-shotui-XXXXXX)
+  ui=$(nd_tmpfile newday-shotui)
   MSYS_NO_PATHCONV=1 "$ADB" shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
   MSYS_NO_PATHCONV=1 "$ADB" pull /sdcard/ui.xml "$(cygpath -w "$ui")" >/dev/null 2>&1
   bounds=$(tr '>' '\n' < "$ui" | LC_ALL=C grep -aF "text=\"$1\"" \

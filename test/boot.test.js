@@ -2,8 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
-const os = require('node:os');
 const fs = require('node:fs');
+const tmp = require('../tools/lib/tmp');
 
 /**
  * Проверка настоящей точки входа.
@@ -17,7 +17,7 @@ const fs = require('node:fs');
 const ROOT = path.join(__dirname, '..');
 
 function startServer(env) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'newday-boot-'));
+  const dir = tmp.tempDir('boot');
   const child = spawn(process.execPath, [path.join(ROOT, 'server', 'index.js')], {
     cwd: ROOT,
     env: {
@@ -51,19 +51,18 @@ function startServer(env) {
       throw new Error(`сервер не поднялся за ${timeoutMs} мс: ${out}`);
     },
     /**
-     * Windows не отдаёт файл базы, пока процесс жив, поэтому сначала ждём
-     * его выхода, и только потом убираем каталог. Ошибку уборки глотаем:
-     * временный файл — не повод ронять тест.
+     * Windows не отдаёт файл базы, пока процесс жив, поэтому сначала ждём его
+     * выхода, и только потом убираем каталог. Уборкой занимается общий модуль:
+     * он и повторит попытку, и скажет в stderr, если каталог всё же остался, —
+     * прежний молчаливый цикл из пяти попыток просто сдавался и утечка
+     * становилась невидимой.
      */
     async stop() {
       if (child.exitCode === null) {
         child.kill();
         await new Promise(r => child.once('exit', r));
       }
-      for (let i = 0; i < 5; i++) {
-        try { fs.rmSync(dir, { recursive: true, force: true }); return; }
-        catch { await new Promise(r => setTimeout(r, 200)); }
-      }
+      tmp.releaseSync(dir);
     },
   };
 }

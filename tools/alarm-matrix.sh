@@ -19,14 +19,17 @@
 
 set -u
 
+# Временные файлы — в .tmp проекта, с уборкой на выходе
+. "$(dirname "$0")/lib/tmp.sh"
+
 SDK="${LOCALAPPDATA}/Android/Sdk"
 ADB="$SDK/platform-tools/adb.exe"
 EMU="$SDK/emulator/emulator.exe"
 AVDMAN="$SDK/cmdline-tools/latest/bin/avdmanager.bat"
 SDKMAN="$SDK/cmdline-tools/latest/bin/sdkmanager.bat"
-# Идентификатор в магазине — com.newday.appswire; пакет кода остался прежним,
-# поэтому активность зовётся ru.appswire.newday.MainActivity
-PKG=${NEWDAY_PKG:-com.newday.appswire}
+# Одно имя и для пакета кода, и для магазина, поэтому активность зовётся
+# ru.appswire.newday.MainActivity
+PKG=${NEWDAY_PKG:-ru.appswire.newday}
 # Сборок стало две: для магазина Play (без самообновления) и для RuStore
 # с сайтом. Проверяем ту, что достаётся людям с сайта.
 APK=${NEWDAY_APK:-android/app/build/outputs/apk/rustore/release/app-rustore-release.apk}
@@ -66,7 +69,7 @@ fi
 
 # Итоги складываем по мере прогона: если что-то упадёт на середине, уже
 # пройденное не потеряется.
-REPORT=$(mktemp -t newday-matrix-XXXXXX)
+REPORT=$(nd_tmpfile newday-matrix)
 echo "версия|успешно|провалено|итог" > "$REPORT"
 
 boot_emulator() {
@@ -186,7 +189,7 @@ for api in "${LIST[@]}"; do
   "$ADB" shell dumpsys deviceidle whitelist +$PKG >/dev/null 2>&1
   "$ADB" shell cmd notification allow_listener "$PKG/$PKG" >/dev/null 2>&1
 
-  log=$(mktemp -t newday-matrix-log-XXXXXX)
+  log=$(nd_tmpfile newday-matrix-log)
   AVD_NAME="$avd" bash tools/alarm-emulator-test.sh $WITH_REBOOT $ONLY 2>&1 | tee "$log" | sed 's/^/    /'
   # `grep -c` при нуле совпадений возвращает и «0», и код 1 — а `|| echo 0`
   # дописывал второй ноль, и дальше сравнение падало на «0\n0». Считаем так,

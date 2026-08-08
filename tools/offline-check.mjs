@@ -12,8 +12,8 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import tmp from './lib/tmp.js';
 
 const arg = (name, def) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -30,7 +30,12 @@ const BROWSERS = [
 ];
 const EDGE = BROWSERS.find(b => { try { fsSync.accessSync(b); return true; } catch { return false; } });
 
-const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'newday-offline-'));
+/*
+ * Профиль браузера — в .tmp проекта, не в системном %TEMP%.
+ * Модуль сам уберёт каталог: и по release() ниже, и хуком на выходе,
+ * если прогон закончится раньше — через process.exit() или падением.
+ */
+const profile = tmp.tempDir('offline');
 const proc = spawn(EDGE, ['--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
   '--window-size=390,844', '--hide-scrollbars', '--no-first-run', 'about:blank'], { stdio: 'ignore' });
 
@@ -160,9 +165,17 @@ if (шторка) {
     i.value = 'Офлайн проба'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   await js(`document.querySelector('.wmodal .wbtn-wide').click()`);
   await wait(2500);
-  const сказали = await js(`document.querySelector('.wnotice')?.textContent ?? ''`);
-  проба('о неудаче правки сказано прямо, а не молча',
-    /связ|сохран/i.test(сказали), сказали ? сказали.slice(0, 90) : 'ничего не сказано');
+  /*
+   * Сообщение ищем именно в шторке.
+   *
+   * Первая `.wnotice` на странице — спокойная полоса «Нет связи» под шапкой, и
+   * проба проходила на ней, ничего не проверяя. Отказ показывается в открытой
+   * шторке: на экране под затемнением его не видно, и ровно поэтому правка
+   * выглядела как «молча ничего не произошло».
+   */
+  const сказали = await js(`document.querySelector('.wmodal .wnotice')?.textContent ?? ''`);
+  проба('о неудаче правки сказано прямо, в самой шторке',
+    /связ|сохран|сет/i.test(сказали), сказали ? сказали.slice(0, 90) : 'в шторке ничего не сказано');
 }
 
 const s1 = await rpc('Page.captureScreenshot', { format: 'png' });
@@ -195,4 +208,5 @@ await js(`(async () => {
 
 console.log(`\n── Итог ──\n${сошлось} из ${всего}`);
 proc.kill();
+await tmp.release(profile);
 process.exit(сошлось === всего ? 0 : 1);

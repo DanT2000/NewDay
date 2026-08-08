@@ -15,7 +15,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
+import tmp from './lib/tmp.js';
 
 const WIDTH = Number(process.argv[2]) || 1440;
 const HEIGHT = Number(process.argv[3]) || 900;
@@ -59,7 +59,12 @@ const rpc = (ws, method, params, sessionId) => new Promise(resolve => {
 rpc.n = 0;
 
 const browser = await findBrowser();
-const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'newday-shots-'));
+/*
+ * Профиль браузера — в .tmp проекта, не в системном %TEMP%.
+ * Модуль сам уберёт каталог: и по release() ниже, и хуком на выходе,
+ * если прогон закончится раньше — через process.exit() или падением.
+ */
+const profile = tmp.tempDir('shots');
 await fs.mkdir(OUT, { recursive: true });
 
 const proc = spawn(browser, [
@@ -249,5 +254,5 @@ if (process.env.SHOT_WEB) {
 
 ws.close();
 proc.kill();
-await fs.rm(profile, { recursive: true, force: true }).catch(() => {});
+await tmp.release(profile);
 console.log(`\nСнимков: ${made.length}, размер ${WIDTH}×${HEIGHT}`);

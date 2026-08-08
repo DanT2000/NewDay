@@ -1,6 +1,5 @@
-const os = require('node:os');
 const path = require('node:path');
-const fs = require('node:fs');
+const tmp = require('../../tools/lib/tmp');
 const { createDb } = require('../../server/db');
 const { runMigrations } = require('../../server/db/migrations');
 const { createApp } = require('../../server/app');
@@ -11,7 +10,7 @@ const { loadConfig } = require('../../server/config');
  * и случайном порту. Всегда закрывать через `close()` в finally.
  */
 async function startTestServer({ env = {}, fetchImpl } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'newday-test-'));
+  const dir = tmp.tempDir('test-server');
   const dbPath = path.join(dir, 'test.db');
 
   const vars = {
@@ -41,16 +40,16 @@ async function startTestServer({ env = {}, fetchImpl } = {}) {
     async close() {
       await new Promise(r => server.close(r));
       try { db.close(); } catch { /* уже закрыта */ }
-      fs.rmSync(dir, { recursive: true, force: true });
+      tmp.releaseSync(dir);
     },
   };
 }
 
 /** Временная база без HTTP-сервера — для тестов миграций и репозиториев. */
 function tmpDatabase() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'newday-db-'));
+  const dir = tmp.tempDir('test-db');
   const file = path.join(dir, 'test.db');
-  return { file, dir, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+  return { file, dir, cleanup: () => tmp.releaseSync(dir) };
 }
 
 module.exports = { startTestServer, tmpDatabase };

@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
+const tmp = require('../../tools/lib/tmp');
 const { startTestServer } = require('../helpers/server');
 const { apkStore, versionCodeOf } = require('../../server/services/apkStore');
 const { updateService, parseTag } = require('../../server/services/updateService');
@@ -16,8 +16,17 @@ function fakeApk(size = 4096) {
   return buf;
 }
 
+/*
+ * Каталог под «APK» — в .tmp проекта, и уборка на общем модуле.
+ *
+ * Из одиннадцати создаваемых здесь каталогов убирались шесть: три уезжали
+ * прямо в аргумент `APK_DIR: tmpDir()` и не запоминались вовсе, ещё два
+ * забыли в finally. За сорок с лишним прогонов это дало 230 брошенных
+ * каталогов в системном %TEMP%. Теперь забыть нельзя: модуль уберёт всё
+ * незакрытое хуком на выходе процесса.
+ */
 function tmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'newday-apk-test-'));
+  return tmp.tempDir('apk-test');
 }
 
 // ── Сравнение версий ─────────────────────────────────────────
@@ -55,7 +64,7 @@ test('сохраняет APK и отдаёт сведения о нём', () => 
     const cur = store.current();
     assert.strictEqual(cur.versionName, '1.0.0');
     assert.ok(fs.existsSync(cur.filePath));
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { tmp.releaseSync(dir); }
 });
 
 test('версию не новее не принимает: подмена свежего APK старым ломает обновление', () => {
@@ -66,7 +75,7 @@ test('версию не новее не принимает: подмена св�
     assert.throws(() => store.save(fakeApk(), { versionName: '1.1.9' }), /не новее/);
     assert.throws(() => store.save(fakeApk(), { versionName: '1.2.0' }), /не новее/);
     assert.strictEqual(store.current().versionName, '1.2.0');
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { tmp.releaseSync(dir); }
 });
 
 test('не-APK и мусорную версию отвергает', () => {
@@ -76,7 +85,7 @@ test('не-APK и мусорную версию отвергает', () => {
     assert.throws(() => store.save(Buffer.alloc(4096), { versionName: '1.0.0' }), /не APK/);
     assert.throws(() => store.save(fakeApk(), { versionName: 'latest' }), /1\.2\.3/);
     assert.throws(() => store.save(fakeApk(10), { versionName: '1.0.0' }), /маленьк/);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { tmp.releaseSync(dir); }
 });
 
 test('держит несколько последних версий, старые убирает', () => {
@@ -88,7 +97,7 @@ test('держит несколько последних версий, стар�
     }
     const apks = fs.readdirSync(dir).filter(f => f.endsWith('.apk')).sort();
     assert.deepStrictEqual(apks, ['NewDay-1.0.2.apk', 'NewDay-1.0.3.apk', 'NewDay-1.0.4.apk']);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { tmp.releaseSync(dir); }
 });
 
 // ── Выбор источника ──────────────────────────────────────────
@@ -108,7 +117,7 @@ test('выложенное на сайт важнее GitHub', async () => {
     assert.strictEqual(latest.source, 'site');
     assert.strictEqual(latest.apkUrl, '/api/v1/app/download');
     assert.strictEqual(githubCalled, false);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { tmp.releaseSync(dir); }
 });
 
 test('без выложенного файла берёт версию из окружения', async () => {
@@ -161,7 +170,7 @@ test('UPDATE_DISABLED выключает проверку целиком', async
     store.save(fakeApk(), { versionName: '9.9.9' });
     const svc = updateService({ update: { enabled: false } }, { store });
     assert.strictEqual(await svc.latest(), null);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { tmp.releaseSync(dir); }
 });
 
 // ── Эндпоинты ────────────────────────────────────────────────

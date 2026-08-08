@@ -13,10 +13,13 @@
 # и убийству по нехватке памяти.
 
 set -u
+
+# Временные файлы — в .tmp проекта, с уборкой на выходе
+. "$(dirname "$0")/lib/tmp.sh"
 ADB="${LOCALAPPDATA}/Android/Sdk/platform-tools/adb.exe"
-# Идентификатор в магазине — com.newday.appswire; пакет кода остался прежним,
-# поэтому активность зовётся ru.appswire.newday.MainActivity
-PKG=${NEWDAY_PKG:-com.newday.appswire}
+# Одно имя и для пакета кода, и для магазина, поэтому активность зовётся
+# ru.appswire.newday.MainActivity
+PKG=${NEWDAY_PKG:-ru.appswire.newday}
 WITH_REBOOT=0
 ONLY=""
 while [ $# -gt 0 ]; do
@@ -190,7 +193,7 @@ check() {
 #
 # Путь назначения — windows-вида: adb.exe принимает только его, а posix-путь
 # из mktemp он превращает в C:\tmp\… и молча ничего не сохраняет.
-UI_POSIX=$(mktemp -t newday-ui-XXXXXX)
+UI_POSIX=$(nd_tmpfile newday-ui)
 UI_WIN=$(cygpath -w "$UI_POSIX" 2>/dev/null || echo "$UI_POSIX")
 dump_ui() {
   MSYS_NO_PATHCONV=1 "$ADB" shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1

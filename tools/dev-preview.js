@@ -1,6 +1,12 @@
 // Локальный стенд с наполненным днём — чтобы посмотреть интерфейс вживую
 process.env.NODE_ENV = 'development';
-process.env.DB_PATH = process.env.SEED_DB || require('node:path').join(require('node:os').tmpdir(), 'newday-preview.db');
+/*
+ * База стенда — в .tmp проекта, а не в системном %TEMP%: там она лежала на
+ * диске C и росла вместе с прогонами, пока на системном диске оставалось всё
+ * меньше места. Каталог тот же, что у профилей браузера, — см. tools/lib/tmp.js.
+ */
+process.env.DB_PATH = process.env.SEED_DB
+  || require('node:path').join(require('./lib/tmp').root(), 'preview.db');
 process.env.SESSION_SECRET = 'local-preview-secret-0123456789012345';
 process.env.PORT = '4010';
 process.env.TRUST_PROXY = '0';
@@ -20,6 +26,20 @@ const { runMigrations } = require('../server/db/migrations');
 const { createApp } = require('../server/app');
 
 const config = loadConfig();
+/*
+ * Стенд начинается с чистой базы.
+ *
+ * День засеивается жёсткими вставками с id=1, поэтому второй запуск на прежнем
+ * файле падал с «UNIQUE constraint failed: users.id» — и выглядело это как
+ * поломка приложения, хотя сломан был стенд. База временная и одноразовая,
+ * сносим её сами. Если файл выбрал человек через SEED_DB — не трогаем.
+ */
+if (!process.env.SEED_DB) {
+  const fs = require('node:fs');
+  for (const suffix of ['', '-wal', '-shm']) {
+    try { fs.rmSync(`${config.dbPath}${suffix}`, { force: true }); } catch { /* занят — упадём ниже, но понятнее */ }
+  }
+}
 const db = createDb(config.dbPath);
 runMigrations(db);
 
