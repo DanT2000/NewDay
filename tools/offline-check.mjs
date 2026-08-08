@@ -81,7 +81,17 @@ await wait(1500);
 const вошли = await js(`fetch('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},
   body:JSON.stringify({emailOrUsername:${JSON.stringify(MAIL)},password:${JSON.stringify(PASS)}})}).then(r=>r.status)`, true);
 проба('вход со связью', вошли === 200, `ответ ${вошли}`);
-if (вошли !== 200) { proc.kill(); process.exit(2); }
+if (вошли !== 200) {
+  // 429 — ограничитель попыток входа, а не отказ приложения: за прогон проверок
+  // логинов набегает много. Счётчик в памяти, лечится перезапуском стенда.
+  if (вошли === 429) {
+    console.error('СТЕНД: сработал ограничитель попыток входа. Перезапустите стенд:');
+    console.error('  node tools/dev-preview.js');
+  }
+  proc.kill();
+  await tmp.release(profile);
+  process.exit(2);
+}
 
 await rpc('Page.navigate', { url: `${BASE}/web.html` });
 await wait(3500);

@@ -4745,7 +4745,9 @@ const BODIES = {
     add(list, ...rows.map((r, i) => {
       const row = h('button.wsheet-row', { type: 'button', onclick: () => openTplRow(i) });
       add(row, ico('dots-six-vertical', '16px', 'wgrab'),
-        h('span.wlead', { text: r.end === null ? hhmm(r.start) : `${hhmm(r.start)}–${hhmm(r.end)}` }),
+        // wspan — колонка под промежуток: здесь время бывает и «10:00–11:00»,
+        // и одной отметкой у напоминания, и без общей ширины строки разъезжаются
+        h('span.wlead.wspan', { text: r.end === null ? hhmm(r.start) : `${hhmm(r.start)}–${hhmm(r.end)}` }),
         h('span.wtitle', { text: r.title }),
         r.alarm === 'off' ? null : ico(bellOf(r.alarm).icon, '16px', 'wbell'),
         ico('caret-right', '14px', 'wchev'));

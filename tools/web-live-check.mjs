@@ -423,6 +423,35 @@ await wait(600);
     if (!m) return false;
     const s = getComputedStyle(m, '::before');
     return s.content !== 'none' && parseFloat(s.width) > 0; })()`));
+/*
+ * Напоминание стоит вровень с блоками.
+ *
+ * У блока время написано промежутком, «06:40–07:10», у напоминания одной
+ * отметкой, «22:30». Колонка времени мерилась по содержимому, и строка
+ * напоминания уезжала влево целиком — на 44 пикселя: точка, рельс и карточка.
+ * Рельс из непрерывной линии превращался в лесенку.
+ *
+ * Меряем центры точек, а не левые края: у вложенной строки точка меньше, и по
+ * краю она законно отличается на пиксель, а по центру обязана совпадать —
+ * рельс идёт через центр.
+ */
+{
+  const выравнивание = await js(`(() => {
+    const rows = [...document.querySelectorAll('.wsched-row')];
+    if (rows.length < 2) return 'строк мало';
+    const одна = rows.some(r => !/–/.test(r.querySelector('.wsched-time')?.textContent ?? ''));
+    if (!одна) return 'напоминаний в дне нет — проверять нечего';
+    const центры = rows.map(r => {
+      const d = r.querySelector('.wsched-dot').getBoundingClientRect();
+      return Math.round(d.left + d.width / 2);
+    });
+    return JSON.stringify({ разных: new Set(центры).size, разброс: Math.max(...центры) - Math.min(...центры) });
+  })()`);
+  const в = выравнивание.startsWith('{') ? JSON.parse(выравнивание) : null;
+  проба('напоминание стоит вровень с блоками: рельс не ломается',
+    Boolean(в) && в.разных === 1, выравнивание);
+}
+
 проба('колонка под колокольчик держит ширину и без напоминаний',
   await js(`(() => { const rows = [...document.querySelectorAll('.wsched-row')];
     if (rows.length < 2) return false;

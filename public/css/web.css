@@ -597,7 +597,23 @@ select.winput { appearance: auto; cursor: pointer; }
   border: 0; background: transparent; color: inherit; width: 100%; text-align: left;
 }
 .wsched-row:hover { background: var(--raise); }
-.wsched-time { font: 500 13px/1 var(--mono); white-space: nowrap; color: var(--dim); }
+/*
+ * Время — постоянной ширины, и от неё зависит вся строка.
+ *
+ * Колонка сетки стоит `auto`, то есть меряется по содержимому. У блока там
+ * «06:40–07:10», у напоминания одно «22:30» — и строка уезжала влево на 44
+ * пикселя целиком: точка, рельс, карточка. Рельс из непрерывной линии
+ * превращался в лесенку.
+ *
+ * Ширину задаём самому времени, а не колонке: `ch` считается от шрифта того
+ * элемента, где написан, — здесь это 13px моноширинного, ровно те 11 знаков
+ * «00:00–00:00», что нужны. На колонке те же 11ch считались бы от шрифта
+ * строки и дали бы лишние 14 пикселей, которых на узком экране жалко.
+ */
+.wsched-time {
+  font: 500 13px/1 var(--mono); white-space: nowrap; color: var(--dim);
+  width: 11ch;
+}
 .wsched-row.past .wsched-time { color: var(--faint); }
 .wsched-row.now .wsched-time { color: var(--accent); }
 
@@ -1156,6 +1172,15 @@ select.winput { appearance: auto; cursor: pointer; }
 }
 .wsheet-row .wgrab { color: var(--faint); font-size: 16px; cursor: grab; }
 .wsheet-row .wlead { font: 500 13px/1 var(--mono); color: var(--accent); flex: none; }
+/*
+ * Где время бывает промежутком — колонка постоянной ширины.
+ *
+ * В расписании дня строка показывает только начало, и все они одной длины. А в
+ * общем расписании у блока «10:00–11:00», у напоминания одно «22:30», и без
+ * общей ширины названия строк разъезжались бы по вертикали — та же ошибка, что
+ * была в расписании дня. 11ch — самая длинная запись, «00:00–00:00».
+ */
+.wsheet-row .wlead.wspan { width: 11ch; }
 .wsheet-row .wtitle { flex: 1; min-width: 0; font: 400 15px/1.3 var(--ui); }
 .wsheet-row .wchev { color: var(--faint); font-size: 14px; }
 

@@ -193,9 +193,21 @@ const вошли = await js(`fetch('/api/v1/auth/login',{method:'POST',headers:{
   body:JSON.stringify({emailOrUsername:${JSON.stringify(MAIL)},password:${JSON.stringify(PASS)}})}).then(r=>r.status)`, true);
 if (вошли !== 200) {
   console.error(`Не удалось войти как ${MAIL}: ответ ${вошли}`);
-  console.error('Проверка без входа прошла бы по пустой странице и соврала бы «переполнений нет».');
-  console.error('Задайте --mail и --pass для этого стенда.');
+  /*
+   * 429 — не отказ приложения, а ограничитель попыток входа. За прогон проверок
+   * логинов набегает много, и он срабатывает; счётчик живёт в памяти, поэтому
+   * лечится перезапуском стенда. Без этой подсказки сообщение «прошла бы по
+   * пустой странице» уводит искать поломку в вёрстке.
+   */
+  if (вошли === 429) {
+    console.error('СТЕНД: сработал ограничитель попыток входа. Перезапустите стенд:');
+    console.error('  node tools/dev-preview.js');
+  } else {
+    console.error('Проверка без входа прошла бы по пустой странице и соврала бы «переполнений нет».');
+    console.error('Задайте --mail и --pass для этого стенда.');
+  }
   proc.kill();
+  await tmp.release(profile);
   process.exit(2);
 }
 
