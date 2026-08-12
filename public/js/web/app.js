@@ -44,6 +44,12 @@ const state = {
   date: '', view: 'week',
   catFilter: 'all', noteFilter: 'all',
   modal: null, busy: false, notice: null, noticeBad: false, toast: null,
+  /*
+   * Объявление администратора: `{ text, rev }`, когда полосу надо показать, и
+   * null, когда её нет. Решение «показывать или нет» принимает `loadAnnounce`,
+   * здесь лежит только прошедшее проверку — включено, не пусто, не закрыто.
+   */
+  announce: null,
   rowId: null, rowStart: null, rowEnd: null, rowField: 'start', rowTitle: '', rowAlarm: 'off', rowLeads: ['at'],
   rowKind: 'normal', rowColor: null, rowConflict: 'overlap', rowNote: '',
   rowRepeat: 'Разово', rowSeriesId: null, rowDate: null, rowWasDate: null,
@@ -472,6 +478,9 @@ async function reload() {
   const needsRange = state.screen === 'plan';
   try {
     const jobs = [];
+    // Объявление — единственное, что нужно на любом экране: его видят все
+    // вошедшие, и на «Заметках» оно так же обязательно, как на «Сейчас»
+    jobs.push(loadAnnounce({ paint: false }));
     if (needsDay || state.modal) jobs.push(data.loadDay(state.date));
     if (needsRange) jobs.push(data.loadRange(state.date, state.view));
     // Правила повторов: по ним редактор напоминания понимает, повтор это или разовое
@@ -519,6 +528,77 @@ async function reload() {
   } catch (e) {
     fail(e);
   }
+}
+
+// ── Объявление ───────────────────────────────────────────────
+
+/*
+ * Метка «человек закрыл» — не «да/нет», а номер версии текста.
+ *
+ * С признаком «закрыто» первое же закрытие похоронило бы и все следующие
+ * объявления: полоса больше никогда не показалась бы, и администратор
+ * разговаривал бы со стеной. Сервер поднимает `rev` только при смене текста,
+ * поэтому закрытым считается всё, что не новее сохранённого номера.
+ */
+const ANNOUNCE_SEEN = 'newday.announce.seen';
+/*
+ * Раз в пять минут. Вкладку держат открытой сутками, и выключенное
+ * администратором объявление иначе висело бы до перезагрузки страницы — а
+ * новое не пришло бы вовсе.
+ */
+const ANNOUNCE_EVERY = 5 * 60 * 1000;
+
+/** До какой версии объявление уже закрыто. Нет метки — значит ни одной. */
+function announceSeen() {
+  // в приватном режиме обращение к localStorage бросает целиком; тогда
+  // честнее считать, что человек ничего не закрывал, чем скрыть объявление
+  try { return Number(localStorage.getItem(ANNOUNCE_SEEN)) || 0; }
+  catch { return 0; }
+}
+
+/**
+ * Сходить за объявлением и решить, показывать ли полосу.
+ *
+ * Отказ проглатываем молча: объявление — не то, ради чего стоит пугать человека
+ * полосой «не удалось сохранить». Без сети её и без нас есть чем показать, а
+ * следующая попытка придёт по таймеру или при возврате к приложению.
+ */
+async function loadAnnounce({ paint = true } = {}) {
+  let got;
+  try { got = await api.announce(); }
+  catch { return; }
+  const rev = Number(got?.rev) || 0;
+  const text = String(got?.text ?? '').trim();
+  const next = got?.on && text && rev > announceSeen() ? { text, rev } : null;
+
+  /*
+   * Ничего не изменилось — не перерисовываем.
+   *
+   * `render` пересобирает DOM целиком, а этот вызов приходит по таймеру: без
+   * проверки человек каждые пять минут терял курсор в поле, которое заполнял.
+   */
+  const was = state.announce;
+  if ((was?.rev ?? 0) === (next?.rev ?? 0) && (was?.text ?? '') === (next?.text ?? '')) return;
+  state.announce = next;
+  /*
+   * Открытая шторка важнее полосы: полоса лежит вне шторки и подождёт её
+   * закрытия, иначе полная перерисовка отберёт курсор посреди набора.
+   * Состояние уже обновлено, поэтому нужный вид нарисует следующий `render`.
+   *
+   * `paint: false` приходит из `reload`: он всё равно перерисовывает в конце,
+   * и своя перерисовка здесь была бы второй за одно обновление — а `render`
+   * пересобирает DOM целиком, на телефоне это заметно.
+   */
+  if (paint && !state.modal) render();
+}
+
+/** Крестик: помним версию, чтобы именно эта полоса больше не возвращалась. */
+function closeAnnounce() {
+  const rev = state.announce?.rev ?? 0;
+  // строкой: в localStorage и так всё строки, и договор записан так же — число
+  try { localStorage.setItem(ANNOUNCE_SEEN, String(rev)); }
+  catch { /* без localStorage полоса вернётся после перезагрузки — это терпимо */ }
+  set({ announce: null });
 }
 
 /** Разложить ответы сервера по спискам, которыми рисует разметка. */
@@ -5570,6 +5650,22 @@ function render() {
   const notice = state.toast ? h('div.wnotice', { text: state.toast }) : null;
 
   /*
+   * Полоса объявления — то, что администратор сказал всем сразу. Стоит после
+   * «нет связи» и перед сообщением экрана: связь важнее, а сообщение относится
+   * к тому, что человек только что нажал, и должно лежать ближе к содержимому.
+   *
+   * Текст ставим текстом (`text`), а не разметкой: это чужой ввод, и html в нём
+   * недопустим. Смайлики от этого не страдают — они и есть текст.
+   */
+  const announce = state.announce
+    ? h('div.wnotice.wannounce',
+      h('div.wannounce-text', { text: state.announce.text }),
+      iconBtn('x', {
+        title: 'Закрыть', onclick: closeAnnounce, cls: 'wannounce-x', size: '13px',
+      }))
+    : null;
+
+  /*
    * Прокрутка переживает перерисовку.
    *
    * render() пересобирает DOM целиком, и контейнеры прокрутки рождаются
@@ -5616,13 +5712,14 @@ function render() {
 
   if (phone) {
     replace(root,
-      h('div.wpbody.wscroll', offline, notice, screens[state.screen]()),
+      h('div.wpbody.wscroll', offline, announce, notice, screens[state.screen]()),
       phoneNav(),
       modal());
   } else {
     replace(root,
       sideBar(),
-      h('div.wmain', topBar(), h('div.wbody.wscroll', offline, notice, screens[state.screen]())),
+      h('div.wmain', topBar(),
+        h('div.wbody.wscroll', offline, announce, notice, screens[state.screen]())),
       modal());
   }
   for (const [sel, top] of keepScroll) {
@@ -5656,6 +5753,9 @@ addEventListener('resize', () => {
  * локальной копии и сам не сбрасывается, поэтому спокойная полоса висела бы до
  * конца перечитывания, а при неудаче — и дольше. Если перечитать не удастся,
  * следующее же чтение поставит признак обратно.
+ *
+ * Объявление отдельно звать не нужно: `reload` тянет его первым же заданием,
+ * поэтому с появлением связи полоса появляется или исчезает здесь же.
  */
 addEventListener('online', () => { store.offline = false; render(); reload(); });
 addEventListener('offline', render);
@@ -5675,6 +5775,27 @@ document.addEventListener('visibilitychange', () => {
   render();
   reload();
 });
+
+/*
+ * Объявление перечитываем и само по себе — не только вместе с днём.
+ *
+ * Обработчик выше перечитывает всё, но лишь когда до этого не было связи: со
+ * связью он выходит сразу, и объявление, снятое администратором пока человек
+ * был в другом приложении, встретило бы его снова. Отдельный обработчик стоит
+ * дешевле: один запрос, без перерисовки, если ничего не изменилось.
+ */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') loadAnnounce();
+});
+/*
+ * Таймер молчит, пока страницу не смотрят: стучать в сервер из свёрнутого
+ * приложения незачем — это чужая батарея, а в фоновой вкладке браузер таймеры
+ * всё равно душит и точность обещать не может. Возврат к экрану перечитает
+ * объявление обработчиком выше, поэтому пропущенные тики ничего не стоят.
+ */
+setInterval(() => {
+  if (document.visibilityState === 'visible') loadAnnounce();
+}, ANNOUNCE_EVERY);
 
 /*
  * Уходя со страницы, отпускаем микрофон. Закрытую вкладку браузер разбирает

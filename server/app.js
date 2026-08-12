@@ -19,6 +19,7 @@ const seriesRouter = require('./routes/v1/series');
 const pushRouter = require('./routes/v1/push');
 const settingsRouter = require('./routes/v1/settings');
 const notesRouter = require('./routes/v1/notes');
+const announceRouter = require('./routes/v1/announce');
 const soundsRouter = require('./routes/v1/sounds');
 const adminRouter = require('./routes/v1/admin');
 const adminPanelRouter = require('./routes/adminPanel');
@@ -188,6 +189,13 @@ function createApp({ db, config, fetchImpl, env = process.env }) {
   app.use('/api/v1/sounds', soundsRouter({ db, config }));
   app.use('/api/v1/admin', adminRouter({ db, config, ai }));
   app.use('/api/v1/settings', settingsRouter({ db, config }));
+  /**
+   * Объявление — здесь, после auth.requireAuth, а не рядом с /auth/config и
+   * версией приложения: те открыты нарочно, а объявление владелец пишет своим
+   * («сервер переедет в субботу», «оплатите доступ»). Публичный маршрут отдал
+   * бы этот текст всему интернету — читать его должен вошедший, и только он.
+   */
+  app.use('/api/v1/announce', announceRouter({ db }));
   app.use('/api/v1', exportRouter({ db }));
 
   app.use('/api', (req, _res, next) => {

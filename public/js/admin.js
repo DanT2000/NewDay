@@ -1089,6 +1089,136 @@ async function renderAi() {
 
 /* ── Настройки ──────────────────────────────────────────────── */
 
+/*
+ * Предел длины объявления — тот же, что на сервере (v.str max: 2000).
+ * Держим числом здесь, чтобы счётчик и maxlength поля не разошлись с ним.
+ */
+const ANNOUNCE_MAX = 2000;
+
+/**
+ * Объявление для всех: текст и один переключатель.
+ *
+ * Текст и положение переключателя уезжают одним PUT — маршрут принимает
+ * { text, on } целиком, по частям он не умеет. Поэтому переключатель здесь,
+ * в отличие от соседних, сам ничего не отправляет: сохраняя себя, он унёс бы
+ * на сервер недописанный текст из поля — или, наоборот, оставил бы правку
+ * лежать невидимкой. Одна кнопка — одна правда о том, что нажать, чтобы
+ * объявление изменилось; об этом же говорит подпись под переключателем.
+ */
+async function announceCard() {
+  let ann = null;
+  try { ann = await api('GET', '/api/admin/announce'); }
+  catch { /* сервер старой версии — покажем, что раздел недоступен, а не поле, из которого текст никуда не уедет */ }
+
+  if (!ann) {
+    return card('Объявление для всех', null,
+      el('p', { class: 'adm-lead', text: 'Раздел недоступен: сервер ещё не обновлён.' }));
+  }
+
+  const err = errBox();
+
+  const ta = el('textarea', {
+    class: 'input', rows: '4', maxlength: String(ANNOUNCE_MAX),
+    placeholder: 'В субботу с 10:00 обновляем сервер — NewDay может ненадолго пропасть 🙂',
+    value: ann.text ?? '',
+  });
+
+  /*
+   * Счётчик мерит теми же единицами, что сервер: v.str сравнивает s.length,
+   * то есть единицы UTF-16, и maxlength у поля — тоже. Смайлик «🙂» весит две
+   * такие единицы. Считай мы знаки по-человечески ([...text].length) —
+   * счётчик обещал бы место, которого поле уже не даёт, а сервер не принял бы.
+   * Без склонений («Осталось знаков: N») — иначе «1 знаков».
+   */
+  const counter = el('span', { class: 'adm-announce-count' });
+  function paintCounter() {
+    const n = ANNOUNCE_MAX - ta.value.length;
+    counter.textContent = n > 0
+      ? `Осталось знаков: ${fmtInt(n)} из ${fmtInt(ANNOUNCE_MAX)}`
+      : 'Место кончилось: больше поле не примет.';
+    counter.classList.toggle('low', n <= 100);
+  }
+  ta.addEventListener('input', paintCounter);
+  paintCounter();
+
+  /*
+   * Значок в заголовке — про то, что видят люди прямо сейчас, а не про
+   * положение переключателя в форме. Выключенное объявление рисуем обычным
+   * значком, а не красным (pill bad): молчать — выбор владельца, не поломка.
+   */
+  const pill = el('span', { class: 'pill' });
+  function paintPill() {
+    const live = Boolean(ann.on) && Boolean(ann.text);
+    pill.className = live ? 'pill ok' : 'pill';
+    pill.textContent = live ? 'показывается' : 'скрыто';
+  }
+  paintPill();
+
+  // Переключатель без запроса: makeSwitch ждёт от onToggle фактическое
+  // значение, и здесь фактическое — просто желаемое. Отправит его кнопка.
+  const sw = makeSwitch(ann.on, next => next, 'Показывать объявление');
+
+  const saveBtn = el('button', { class: 'btn btn-primary', type: 'submit', text: 'Сохранить объявление' });
+
+  // Счётчик — внутрь .form-group, вплотную под поле: в общем столбце
+  // формы (gap побольше) он читался бы как отдельная подпись
+  const textGroup = group('Текст объявления', ta);
+  textGroup.append(counter);
+
+  const form = el('form', { class: 'stack' },
+    textGroup,
+    el('p', { class: 'adm-lead', text:
+      'Полоса с этим текстом появится у всех вошедших — и в браузере, и в приложении. '
+      + 'Обычный текст, смайлики можно. Пустой текст стирает объявление, а изменённый '
+      + 'покажется снова даже тем, кто полосу уже закрыл.' }),
+    setRow('Показывать',
+      'Пока выключено, полосы не видит никто. Переключатель уезжает вместе с текстом — кнопкой «Сохранить объявление».',
+      sw),
+    err,
+    el('div', { class: 'adm-actions' }, saveBtn));
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (saveBtn.disabled) return;
+    hideErr(err);
+
+    const text = ta.value.trim();
+    const on = sw.getAttribute('aria-checked') === 'true';
+    /*
+     * Включённый показ пустого текста — полоса ни с чем: у людей она мигнула
+     * бы пустотой. Стереть объявление это не мешает: пустой текст с
+     * выключенным показом сервер принимает.
+     */
+    if (on && !text) {
+      showErr(err, 'Показывать нечего: напишите текст объявления или выключите показ.');
+      return;
+    }
+
+    saveBtn.disabled = true;
+    try {
+      const r = await api('PUT', '/api/admin/announce', { text, on });
+      // Правда — за сервером: он вернул то, что теперь увидят люди
+      // (текст без крайних пробелов), и поле должно совпадать с ней.
+      ann = r && typeof r === 'object' ? r : { text, on };
+      ta.value = ann.text ?? '';
+      sw.setAttribute('aria-checked', String(Boolean(ann.on)));
+      paintCounter();
+      paintPill();
+      if (ann.on) toast('Объявление показывается всем');
+      else if (ann.text) toast('Объявление сохранено, показ выключен');
+      else toast('Объявление стёрто');
+    } catch (ex) {
+      showErr(err, 'Не получилось сохранить: ' + ex.message);
+    }
+    saveBtn.disabled = false;
+  });
+
+  const node = card('Объявление для всех', pill, form);
+  // Класс на карточке — чтобы браузерной пробе и стилям было за что её взять
+  node.classList.add('adm-announce');
+  return node;
+}
+
 async function renderSettings() {
   const settings = await api('GET', '/api/admin/settings');
 
@@ -1264,7 +1394,8 @@ async function renderSettings() {
 
   const healthCard = card('Наблюдение за сервером', null, hBox);
 
-  return [regCard, healthCard, passCard];
+  // Объявление — первым: из всего раздела его меняют чаще остального
+  return [await announceCard(), regCard, healthCard, passCard];
 }
 
 /* ── Старт ──────────────────────────────────────────────────────

@@ -200,6 +200,12 @@ export const habits = {
 export const stats      = (from, to) => GET(`/stats?from=${from}&to=${to}`);
 export const getSettings = () => GET('/settings');
 export const saveSettings = fields => PATCH('/settings', fields);
+/*
+ * Объявление для всех вошедших. `rev` растёт только при смене текста, поэтому
+ * по нему видно, что объявление именно новое: включение и выключение того же
+ * текста закрытую человеком полосу обратно не вытаскивает.
+ */
+export const announce = () => GET('/announce');
 export const me         = () => GET('/auth/me');
 export const logout     = () => POST('/auth/logout');
 export const changePassword = (currentPassword, newPassword) =>

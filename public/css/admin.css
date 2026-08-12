@@ -215,6 +215,14 @@
 .adm-setrow-t b { font: var(--t-body-md); }
 .adm-setrow-t span { font: var(--t-small); color: var(--ink-3); }
 
+/* ── Объявление для всех ──────────────────────────────────────
+   Само поле берёт вид у textarea.input из components.css, подпись — у
+   .form-group. Своего здесь только счётчик остатка знаков: цвет отказа
+   (.adm-check-out.bad, красный) ему не годится — кончающееся место
+   предупреждает, а не отказывает. */
+.adm-announce-count { font: var(--t-small); color: var(--ink-3); }
+.adm-announce-count.low { color: var(--c-warn); }
+
 /* ── Помощник ─────────────────────────────────────────────── */
 .adm-ai-status { display: flex; align-items: flex-start; gap: var(--s-2); font: var(--t-body-md); }
 .adm-ai-status svg { margin-top: 2px; }
