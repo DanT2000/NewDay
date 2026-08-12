@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.Gravity
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -111,8 +112,26 @@ class BindCodeActivity : Activity() {
         }
     }
 
+    /**
+     * Код прочитан.
+     *
+     * Сохраняем его здесь, а не в плагине, и это не мелочь. Экран привязки
+     * открыт поверх активности с вебвью, камера ест память — и система эту
+     * активность сзади разрушает, на телефонах поскромнее регулярно. После
+     * такого Capacitor восстанавливает вызов плагина «висящим»: ответ в
+     * веб-часть он молча выбрасывает, а иногда самого вызова уже нет. Пока код
+     * сохранял только плагин, отсканированный код в этом случае пропадал
+     * начисто — человек видел «код не привязан» после удачного сканирования.
+     * Здесь же терять нечего: экран сам прочитал код, сам его и записал.
+     */
     private fun done(text: String) {
         scanner?.stop()
+        val cfg = AlarmStore.config(this)
+        // подпись приезжает из веб-части вместе с запуском; пустая означает
+        // «не трогать» — её правят отдельно, полем «где наклеен»
+        val label = intent?.getStringExtra(EXTRA_LABEL).orEmpty().ifBlank { cfg.qrLabel }
+        AlarmStore.saveConfig(this, cfg.copy(qrValue = text, qrLabel = label))
+        Log.i("NewDayAlarm", "BIND_SAVED код прочитан и сохранён")
         setResult(Activity.RESULT_OK, Intent().putExtra("code", text))
         finish()
     }
@@ -126,5 +145,8 @@ class BindCodeActivity : Activity() {
     companion object {
         private const val REQ_CAMERA = 4711
         private const val MATCH = LinearLayout.LayoutParams.MATCH_PARENT
+
+        /** Подпись места, с которой пришли из настроек: «на чайнике». */
+        const val EXTRA_LABEL = "label"
     }
 }

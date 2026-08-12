@@ -22,6 +22,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import tmp from './lib/tmp.js';
+import { killTree } from './lib/proc.js';
 
 const arg = (name, def) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -331,7 +332,7 @@ try {
   adb('shell', 'am', 'force-stop', PKG);
 } finally {
   try { ws?.close(); } catch { /* уже закрыт */ }
-  chrome.kill();
+  await killTree(chrome, chromeDir);
   adb('emu', 'kill');
   await wait(3000);
   sh('taskkill', ['/F', '/IM', 'qemu-system-x86_64.exe']);

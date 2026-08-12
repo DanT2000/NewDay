@@ -21,8 +21,15 @@ import { basename, join } from 'node:path';
 const ROOT = 'store';
 const SHOTS = join(ROOT, 'screens');
 const ID = 'ru.appswire.newday';
-const VERSION = '1.0.8';
-const CODE = '10008';
+const VERSION = '1.0.9';
+/*
+ * Код версии считаем из неё же, по правилу Gradle: MA*10000+MI*100+PA.
+ *
+ * Отдельной строкой он уже разъехался: версия стала 1.0.9, а код остался
+ * 10008 — и комплект уверенно советовал загрузить в консоль несуществующую
+ * сборку. Одна правда на два числа.
+ */
+const CODE = String(VERSION.split('.').reduce((acc, part, i) => acc + Number(part) * [10000, 100, 1][i], 0));
 
 const AAB = 'android/app/build/outputs/bundle/release/app-release.aab';
 const APK = 'android/app/build/outputs/apk/release/app-release.apk';

@@ -16,6 +16,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import tmp from './lib/tmp.js';
+import { killTree } from './lib/proc.js';
 
 const WIDTH = Number(process.argv[2]) || 1440;
 const HEIGHT = Number(process.argv[3]) || 900;
@@ -253,6 +254,6 @@ if (process.env.SHOT_WEB) {
 }
 
 ws.close();
-proc.kill();
+await killTree(proc, profile);
 await tmp.release(profile);
 console.log(`\nСнимков: ${made.length}, размер ${WIDTH}×${HEIGHT}`);

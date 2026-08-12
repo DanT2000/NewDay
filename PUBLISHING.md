@@ -29,6 +29,10 @@
 такого вывода недостаточно — Android откажет и при понижении `versionCode`, и
 при разном `applicationId`.
 
+Сейчас выкладывается **1.0.9**, код **10009**. Она проверена уже не на
+эмуляторе: встала обновлением поверх 1.0.8 на Xiaomi 14T Pro (HyperOS V816,
+Android 16) — тем же ключом, без удаления и без второго значка.
+
 Одна тонкость, которая всплыла на этой проверке. Если обновить приложение,
 которое ни разу не открывали после установки, Android может уронить процесс
 в момент подмены APK: наш приёмник поднимается по `MY_PACKAGE_REPLACED` ровно
@@ -110,14 +114,14 @@ npm install
 npx cap sync android                   # переносит public/ в проект Android
 
 cd android
-NEWDAY_VERSION_NAME=1.0.8 ./gradlew bundleRelease      # AAB для Google Play
-NEWDAY_VERSION_NAME=1.0.8 ./gradlew assembleRelease # APK для RuStore и сайта
+NEWDAY_VERSION_NAME=1.0.9 ./gradlew bundleRelease      # AAB для Google Play
+NEWDAY_VERSION_NAME=1.0.9 ./gradlew assembleRelease # APK для RuStore и сайта
 ```
 
 В PowerShell переменная задаётся иначе:
 
 ```powershell
-$env:NEWDAY_VERSION_NAME = '1.0.8'
+$env:NEWDAY_VERSION_NAME = '1.0.9'
 cd android; ./gradlew bundleRelease assembleRelease
 ```
 
@@ -128,7 +132,7 @@ cd android; ./gradlew bundleRelease assembleRelease
 | Google Play | `android/app/build/outputs/bundle/release/app-release.aab` |
 | RuStore и сайт | `android/app/build/outputs/apk/release/app-release.apk` |
 
-`versionCode` считается из версии сам: `1.0.8` → `10008`. Задавать руками не
+`versionCode` считается из версии сам: `1.0.9` → `10009`. Задавать руками не
 нужно, но можно — `NEWDAY_VERSION_CODE`. Номер обязан расти: магазин не примет
 загрузку с кодом, который уже был.
 

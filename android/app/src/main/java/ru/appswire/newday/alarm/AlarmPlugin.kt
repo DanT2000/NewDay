@@ -9,8 +9,11 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import android.util.Log
 import androidx.activity.result.ActivityResult
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -184,6 +187,18 @@ class AlarmPlugin : Plugin() {
                 Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:" + context.packageName))
             } else appDetails()
 
+            /*
+             * Автозапуск. Своего экрана в Android нет вовсе: это выдумка
+             * оболочек. На Xiaomi, Huawei, Oppo, Vivo приложение без него
+             * система выгружает целиком, и будильник не звонит — самая частая
+             * причина «поставил, а он молчит».
+             */
+            "autostart" -> vendorIntent(AUTOSTART) ?: appDetails()
+
+            // Xiaomi: «Другие разрешения» — там живёт показ окон из фона,
+            // без которого экран будильника не поднимается
+            "vendorExtra" -> vendorIntent(EXTRA_PERMS) ?: appDetails()
+
             else -> appDetails()
         }
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -205,6 +220,84 @@ class AlarmPlugin : Plugin() {
         Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
         Uri.parse("package:" + context.packageName),
     )
+
+    /*
+     * Экраны оболочек производителей.
+     *
+     * У Xiaomi, Huawei, Oppo, Vivo, Samsung есть свои списки — автозапуск,
+     * «другие разрешения», защищённые приложения, — и без них будильник не
+     * звонит: система выгружает приложение целиком. Стандартного способа туда
+     * попасть нет, в Android этих экранов не существует; остаются точные адреса
+     * активностей. Они меняются между версиями оболочек, поэтому берём первый,
+     * который вообще существует на этом телефоне, а не первый в списке.
+     *
+     * Проверяем через resolveActivity: неизвестная активность даёт не отказ, а
+     * падение ActivityNotFoundException — и человек вместо настроек получил бы
+     * закрывшееся приложение.
+     */
+    private val AUTOSTART = listOf(
+        "com.miui.securitycenter/com.miui.permcenter.autostart.AutoStartManagementActivity",
+        "com.letv.android.letvsafe/.AutobootManageActivity",
+        "com.huawei.systemmanager/.startupmgr.ui.StartupNormalAppListActivity",
+        "com.huawei.systemmanager/.optimize.process.ProtectActivity",
+        "com.coloros.safecenter/.permission.startup.StartupAppListActivity",
+        "com.coloros.safecenter/.startupapp.StartupAppListActivity",
+        "com.oppo.safe/.permission.startup.StartupAppListActivity",
+        "com.iqoo.secure/.ui.phoneoptimize.AddWhiteListActivity",
+        "com.vivo.permissionmanager/.activity.BgStartUpManagerActivity",
+        "com.samsung.android.lool/com.samsung.android.sm.ui.battery.BatteryActivity",
+        "com.asus.mobilemanager/.MainActivity",
+    )
+    private val EXTRA_PERMS = listOf(
+        // Xiaomi: показ окон из фона и прочие «другие разрешения»
+        "com.miui.securitycenter/com.miui.permcenter.permissions.PermissionsEditorActivity",
+        "com.miui.securitycenter/com.miui.permcenter.permissions.AppPermissionsEditorActivity",
+    )
+
+    /** Первый экран из списка, который есть на этом телефоне. */
+    private fun vendorIntent(candidates: List<String>): Intent? {
+        for (name in candidates) {
+            val parts = name.split("/")
+            if (parts.size != 2) continue
+            val pkg = parts[0]
+            val cls = if (parts[1].startsWith(".")) pkg + parts[1] else parts[1]
+            val intent = Intent().setClassName(pkg, cls)
+                .putExtra("package_name", context.packageName)
+                .putExtra("extra_pkgname", context.packageName)
+            if (intent.resolveActivity(context.packageManager) != null) return intent
+        }
+        return null
+    }
+
+    /**
+     * Какая это оболочка и есть ли у неё свои экраны.
+     *
+     * Веб-часть по этому ответу решает, показывать ли строку «Автозапуск»:
+     * предлагать её там, где такого экрана нет, значит вести человека в
+     * никуда. Название оболочки нужно, чтобы подписать строку словами, которые
+     * он увидит на своём телефоне.
+     */
+    @PluginMethod
+    fun vendorSettings(call: PluginCall) {
+        val brand = Build.MANUFACTURER?.lowercase() ?: ""
+        val shell = when {
+            brand.contains("xiaomi") || brand.contains("redmi") || brand.contains("poco") -> "Xiaomi"
+            brand.contains("huawei") || brand.contains("honor") -> "Huawei"
+            brand.contains("oppo") || brand.contains("realme") -> "Oppo"
+            brand.contains("vivo") -> "Vivo"
+            brand.contains("samsung") -> "Samsung"
+            brand.contains("asus") -> "Asus"
+            brand.contains("letv") -> "LeEco"
+            else -> ""
+        }
+        call.resolve(
+            JSObject()
+                .put("brand", Build.MANUFACTURER ?: "")
+                .put("shell", shell)
+                .put("autostart", vendorIntent(AUTOSTART) != null)
+                .put("extraPerms", vendorIntent(EXTRA_PERMS) != null),
+        )
+    }
 
     /**
      * Проверочный будильник. Единственный способ убедиться, что он реально
@@ -264,24 +357,36 @@ class AlarmPlugin : Plugin() {
             call.reject("На этом телефоне нет камеры — код привязать нечем")
             return
         }
+        // Подпись места уезжает в экран привязки: записывать её будет он же,
+        // вместе со значением кода, — см. codeBound
         val intent = Intent(context, BindCodeActivity::class.java)
+            .putExtra(BindCodeActivity.EXTRA_LABEL, call.getString("label").orEmpty())
         startActivityForResult(call, intent, "codeBound")
     }
 
+    /**
+     * Ответ экрана привязки.
+     *
+     * Сам код здесь уже не сохраняется — это делает экран привязки, и нарочно.
+     * Пока камера открыта, система разрушает активность с вебвью; Capacitor
+     * после этого восстанавливает вызов «висящим» (callbackId «-1»), и ответ в
+     * веб-часть выбрасывается молча, а иногда вызова нет вовсе — [call] придёт
+     * пустым. Сохраняли бы код здесь — в этом случае он пропадал бы весь:
+     * сканирование удалось, а в настройках «код не привязан».
+     *
+     * Поэтому отвечаем тем, что действительно записано на устройстве, а не тем,
+     * что нам передали.
+     */
     @ActivityCallback
     private fun codeBound(call: PluginCall?, result: ActivityResult) {
-        if (call == null) return
-        val code = result.data?.getStringExtra("code").orEmpty()
-        if (code.isBlank()) {
-            call.resolve(JSObject().put("bound", false))
-            return
-        }
-        val label = call.getString("label").orEmpty()
-        AlarmStore.saveConfig(
-            context,
-            AlarmStore.config(context).copy(qrValue = code, qrLabel = label),
-        )
-        call.resolve(JSObject().put("bound", true).put("label", label))
+        val scanned = result.data?.getStringExtra("code").orEmpty()
+        val cfg = AlarmStore.config(context)
+        val bound = scanned.isNotBlank() && cfg.qrBound
+        Log.i(TAG, if (bound) "BIND_OK код привязан" else "BIND_NONE код не привязан")
+        // Вызова может не быть: веб-часть за это время пережила пересоздание.
+        // Терять тут нечего — состояние уже на устройстве, и настройки прочтут
+        // его через missionCapabilities.
+        call?.resolve(JSObject().put("bound", bound).put("label", cfg.qrLabel))
     }
 
     /** Отвязать код: задача «QR» после этого сама станет математикой. */
@@ -379,6 +484,55 @@ class AlarmPlugin : Plugin() {
         }
     }
 
+    /**
+     * Насколько системные полосы залезают на страницу — в CSS-пикселях.
+     *
+     * Начиная с targetSdk 35 Android рисует приложение край-в-край и не
+     * спрашивает: окно занимает весь экран, вебвью вместе с ним, и содержимое
+     * уезжает под верхнюю шторку. Это и увидел владелец на телефоне.
+     *
+     * Одним CSS не обойтись: `env(safe-area-inset-top)` в Android WebView
+     * заполняется только для выреза камеры, а обычная шторка в него не
+     * попадает — на телефоне без выреза он остаётся нулём. Поэтому отступы
+     * берём у системы и отдаём числами, а CSS берёт большее из двух.
+     *
+     * Делим на плотность: у системы отступы в пикселях устройства, у CSS — в
+     * своих. Без деления на экране с плотностью 3 отступ вышел бы втрое больше.
+     */
+    @PluginMethod
+    fun systemInsets(call: PluginCall) {
+        val act = activity ?: run {
+            call.resolve(JSObject().put("known", false))
+            return
+        }
+        act.runOnUiThread {
+            val insets = act.window?.decorView?.let { ViewCompat.getRootWindowInsets(it) }
+            if (insets == null) {
+                // Окно ещё не прикреплено. Честное «не знаю» лучше выдуманного
+                // числа: веб-часть спросит снова.
+                call.resolve(JSObject().put("known", false))
+                return@runOnUiThread
+            }
+            /*
+             * Полосы и вырез вместе: на телефоне с «капелькой» шторка тонкая, а
+             * вырез выше её, и по одним systemBars содержимое всё равно попало
+             * бы под камеру.
+             */
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
+            )
+            val d = act.resources.displayMetrics.density.takeIf { it > 0f } ?: 1f
+            call.resolve(
+                JSObject()
+                    .put("known", true)
+                    .put("top", (bars.top / d).toInt())
+                    .put("bottom", (bars.bottom / d).toInt())
+                    .put("left", (bars.left / d).toInt())
+                    .put("right", (bars.right / d).toInt()),
+            )
+        }
+    }
+
     @PluginMethod
     fun stopAlarm(call: PluginCall) {
         context.startService(
@@ -431,5 +585,6 @@ class AlarmPlugin : Plugin() {
 
     companion object {
         private const val REQ_MISSION = 4712
+        private const val TAG = "NewDayAlarm"
     }
 }

@@ -15,6 +15,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import tmp from './lib/tmp.js';
+import { killTree } from './lib/proc.js';
 import { pathToFileURL } from 'node:url';
 
 const arg = (name, def) => {
@@ -184,6 +185,6 @@ try {
   console.log(`${OUT}  ${(buf.length / 1024).toFixed(0)} КБ`);
 } finally {
   try { ws?.close(); } catch { /* уже закрыт */ }
-  chrome.kill();
+  await killTree(chrome, dir);
   await tmp.release(dir);
 }

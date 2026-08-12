@@ -13,6 +13,7 @@ import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
 import tmp from './lib/tmp.js';
+import { killTree } from './lib/proc.js';
 
 const arg = (name, def) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -206,7 +207,7 @@ if (вошли !== 200) {
     console.error('Проверка без входа прошла бы по пустой странице и соврала бы «переполнений нет».');
     console.error('Задайте --mail и --pass для этого стенда.');
   }
-  proc.kill();
+  await killTree(proc, profile);
   await tmp.release(profile);
   process.exit(2);
 }
@@ -331,6 +332,6 @@ console.log(найдено.length ? `Мест с переполнением: ${�
 await fs.writeFile(path.join(OUT, 'overflow.json'), JSON.stringify(найдено, null, 2));
 console.log('Подробности: tools/.shots/overflow.json');
 
-proc.kill();
+await killTree(proc, profile);
 await tmp.release(profile);
 process.exit(найдено.length ? 1 : 0);

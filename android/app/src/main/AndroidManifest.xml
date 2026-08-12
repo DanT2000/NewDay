@@ -199,4 +199,32 @@
     <uses-feature android:name="android.hardware.sensor.stepcounter" android:required="false" />
     <uses-feature android:name="android.hardware.sensor.stepdetector" android:required="false" />
 
+    <!--
+        Оболочки производителей, куда мы умеем отправлять человека одним
+        нажатием: автозапуск у Xiaomi, Huawei, Oppo, Vivo и «другие разрешения»
+        у Xiaomi. Без этих разрешений телефон усыпляет приложение, и будильник
+        не звонит — а системного пути на эти экраны не существует, они целиком
+        выдумка оболочки.
+
+        Список нужен из-за скрытия пакетов: начиная с Android 11 приложение не
+        видит чужие пакеты вовсе, и проверка «есть ли такой экран» всегда
+        отвечала бы «нет» — строка перехода не появилась бы ни на одном
+        современном телефоне, включая Xiaomi владельца.
+
+        Перечислены именно пакеты, а не QUERY_ALL_PACKAGES: то разрешение
+        чувствительное, магазины требуют за него отчёта, и просить право видеть
+        все приложения телефона ради пяти экранов настроек — несоразмерно.
+    -->
+    <queries>
+        <package android:name="com.miui.securitycenter" />
+        <package android:name="com.huawei.systemmanager" />
+        <package android:name="com.coloros.safecenter" />
+        <package android:name="com.oppo.safe" />
+        <package android:name="com.iqoo.secure" />
+        <package android:name="com.vivo.permissionmanager" />
+        <package android:name="com.samsung.android.lool" />
+        <package android:name="com.asus.mobilemanager" />
+        <package android:name="com.letv.android.letvsafe" />
+    </queries>
+
 </manifest>

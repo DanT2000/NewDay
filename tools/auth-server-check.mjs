@@ -15,6 +15,7 @@
 import { spawn } from 'node:child_process';
 import fsSync from 'node:fs';
 import tmp from './lib/tmp.js';
+import { killTree } from './lib/proc.js';
 
 const arg = (name, def) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -195,7 +196,7 @@ try {
   console.log(`\n── Итог ──\n${сошлось} из ${всего}`);
 } finally {
   try { ws?.close(); } catch { /* уже закрыт */ }
-  proc.kill();
+  await killTree(proc, profile);
   await tmp.release(profile);
 }
 process.exit(сошлось === всего ? 0 : 1);

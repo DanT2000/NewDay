@@ -491,6 +491,9 @@ async function reload() {
         jobs.push(native.checkPermissions().then(p => { state.alarmPerms = p; }).catch(() => null));
         // то же самое про камеру, шагомер и привязанный код
         jobs.push(native.missionCapabilities().then(c => { state.missionCaps = c; }).catch(() => null));
+        // и какие экраны есть у оболочки: у Xiaomi с Huawei автозапуск лежит
+        // в их собственных настройках, куда системного пути нет
+        jobs.push(native.vendorSettings().then(v => { vendorInfo = v; }).catch(() => null));
         // свой звук, выбранный в браузере, довозится на телефон здесь:
         // будильник звонит без сети, файл обязан лежать на устройстве
         jobs.push(ensureCustomSound().catch(() => null));
@@ -2279,13 +2282,49 @@ function alarmPanel() {
   }));
   add(panel, list);
 
-  if (perms.needsVendorAutostart) {
-    add(panel, h('div.wclock-cap', {
-      text: `На ${perms.manufacturer} автозапуск режется отдельно от системных разрешений: `
-        + 'найдите NewDay в списке автозапуска оболочки и разрешите его, иначе будильник '
-        + 'может не сработать после долгого простоя.',
-      style: { marginTop: '10px' },
-    }));
+  /*
+   * Экраны оболочки — отдельным списком с кнопками, а не абзацем текста.
+   *
+   * «Найдите NewDay в списке автозапуска» — это пять экранов вглубь настроек,
+   * и называются они на каждой оболочке иначе. Ведём туда одним нажатием.
+   *
+   * Галочки здесь нет нарочно: система не сообщает, разрешён ли автозапуск, —
+   * прочитать это состояние невозможно, а рисовать наугад крестик, когда всё
+   * уже разрешено, значит гонять человека по кругу.
+   */
+  if (perms.needsVendorAutostart || vendorInfo?.autostart) {
+    const shell = vendorInfo?.shell || perms.manufacturer;
+    const vend = h('div.wstack-tight', { style: { marginTop: '10px' } });
+    const vrow = (label, hint, what) => {
+      const row = h('div.wperm.nb');
+      add(row,
+        ico('gear', '18px', 'wperm-nb'),
+        h('div.wperm-body',
+          h('div.wperm-title', { text: label }),
+          h('div.wperm-hint', { text: hint })),
+        h('button.wbtn-line', {
+          type: 'button', text: 'Открыть',
+          onclick: () => native.openSystemSettings(what).catch(fail),
+        }));
+      return row;
+    };
+    add(vend, vrow('Автозапуск',
+      `${shell} выгружает приложение целиком, и будильник не звонит после долгого простоя`,
+      'autostart'));
+    if (vendorInfo?.extraPerms) {
+      add(vend, vrow('Другие разрешения',
+        'здесь у Xiaomi лежит показ окон из фона — без него экран будильника не поднимется',
+        'vendorExtra'));
+    }
+    add(panel,
+      h('div.wpanel-label', { text: `Настройки ${shell}`, style: { marginTop: '16px' } }),
+      vend,
+      h('div.wclock-cap', {
+        text: 'Эти разрешения система не показывает и проверить их нельзя — оболочка держит их '
+          + 'у себя. Разрешите один раз: без них телефон усыпляет будильник, что бы ни было '
+          + 'разрешено выше.',
+        style: { marginTop: '8px' },
+      }));
   }
 
   add(panel, h('div.wrow', { style: { marginTop: '14px' } },
@@ -2447,6 +2486,45 @@ function refreshMissionCaps() {
     .catch(() => null);
 }
 
+/*
+ * Спрашиваем заново и при каждом возврате в приложение.
+ *
+ * Привязка кода уходит на отдельный экран с камерой, и пока он открыт, система
+ * может разрушить активность с вебвью — на телефонах с «не сохранять
+ * активности» это происходит всегда. Тогда страница перезагружается, ответ на
+ * `bindCode` не приходит вовсе, и `refreshMissionCaps` после `await` не
+ * вызывается никогда: код на устройстве привязан, а галочки нет. Именно это и
+ * увидел владелец.
+ *
+ * Ответа может не быть — значит нельзя на него опираться. Состояние
+ * перечитываем по возвращении: телефон помнит его сам.
+ */
+/*
+ * То же и с разрешениями — и по той же причине, только заметнее.
+ *
+ * Кнопка «Разрешить» открывала системный экран и обновляла состояние сразу:
+ * `openSettings` отвечает, когда экран показан, а не когда человек с него
+ * ушёл. Проверка успевала прочитать прежнее «не разрешено», человек возвращался
+ * — и галочка была всё той же красной, сколько бы он ни разрешал. Именно это
+ * владелец увидел на телефоне как «проверки нормально не проходят».
+ *
+ * Спрашиваем по возвращении: только к этому моменту ответ имеет смысл.
+ */
+if (native.available()) {
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    refreshMissionCaps();
+    refreshAlarmPerms();
+  });
+}
+
+/**
+ * Экраны оболочки телефона: есть ли они и как называется оболочка.
+ *
+ * Спрашиваем один раз при загрузке — производитель за время работы не меняется.
+ */
+let vendorInfo = null;
+
 // ── Предпросмотр звука ───────────────────────────────────────
 
 /*
@@ -2463,9 +2541,40 @@ function stopPreview() {
   if (state.soundPlay) { state.soundPlay = null; }
 }
 
+/**
+ * Перерисовать только кнопки прослушивания.
+ *
+ * Раньше здесь звали render(), то есть полную перерисовку экрана: шторка
+ * собиралась заново, и на глаз это выглядело как появление нового окна поверх
+ * прежнего. Меняется одна кнопка — меняем одну кнопку.
+ *
+ * Если шторка закрыта, кнопок нет — функция просто ничего не делает.
+ */
+function paintPlayButtons() {
+  for (const b of document.querySelectorAll('.wplay[data-play]')) {
+    const playing = state.soundPlay === b.getAttribute('data-play');
+    const подпись = playing ? 'Остановить' : 'Послушать';
+    b.classList.toggle('on', playing);
+    b.title = подпись;
+    b.setAttribute('aria-label', подпись);
+    replace(b, ico(playing ? 'stop' : 'play-fill', '15px'));
+  }
+}
+
 async function togglePreview(playKey, src) {
-  if (state.soundPlay === playKey) { stopPreview(); render(); return; }
+  if (state.soundPlay === playKey) { stopPreview(); paintPlayButtons(); return; }
   stopPreview();
+  /*
+   * Кнопку переключаем до того, как звук зазвучит, а не после.
+   *
+   * `play()` отвечает, только когда звук уже пошёл, а своему звуку перед этим
+   * ещё надо доехать с сервера. Пока обещание не разрешилось, кнопка
+   * оставалась в положении «послушать»: музыка играет, а на паузу не
+   * переключилось — выглядело так, будто интерфейс подвис. Не удалось —
+   * вернём как было.
+   */
+  state.soundPlay = playKey;
+  paintPlayButtons();
   try {
     let url = src;
     if (!url) {
@@ -2473,14 +2582,15 @@ async function togglePreview(playKey, src) {
       const id = playKey.slice(2);
       url = URL.createObjectURL(await api.sounds.fileBlob(id));
     }
+    // Пока файл ехал, человек мог нажать «остановить» или включить другой
+    if (state.soundPlay !== playKey) { URL.revokeObjectURL(url); return; }
     previewAudio = new Audio(url);
     previewAudio.loop = false;
-    previewAudio.onended = () => { stopPreview(); render(); };
+    previewAudio.onended = () => { stopPreview(); paintPlayButtons(); };
     await previewAudio.play();
-    state.soundPlay = playKey;
-    render();
   } catch (e) {
     stopPreview();
+    paintPlayButtons();
     fail(e);
   }
 }
@@ -3274,6 +3384,86 @@ function busy(job) {
  * как ошибка экрана, которой нет.
  */
 const closeModal = () => set({ modal: null, notice: null, noticeBad: false });
+
+/* ── Жест «назад» ────────────────────────────────────────────
+ *
+ * В приложении «назад» закрывало его целиком с любого экрана: обработки не было
+ * вовсе, а Capacitor при пустой истории просто завершает активность. Человек
+ * листал настройки, махнул назад — и вышел из приложения.
+ *
+ * Ведём одну «страховочную» запись в истории. Пока открыта шторка или человек
+ * не на «Сейчас», запись стоит, и системное «назад» тратится на неё: мы ловим
+ * popstate и уходим на шаг внутрь приложения. На «Сейчас» с закрытой шторкой
+ * записи нет — там «назад» закрывает приложение, как и ожидается.
+ *
+ * Через историю, а не через слушателя Capacitor: плагина @capacitor/app в
+ * проекте нет, а вебвью и так спрашивает историю перед выходом. В браузере
+ * ничего не делаем: там «назад» — это назад по сайту, и трогать его нельзя.
+ */
+const ENTRY_SCREEN = 'today';
+let backGuard = false;
+
+/* ── Отступы под системные полосы ────────────────────────────
+ *
+ * Приложение рисуется край-в-край — с targetSdk 35 это решает Android, и
+ * отказаться нельзя. Содержимое поэтому уезжало под верхнюю шторку. Числа
+ * берём у системы и ставим переменными; CSS сам возьмёт большее из них и
+ * `env(safe-area-inset-*)` (см. --safe-top в web.css).
+ *
+ * Спрашиваем не один раз: окно в момент первого рендера может быть ещё не
+ * прикреплено, и тогда отступов не знает никто. Повторяем несколько раз с
+ * растущей паузой и на каждый возврат к приложению — поворот экрана и
+ * появление плавающей клавиатуры меняют полосы.
+ */
+async function syncInsets() {
+  const ins = await native.systemInsets();
+  if (!ins) return false;
+  const root = $('#wapp');
+  if (!root) return false;
+  for (const [имя, знач] of [
+    ['--inset-top', ins.top], ['--inset-bottom', ins.bottom],
+    ['--inset-left', ins.left], ['--inset-right', ins.right],
+  ]) {
+    root.style.setProperty(имя, `${Math.max(0, Number(знач) || 0)}px`);
+  }
+  return true;
+}
+
+if (native.isNative()) {
+  (async () => {
+    // 0, 150, 450, 900 мс: окно обычно готово сразу, но на медленном телефоне
+    // первый рендер успевает раньше него
+    for (const пауза of [0, 150, 300, 450]) {
+      if (пауза) await new Promise(r => setTimeout(r, пауза));
+      if (await syncInsets()) break;
+    }
+  })();
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) syncInsets();
+  });
+  window.addEventListener('resize', () => { syncInsets(); });
+}
+
+function syncBackGuard() {
+  if (!native.isNative()) return;
+  const глубже = Boolean(state.modal) || state.screen !== ENTRY_SCREEN;
+  if (глубже && !backGuard) {
+    history.pushState({ nd: 'back' }, '');
+    backGuard = true;
+  }
+}
+
+window.addEventListener('popstate', () => {
+  if (!native.isNative()) return;
+  // страховочную запись только что израсходовали
+  backGuard = false;
+  if (state.modal) { closeModal(); return; }
+  if (state.screen !== ENTRY_SCREEN) { set({ screen: ENTRY_SCREEN, setPage: null }); return; }
+  /*
+   * Уже на точке входа: истории больше нет, и следующее «назад» закроет
+   * приложение — так и надо. Ничего не делаем и запись не возвращаем.
+   */
+});
 
 const TITLES = {
   /*
@@ -4538,6 +4728,9 @@ const BODIES = {
           h('div.wopt-hint', { text: hint })),
         h('button.wplay', {
           type: 'button', class: playing ? 'on' : '',
+          // по этой отметке paintPlayButtons находит кнопку и переключает её
+          // одну, не перерисовывая шторку
+          'data-play': opts.playKey,
           title: playing ? 'Остановить' : 'Послушать',
           'aria-label': playing ? 'Остановить' : 'Послушать',
           onclick: e => { e.stopPropagation(); togglePreview(opts.playKey, opts.src); },
@@ -5303,6 +5496,9 @@ function render() {
   if ((state.recorder || state.micStream) && state.modal !== 'ai') releaseMic();
   // предпросмотр звука живёт ровно столько, сколько открыта шторка звука
   if (previewAudio && state.modal !== 'sound') stopPreview();
+  // «назад» должен вести на «Сейчас», а не из приложения — правило рядом с
+  // остальными, по той же причине: путей изменить состояние много
+  syncBackGuard();
 
   // Тема: переменные ставим на корень, чтобы CSS остался без вариантов
   const vars = { ...(dark() ? DARK : LIGHT) };

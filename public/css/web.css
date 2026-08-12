@@ -1310,6 +1310,15 @@ select.winput { appearance: auto; cursor: pointer; }
 .wperm.ok { box-shadow: inset 2px 0 0 var(--accent); }
 .wperm-ok { color: var(--accent); flex: none; }
 .wperm-bad { color: var(--warn); flex: none; }
+/*
+ * Разрешения оболочки телефона: ни галочки, ни предупреждения.
+ *
+ * Их состояние система не сообщает — прочитать его нельзя. Зелёная галочка была
+ * бы обещанием, которого мы не проверяли, а жёлтая полоса — упрёком человеку,
+ * который всё уже разрешил.
+ */
+.wperm.nb { box-shadow: inset 2px 0 0 var(--line); }
+.wperm-nb { color: var(--faint); flex: none; }
 .wperm-body { flex: 1 1 180px; min-width: 0; }
 .wperm-title { font: 400 14px/1.3 var(--ui); }
 .wperm-hint { font: 400 12px/1.4 var(--ui); color: var(--faint); margin-top: 4px; }
@@ -1349,9 +1358,26 @@ select.winput { appearance: auto; cursor: pointer; }
   display: flex; flex-direction: column;
   height: calc(100dvh / var(--zoom)); overflow: hidden;
 }
+/*
+ * Отступы под системные полосы.
+ *
+ * С targetSdk 35 Android рисует приложение край-в-край и не спрашивает — окно
+ * занимает весь экран, вебвью вместе с ним, и содержимое уезжает под верхнюю
+ * шторку. Сверху отступа не было вовсе.
+ *
+ * Значения ставит нативная часть (`--inset-top` и прочие, см. syncInsets в
+ * app.js): в Android WebView `env(safe-area-inset-top)` заполняется только для
+ * выреза камеры, а обычная шторка в него не попадает — на телефоне без выреза
+ * он остаётся нулём. `env()` оставлен запасным: он верен там, где вырез есть, и
+ * на iOS, если приложение когда-нибудь туда поедет. Берём большее из двух.
+ */
+.wroot {
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--inset-top, 0px));
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--inset-bottom, 0px));
+}
 .wpbody {
   flex: 1; min-height: 0; overflow-y: auto;
-  padding: 14px 16px calc(22px + env(safe-area-inset-bottom, 0px));
+  padding: calc(14px + var(--safe-top)) 16px calc(22px + var(--safe-bottom));
 }
 .wpscreen { display: flex; flex-direction: column; gap: 18px; }
 
@@ -1427,7 +1453,8 @@ select.winput { appearance: auto; cursor: pointer; }
 
 .wpnav {
   flex: none; display: grid; grid-template-columns: repeat(5, 1fr);
-  padding: 8px 6px calc(10px + env(safe-area-inset-bottom, 0px));
+  /* тот же --safe-bottom: одним env() полоса жестов накрывала бы подписи */
+  padding: 8px 6px calc(10px + var(--safe-bottom));
   background: var(--bg); box-shadow: 0 -1px 0 var(--line);
 }
 .wpnav-item {

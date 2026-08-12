@@ -14,6 +14,7 @@ import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
 import tmp from './lib/tmp.js';
+import { killTree } from './lib/proc.js';
 
 const arg = (name, def) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -88,7 +89,7 @@ if (вошли !== 200) {
     console.error('СТЕНД: сработал ограничитель попыток входа. Перезапустите стенд:');
     console.error('  node tools/dev-preview.js');
   }
-  proc.kill();
+  await killTree(proc, profile);
   await tmp.release(profile);
   process.exit(2);
 }
@@ -217,6 +218,6 @@ await js(`(async () => {
 })()`, true);
 
 console.log(`\n── Итог ──\n${сошлось} из ${всего}`);
-proc.kill();
+await killTree(proc, profile);
 await tmp.release(profile);
 process.exit(сошлось === всего ? 0 : 1);

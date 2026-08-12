@@ -19,6 +19,7 @@ import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
 import tmp from './lib/tmp.js';
+import { killTree } from './lib/proc.js';
 
 const PORT = 9337;
 const BASE = 'http://127.0.0.1:4010';
@@ -38,7 +39,15 @@ const OUT = path.join(import.meta.dirname, '.shots');
 const profile = tmp.tempDir('web-live');
 const proc = spawn(EDGE, [
   '--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`,
-  '--window-size=1440,900', '--hide-scrollbars', '--no-first-run', 'about:blank',
+  '--window-size=1440,900', '--hide-scrollbars', '--no-first-run',
+  /*
+   * Разрешаем автозапуск звука. Без этого `play()` отклоняется политикой
+   * браузера, приложение честно откатывает кнопку прослушивания — и проба
+   * меряет уже откат, срабатывая то так, то иначе. Проверяется поведение
+   * приложения, а не политика браузера.
+   */
+  '--autoplay-policy=no-user-gesture-required',
+  'about:blank',
 ], { stdio: 'ignore' });
 
 const rpc = (ws, method, params) => new Promise(resolve => {
@@ -138,7 +147,7 @@ await wait(700);
     console.error(`\nСТЕНД: на ${DAY} в базе стенда ничего нет — он засеян на другую дату.`);
     console.error('Перезапустите стенд: он засеивает день при старте.');
     console.error('  node tools/dev-preview.js');
-    proc.kill();
+    await killTree(proc, profile);
     await tmp.release(profile);
     process.exit(2);
   }
@@ -587,6 +596,48 @@ await wait(800);
   await js(`document.querySelectorAll('.wmodal .wplay').length >= 5`));
 проба('свой звук добавляется с лимитом в 10 МБ',
   await js(`document.querySelector('.wmodal .wbtn-dashed')?.textContent.includes('10 МБ')`));
+
+/*
+ * Прослушивание не перерисовывает шторку и переключает кнопку сразу.
+ *
+ * Было две беды. Состояние кнопки ставилось после `await play()`, а тот отвечает
+ * только когда звук пошёл, — музыка играет, а кнопка ещё «послушать»: выглядело
+ * как подвисание. И вместо кнопки перерисовывался весь экран: шторка собиралась
+ * заново, на глаз — «появилось новое окно».
+ *
+ * Меряем два признака: кнопка переключилась и тело шторки — тот же узел.
+ * Звучит ли звук в headless, неважно: политика автозапуска может его не дать, а
+ * кнопка обязана отреагировать всё равно.
+ */
+/*
+ * Читаем класс кнопки в том же кадре, сразу после нажатия.
+ *
+ * Так проба ничего не ждёт и ни от чего не зависит: ни от того, доехал ли файл
+ * звука, ни от политики автозапуска, ни от соседних проб. Обработчик до первого
+ * `await` выполняется синхронно — значит правка обязана переключить кнопку
+ * прямо здесь. Прежний код ставил состояние после `await play()`, и в этот
+ * момент кнопка ещё «послушать»: ровно то, что было видно глазами — «музыка
+ * идёт, а на паузу не поменялось».
+ *
+ * Отсутствие полной перерисовки отдельной пробой не проверяем: она выходила
+ * зависимой от соседних проб. Оно видно надёжнее и без стенда — в пути
+ * прослушивания не осталось ни одного render(), только paintPlayButtons().
+ */
+{
+  const сразу = await js(`(() => {
+    const b = document.querySelector('.wmodal .wplay[data-play]');
+    if (!b) return 'кнопок прослушивания нет';
+    b.click();
+    const снова = document.querySelector('.wplay[data-play="' + b.getAttribute('data-play') + '"]');
+    return snapshot(снова);
+    function snapshot(n) { return n ? (n.classList.contains('on') ? 'включилась' : 'осталась выключенной') : 'кнопка исчезла'; }
+  })()`);
+  проба('кнопка прослушивания переключается в тот же миг, не дожидаясь звука',
+    сразу === 'включилась', сразу);
+  // возвращаем как было, чтобы следующая проба выбирала звук на чистом экране
+  await js(`document.querySelector('.wmodal .wplay.on')?.click()`);
+  await wait(150);
+}
 await js(`[...document.querySelectorAll('.wmodal .wopt')].find(b => b.textContent.includes('Петух')).click()`);
 await wait(1000);
 проба('звук сохранён в профиле',
@@ -1696,6 +1747,6 @@ console.log('\n── Итог ──');
 const плохо = пробы.filter(([, ok]) => !ok).length;
 console.log(`${пробы.length - плохо} из ${пробы.length}`);
 
-ws.close(); proc.kill();
+ws.close(); await killTree(proc, profile);
 await tmp.release(profile);
 process.exit(плохо ? 1 : 0);

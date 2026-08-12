@@ -182,6 +182,18 @@ export async function openSystemSettings(what) {
   try { await plugin().openSettings({ what }); } catch { /* экрана может не быть */ }
 }
 
+/**
+ * Какая это оболочка и есть ли у неё свои экраны автозапуска.
+ *
+ * Нужно, чтобы не предлагать «Автозапуск» там, где такого экрана нет: кнопка,
+ * ведущая в никуда, хуже её отсутствия. Имя оболочки — чтобы подписать строку
+ * теми словами, которые человек увидит на своём телефоне.
+ */
+export async function vendorSettings() {
+  if (!available()) return null;
+  try { return await plugin().vendorSettings(); } catch { return null; }
+}
+
 export async function testAlarm(delaySec = 60, profile = 'wakeup') {
   if (!available()) return null;
   return plugin().testAlarm({ delaySec, profile });
@@ -235,6 +247,25 @@ export async function setSystemBars(darkTheme, color) {
   if (!available()) return null;
   try { return await plugin().setSystemBars({ dark: Boolean(darkTheme), color }); }
   catch { return null; }
+}
+
+/**
+ * Насколько системные полосы залезают на страницу, в CSS-пикселях.
+ *
+ * Спрашиваем у системы, а не у CSS: в Android WebView `env(safe-area-inset-top)`
+ * заполняется только для выреза камеры, а обычная шторка в него не попадает —
+ * на телефоне без выреза он остаётся нулём. А приложение рисуется край-в-край:
+ * начиная с targetSdk 35 это делает Android сам, и отказаться нельзя.
+ *
+ * `null` значит «пока неизвестно»: окно ещё не прикреплено. Лучше спросить
+ * снова, чем сдвинуть содержимое на выдуманное число.
+ */
+export async function systemInsets() {
+  if (!available()) return null;
+  try {
+    const r = await plugin().systemInsets();
+    return r?.known ? r : null;
+  } catch { return null; }
 }
 
 /**

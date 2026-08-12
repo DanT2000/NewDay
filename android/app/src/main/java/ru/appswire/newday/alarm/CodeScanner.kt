@@ -123,8 +123,10 @@ class CodeScanner(
     /**
      * Разбор кадра.
      *
-     * Берём только середину кадра. Так быстрее и, что важнее, не ловится чужой
-     * код, случайно попавший в угол: человек наводит на тот, что нужен.
+     * Кадр от камеры лежит в ориентации матрицы, а не в той, в которой его
+     * видит человек: телефон в руке стоит вертикально, матрица в нём — на боку.
+     * Поэтому кадр сначала доворачивают (см. [CodeFrame]), и только потом
+     * отдают zxing.
      */
     @SuppressLint("UnsafeOptInUsageError")
     private fun analyze(image: ImageProxy) {
@@ -135,23 +137,11 @@ class CodeScanner(
             val data = ByteArray(buffer.remaining())
             buffer.get(data)
 
-            val w = image.width
-            val h = image.height
-            val side = (minOf(w, h) * 0.8).toInt()
-            val left = (w - side) / 2
-            val top = (h - side) / 2
-
-            val source = PlanarYUVLuminanceSource(
-                data, plane.rowStride, h, left, top, side, side, false,
+            val frame = CodeFrame.upright(
+                data, plane.rowStride, image.width, image.height,
+                image.imageInfo.rotationDegrees,
             )
-            val result = try {
-                reader.decodeWithState(BinaryBitmap(HybridBinarizer(source)))
-            } catch (e: Exception) {
-                // кадра без кода в потоке большинство — это не ошибка
-                null
-            } ?: return
-
-            val text = result.text?.trim().orEmpty()
+            val text = CodeFrame.read(reader, frame)?.trim().orEmpty()
             if (text.isEmpty()) return
             stopped = true
             view.post { onCode(text) }
@@ -190,4 +180,98 @@ class CodeScanner(
                 context, android.Manifest.permission.CAMERA,
             ) == PackageManager.PERMISSION_GRANTED
     }
+}
+
+/**
+ * Кадр камеры, приведённый к тому, что видит человек, и его разбор.
+ *
+ * Вынесено из [CodeScanner] нарочно: камеру в юнит-тесте не открыть, а ломалось
+ * именно здесь — и ломалось молча, «через раз». Теперь это проверяется без
+ * телефона, см. CodeFrameTest.
+ */
+internal object CodeFrame {
+
+    /** Яркость кадра построчно, без выравнивания: шаг строки равен ширине. */
+    class Luma(val data: ByteArray, val width: Int, val height: Int)
+
+    /**
+     * Кадр в ориентации человека.
+     *
+     * Две вещи, на которых терялся штрих-код.
+     *
+     * Первая — поворот. ImageAnalysis отдаёт кадр как есть с матрицы, а она в
+     * телефоне повёрнута: у вертикально стоящего телефона кадр лежит на боку, и
+     * `rotationDegrees` говорит, на сколько его довернуть. QR это переживает —
+     * он читается под любым углом, — а штрих-код нет: zxing ищет его,
+     * просматривая строки кадра, и у кода, повёрнутого на четверть, полосы идут
+     * вдоль строки, а не поперёк. Поэтому доворачиваем сами:
+     * PlanarYUVLuminanceSource поворот не поддерживает, и TRY_HARDER, который
+     * умеет повторить попытку на повёрнутом кадре, на нём не срабатывает.
+     *
+     * Вторая — [rowStride]. У камеры он больше ширины: строки выровнены по
+     * границе, и хвост каждой строки — не изображение. Здесь выравнивание
+     * снимается, чтобы дальше никто не путал ширину кадра с шагом строки.
+     */
+    fun upright(y: ByteArray, rowStride: Int, width: Int, height: Int, rotation: Int): Luma {
+        val turn = ((rotation % 360) + 360) % 360
+        val quarter = turn == 90 || turn == 270
+        val w = if (quarter) height else width
+        val h = if (quarter) width else height
+        val out = ByteArray(w * h)
+        var i = 0
+        for (dy in 0 until h) {
+            for (dx in 0 until w) {
+                val sx: Int
+                val sy: Int
+                when (turn) {
+                    90 -> { sx = dy; sy = height - 1 - dx }
+                    180 -> { sx = width - 1 - dx; sy = height - 1 - dy }
+                    270 -> { sx = width - 1 - dy; sy = dx }
+                    else -> { sx = dx; sy = dy }
+                }
+                val src = sy * rowStride + sx
+                // последняя строка в буфере бывает короче полного шага —
+                // берём, что есть, вместо падения на границе массива
+                out[i++] = if (src < y.size) y[src] else 0
+            }
+        }
+        return Luma(out, w, h)
+    }
+
+    /**
+     * Прочитать код в кадре: сначала как он есть, потом развернув на четверть.
+     *
+     * Второй проход — для штрих-кода. Наклейка на чайнике может быть наклеена
+     * боком, и телефон в шесть утра держат как попало; QR находится на первом
+     * проходе и до второго не доходит.
+     */
+    fun read(reader: MultiFormatReader, frame: Luma): String? =
+        decode(reader, frame) ?: decode(reader, quarterTurn(frame))
+
+    /**
+     * Окно разбора: вся ширина кадра и середина по высоте.
+     *
+     * По бокам не обрезаем — именно так пропадал штрих-код: в видоискателе он
+     * виден целиком, а разбиралась только середина кадра, и концы кода со
+     * старт-стоп полосами оставались за краем окна. По высоте берём середину:
+     * это ровно то, что показывает видоискатель, и чужой код, попавший в кадр
+     * сверху или снизу, в привязку не уедет.
+     */
+    private fun decode(reader: MultiFormatReader, f: Luma): String? {
+        val band = minOf(f.height, f.width)
+        val top = (f.height - band) / 2
+        val source = PlanarYUVLuminanceSource(
+            f.data, f.width, f.height, 0, top, f.width, band, false,
+        )
+        return try {
+            reader.decodeWithState(BinaryBitmap(HybridBinarizer(source))).text
+        } catch (e: Exception) {
+            // кадра без кода в потоке большинство — это не ошибка
+            null
+        }
+    }
+
+    /** Тот же кадр на четверть оборота: сам PlanarYUVLuminanceSource так не умеет. */
+    private fun quarterTurn(f: Luma): Luma =
+        upright(f.data, f.width, f.width, f.height, 90)
 }

@@ -19,6 +19,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import tmp from './lib/tmp.js';
+import { killTree } from './lib/proc.js';
 
 const arg = (name, def) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -271,6 +272,6 @@ try {
   console.log('Кадры 09 и 10 (экран будильника) — node tools/store-alarm-shots.mjs');
 } finally {
   try { ws?.close(); } catch { /* уже закрыт */ }
-  chrome.kill();
+  await killTree(chrome, profile);
   await tmp.release(profile);
 }
