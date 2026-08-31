@@ -191,6 +191,51 @@ Android. Лимиты: файл до 10 МБ — это десять минут 
 `GET /export.ics` — расписание в iCalendar, его понимает любой календарь.
 `?from` и `?to` ограничивают период; по умолчанию месяц назад и всё вперёд.
 
+## Интеграции
+
+`POST /integrations/apply` — путь для внешних сервисов (ChatGPT, Telegram-бот и
+любых других), которые пишут в NewDay регулярно и не хотят ни дублей, ни войны
+с ручными правками. Идентичность записи — пара `source` + `externalId` (у
+строк дня ещё и дата): один и тот же батч можно слать сколько угодно раз.
+
+```json
+{
+  "source": "chatgpt",
+  "dryRun": false,
+  "items": [
+    { "entity": "schedule", "externalId": "evt-42", "date": "2026-09-01",
+      "data": { "time": "9:00-10:30", "title": "Отчёт", "alarmMode": "notify" } },
+    { "entity": "task", "externalId": "t-9", "date": "2026-09-01", "delete": true }
+  ]
+}
+```
+
+Правила, на которых всё держится:
+
+- **`data` — это PATCH.** Применяются только переданные поля, тем же набором
+  правил, что у обычных путей. Не прислали `color` — цвет не тронут.
+- **Ручная правка священна.** Запись, которую человек менял (или создал сам),
+  не перезаписывается и не удаляется: в ответе
+  `{ "status": "conflict", "reason": "modified_by_user", "current": { … } }`.
+- **Удалённое человеком не воскресает.** Ручное удаление записи интеграции
+  ставит надгробие; `apply` отвечает `conflict / removed_by_user`. Снять
+  надгробие явно: `DELETE /integrations/tombstones`
+  `{ source, entity, externalId, date? }`. Своё `delete: true` надгробия не
+  ставит — интеграция вольна пересоздать запись.
+- **`source` и `externalId` неизменяемы** после создания — это идентичность.
+  `source`: до 64 символов, только `[a-zA-Z0-9._-]`.
+- Исходы: `created | updated | unchanged | deleted | conflict`, плюс счётчики
+  по батчу. `dryRun: true` считает исходы, ничего не записывая. До 100
+  элементов за запрос; батч применяется в одной транзакции.
+- После настоящих изменений расписания и питания сервер сам пересчитывает
+  очередь уведомлений — отдельный `push/replan` не нужен.
+
+У всех шести сущностей (`schedule`, `task`, `meal`, `sport`, `habit`,
+`series`) в ответах есть `source`, `external_id`, `last_modified_by`,
+`created_at`, `updated_at` — по ним интеграция видит, кто и когда трогал
+запись. `entity: habit` управляет самой привычкой (удаление — в архив);
+отметки журнала ставятся обычным `PUT /habits/{id}/log/{date}`.
+
 ## Помощник
 
 `POST /ai/parse` разбирает текст в пункты плана, `POST /ai/improve` предлагает,
@@ -332,6 +377,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/
 | Аккаунт | `/auth/register`, `/auth/login`, `/auth/logout`, `/auth/me`, `/auth/forgot`, `/auth/reset`, `/auth/password`, `/auth/verify`, `/auth/resend-verification`, `/auth/bind-email` |
 | Устройства | `/auth/pair/create`, `/auth/pair/claim`, `/devices`, `/devices/{id}` |
 | Токены | `/tokens`, `/tokens/{id}` |
+| Интеграции | `/integrations/apply`, `/integrations/tombstones` |
 | Настройки | `/settings` |
 | Статистика | `/stats?from&to` |
 | Приложение | `/app/version`, `/app/download` |

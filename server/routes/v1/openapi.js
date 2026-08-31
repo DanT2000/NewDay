@@ -91,6 +91,27 @@ function buildSpec(appUrl) {
       },
       '/tokens/{id}': { delete: { tags: ['Токены'], summary: 'Отозвать токен (только веб-сессия)', parameters: [idParam], responses: { 204: { description: 'Отозван' } } } },
 
+      '/integrations/apply': {
+        post: {
+          tags: ['Интеграции'],
+          summary: 'Идемпотентное применение батча внешней интеграции',
+          description: 'Идентичность записи — source + externalId (у строк дня ещё и date). '
+            + 'data — PATCH: применяются только переданные поля. Записи, правленные человеком, '
+            + 'не трогаются: в ответе conflict с reason (modified_by_user | removed_by_user) и current. '
+            + 'dryRun считает исходы без записи. До 100 элементов за запрос.',
+          requestBody: body('{ source, dryRun?, items: [{ entity: schedule|task|meal|sport|habit|series, externalId, date?, delete?, data? }] }'),
+          responses: { 200: ok('{ dryRun, results: [{ entity, externalId, date?, status, reason?, id?, current? }], counts }') },
+        },
+      },
+      '/integrations/tombstones': {
+        delete: {
+          tags: ['Интеграции'],
+          summary: 'Снять надгробие: вернуть интеграции право пересоздать удалённую человеком запись',
+          requestBody: body('{ source, entity, externalId, date? }'),
+          responses: { 204: { description: 'Снято' } },
+        },
+      },
+
       '/days': { get: { tags: ['Дни'], summary: 'Список дней', parameters: [
         { name: 'from', in: 'query', schema: { type: 'string' } },
         { name: 'to', in: 'query', schema: { type: 'string' } },

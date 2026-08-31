@@ -1,8 +1,10 @@
 const { notFound } = require('../lib/errors');
+const { tombstonesRepo } = require('./tombstones');
 
 const FIELD_MAP = {
   target: 'target', freq: 'freq', interval: 'interval', byweekday: 'byweekday',
   startDate: 'start_date', endDate: 'end_date', payloadJson: 'payload_json', name: 'name',
+  source: 'source', externalId: 'external_id', lastModifiedBy: 'last_modified_by',
 };
 
 function seriesRepo(db) {
@@ -11,6 +13,8 @@ function seriesRepo(db) {
     if (!row) throw notFound('Повтор не найден');
     return row;
   };
+
+  const tombs = tombstonesRepo(db);
 
   const self = {
     /** Правила без имени — это повторы; с именем — шаблоны, применяются вручную. */
@@ -55,6 +59,11 @@ function seriesRepo(db) {
         cols.push(`${col} = ?`);
         vals.push(data[key]);
       }
+      // обычная правка — правка человека; apply присылает source сам
+      if (cols.length && data.lastModifiedBy === undefined) {
+        cols.push('last_modified_by = ?');
+        vals.push('user');
+      }
       if (cols.length) {
         cols.push("updated_at = datetime('now')");
         db.prepare(`UPDATE series SET ${cols.join(', ')} WHERE id = ?`).run(...vals, id);
@@ -73,8 +82,12 @@ function seriesRepo(db) {
      * @param today дата, с которой строки считаются будущими; без неё
      *              поведение прежнее — только отцепить.
      */
-    remove(userId, id, { today = null } = {}) {
-      own(userId, id);
+    remove(userId, id, { today = null, fromIntegration = false } = {}) {
+      const row = own(userId, id);
+      // правило интеграции, удалённое человеком, не должно вернуться от apply
+      if (row.source && !fromIntegration) {
+        tombs.put(userId, 'series', '', row.source, row.external_id);
+      }
       if (today) {
         db.prepare('DELETE FROM schedule_items WHERE user_id = ? AND series_id = ? AND date >= ?')
           .run(userId, id, today);
@@ -87,7 +100,7 @@ function seriesRepo(db) {
     endFrom(userId, id, date) {
       own(userId, id);
       const { addDays } = require('../lib/dates');
-      db.prepare("UPDATE series SET end_date = ?, updated_at = datetime('now') WHERE id = ?")
+      db.prepare("UPDATE series SET end_date = ?, last_modified_by = 'user', updated_at = datetime('now') WHERE id = ?")
         .run(addDays(date, -1), id);
       db.prepare('DELETE FROM schedule_items WHERE user_id = ? AND series_id = ? AND date >= ?')
         .run(userId, id, date);

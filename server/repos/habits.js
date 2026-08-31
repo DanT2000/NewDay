@@ -1,4 +1,5 @@
 const { notFound } = require('../lib/errors');
+const { tombstonesRepo } = require('../repos/tombstones');
 
 const FIELD_MAP = {
   title: 'title', description: 'description', emoji: 'emoji', color: 'color',
@@ -7,6 +8,7 @@ const FIELD_MAP = {
   challengeTargetDays: 'challenge_target_days', challengeStartDate: 'challenge_start_date',
   breakPolicy: 'break_policy', allowedSkipsPerWeek: 'allowed_skips_per_week',
   isActive: 'is_active', sortOrder: 'sort_order', timesPerWeek: 'times_per_week',
+  source: 'source', externalId: 'external_id', lastModifiedBy: 'last_modified_by',
 };
 
 function habitsRepo(db) {
@@ -15,6 +17,8 @@ function habitsRepo(db) {
     if (!row) throw notFound('Привычка не найдена');
     return row;
   };
+
+  const tombs = tombstonesRepo(db);
 
   const self = {
     list(userId, { includeArchived = false } = {}) {
@@ -54,6 +58,11 @@ function habitsRepo(db) {
         cols.push(`${col} = ?`);
         vals.push(key === 'isActive' ? (data[key] ? 1 : 0) : data[key]);
       }
+      // обычная правка — правка человека; apply присылает source сам
+      if (cols.length && data.lastModifiedBy === undefined) {
+        cols.push('last_modified_by = ?');
+        vals.push('user');
+      }
       if (cols.length) {
         cols.push("updated_at = datetime('now')");
         db.prepare(`UPDATE habits SET ${cols.join(', ')} WHERE id = ?`).run(...vals, id);
@@ -62,8 +71,12 @@ function habitsRepo(db) {
     },
 
     /** Мягкое удаление: логи остаются, статистика прошлого не рушится. */
-    archive(userId, id) {
-      own(userId, id);
+    archive(userId, id, opts = {}) {
+      const row = own(userId, id);
+      // архив руками человека — надгробие: интеграция не воскресит привычку
+      if (row.source && !opts.fromIntegration) {
+        tombs.put(userId, 'habit', '', row.source, row.external_id);
+      }
       db.prepare(
         "UPDATE habits SET archived_at = datetime('now'), is_active = 0, updated_at = datetime('now') WHERE id = ?"
       ).run(id);
@@ -71,15 +84,20 @@ function habitsRepo(db) {
     },
 
     restore(userId, id) {
-      own(userId, id);
+      const row = own(userId, id);
+      // возвращение из архива снимает надгробие, если оно было
+      if (row.source) tombs.clear(userId, 'habit', '', row.source, row.external_id);
       db.prepare(
         "UPDATE habits SET archived_at = NULL, is_active = 1, updated_at = datetime('now') WHERE id = ?"
       ).run(id);
       return db.prepare('SELECT * FROM habits WHERE id = ?').get(id);
     },
 
-    remove(userId, id) {
-      own(userId, id);
+    remove(userId, id, opts = {}) {
+      const row = own(userId, id);
+      if (row.source && !opts.fromIntegration) {
+        tombs.put(userId, 'habit', '', row.source, row.external_id);
+      }
       db.prepare('DELETE FROM habits WHERE id = ?').run(id); // логи уходят каскадом
     },
 

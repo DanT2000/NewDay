@@ -6,11 +6,12 @@ const FIELD_MAP = {
   calories: 'calories', done: 'done', sortOrder: 'sort_order',
   endMin: 'end_min', scheduleItemId: 'schedule_item_id',
   remindBefore: 'remind_before_json',
+  source: 'source', externalId: 'external_id', lastModifiedBy: 'last_modified_by',
 };
 
 const DEFAULTS = {
   slot: 'other', timeMin: null, title: '', note: '', calories: null, done: 0,
-  endMin: null, scheduleItemId: null, remindBefore: null,
+  endMin: null, scheduleItemId: null, remindBefore: null, lastModifiedBy: 'user',
 };
 
 /**

@@ -9,12 +9,14 @@ const FIELD_MAP = {
   alarmMode: 'alarm_mode', alarmProfile: 'alarm_profile',
   remindBeforeMin: 'remind_before_min', remindBefore: 'remind_before_json',
   seriesId: 'series_id', color: 'color',
+  source: 'source', externalId: 'external_id', lastModifiedBy: 'last_modified_by',
 };
 
 const DEFAULTS = {
   startMin: 0, endMin: null, title: '', note: '', done: 0,
   kind: 'normal', alarmMode: 'none', alarmProfile: 'gentle',
   remindBeforeMin: null, remindBefore: null, seriesId: null, color: null,
+  lastModifiedBy: 'user',
 };
 
 /**
@@ -67,10 +69,10 @@ function scheduleRepo(db) {
       return result;
     },
 
-    remove(userId, id) {
+    remove(userId, id, opts = {}) {
       const before = db.prepare('SELECT series_id, date FROM schedule_items WHERE id = ? AND user_id = ?')
         .get(id, userId);
-      const row = base.remove(userId, id);
+      const row = base.remove(userId, id, opts);
       /*
        * Приём пищи, который занимал этот блок, отпускаем.
        *

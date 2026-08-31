@@ -108,3 +108,6 @@ module.exports = function seriesRouter({ db }) {
 
   return router;
 };
+
+// /integrations/apply правит повторы и шаблоны теми же правилами полей
+module.exports.sanitizeSeries = sanitize;

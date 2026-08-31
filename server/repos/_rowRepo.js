@@ -1,5 +1,9 @@
 const { notFound, conflict } = require('../lib/errors');
 const { bumpRev } = require('./days');
+const { tombstonesRepo } = require('./tombstones');
+
+// имя сущности для надгробий интеграций — по таблице
+const TABLE_ENTITY = { schedule_items: 'schedule', tasks: 'task', meals: 'meal', sport_sets: 'sport' };
 
 /**
  * Общая фабрика репозитория «строк дня»: расписание, задачи, питание, спорт.
@@ -15,6 +19,8 @@ const { bumpRev } = require('./days');
  */
 function makeRowRepo(db, table, fieldMap, defaults, orderBy = 'sort_order ASC, id ASC') {
   const BOOL_KEYS = new Set(['done']);
+  const tombs = tombstonesRepo(db);
+  const entity = TABLE_ENTITY[table];
 
   const own = (userId, id) => {
     const row = db.prepare(`SELECT * FROM ${table} WHERE id = ? AND user_id = ?`).get(id, userId);
@@ -70,6 +76,16 @@ function makeRowRepo(db, table, fieldMap, defaults, orderBy = 'sort_order ASC, i
         cols.push(`${col} = ?`);
         vals.push(BOOL_KEYS.has(key) ? (data[key] ? 1 : 0) : data[key]);
       }
+      /*
+       * Кто менял последним. Обычные пути об этом поле не знают — значит,
+       * правил человек; /integrations/apply присылает имя source сам. По
+       * этой отметке apply отличает свои записи от правленных руками и
+       * не смеет перетирать ручное.
+       */
+      if (cols.length && data.lastModifiedBy === undefined && fieldMap.lastModifiedBy) {
+        cols.push('last_modified_by = ?');
+        vals.push('user');
+      }
       if (cols.length) {
         cols.push("updated_at = datetime('now')");
         db.prepare(`UPDATE ${table} SET ${cols.join(', ')} WHERE id = ?`).run(...vals, id);
@@ -78,8 +94,16 @@ function makeRowRepo(db, table, fieldMap, defaults, orderBy = 'sort_order ASC, i
       return db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
     },
 
-    remove(userId, id) {
+    remove(userId, id, opts = {}) {
       const row = own(userId, id);
+      /*
+       * Человек удаляет запись интеграции — ставим надгробие: apply не
+       * вправе её воскресить. Своё удаление интеграции (delete: true)
+       * надгробия не ставит: она вольна пересоздать запись.
+       */
+      if (entity && row.source && !opts.fromIntegration) {
+        tombs.put(userId, entity, row.date, row.source, row.external_id);
+      }
       db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
       bumpRev(db, userId, row.date);
       return row;
@@ -101,6 +125,13 @@ function makeRowRepo(db, table, fieldMap, defaults, orderBy = 'sort_order ASC, i
     },
 
     removeAllForDate(userId, date) {
+      // день заменяется целиком — это тоже человеческое удаление записей интеграций
+      if (entity) {
+        const marked = db.prepare(
+          `SELECT source, external_id FROM ${table} WHERE user_id = ? AND date = ? AND source IS NOT NULL`
+        ).all(userId, date);
+        for (const r of marked) tombs.put(userId, entity, date, r.source, r.external_id);
+      }
       db.prepare(`DELETE FROM ${table} WHERE user_id = ? AND date = ?`).run(userId, date);
     },
   };

@@ -10,6 +10,7 @@ const MIGRATIONS = [
   require('./009-user-sounds'),
   require('./010-admin-panel'),
   require('./011-block-and-ip'),
+  require('./012-integrations'),
 ];
 
 function currentVersion(db) {

@@ -12,6 +12,7 @@ const { cors } = require('./middleware/cors');
 const healthRouter = require('./routes/health');
 const authRouter = require('./routes/v1/auth');
 const tokensRouter = require('./routes/v1/tokens');
+const integrationsRouter = require('./routes/v1/integrations');
 const daysRouter = require('./routes/v1/days');
 const habitsRouter = require('./routes/v1/habits');
 const statsRouter = require('./routes/v1/stats');
@@ -163,6 +164,7 @@ function createApp({ db, config, fetchImpl, env = process.env }) {
   app.use('/api/v1', requireWrite);
 
   app.use('/api/v1', tokensRouter({ db, auth }));
+  app.use('/api/v1/integrations', integrationsRouter({ db, notify }));
   /**
    * Правка расписания меняет то, когда должны прийти напоминания.
    * Пересчитываем после успешного ответа, чтобы не задерживать запрос

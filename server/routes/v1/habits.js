@@ -135,3 +135,4 @@ module.exports = function habitsRouter({ db }) {
 };
 
 module.exports.HABIT_PRESETS = PRESETS;
+module.exports.sanitizeHabit = sanitize;
