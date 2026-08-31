@@ -274,7 +274,9 @@ window.__wopen = name => {
   if (name === 'note') return openNote(null);
   if (name === 'meal') return openMeal(null);
   if (name === 'habit') return openHabit(null);
-  if (name === 'account') return openAccount();
+  if (name === 'account' || name === 'name') return openName();
+  if (name === 'password') return openPassword();
+  if (name === 'token') return openToken();
   if (name === 'sound') return openLink('sound', 'Звук будильника');
   if (name === 'task') return set({ modal: 'task', taskId: 'new', taskCat: 'work', taskTitle: '' });
   return set({ modal: name });
@@ -365,16 +367,18 @@ function leadOwnLabel(k) {
 }
 
 /**
- * Свой срок предупреждения. prompt намеренно: это редкое действие, и своя
- * шторка ради него отняла бы больше внимания, чем сэкономила.
+ * Свой срок предупреждения: поле прямо среди чипов, в стилистике шторки.
+ * Раньше здесь был prompt() — чужое окно браузера, а ошибка уезжала полосой
+ * в начало шторки, где её никто не видел; теперь она подсвечивает само поле.
  */
-function askOwnLead() {
-  const raw = prompt('За сколько минут предупредить?', '40');
-  if (raw === null) return;
-  const n = Number(String(raw).replace(/\D+/g, ''));
+function addOwnLead() {
+  const n = Number(String(state.rowLeadVal ?? '').replace(/\D+/g, ''));
   // сутки — потолок: дальше это уже не «предупредить», а другой день
-  if (!n || n < 1 || n > 1440) { sheetNotice('Нужно число от 1 до 1440 минут', true); return; }
-  setIn({ rowLeads: toggleLead(state.rowLeads, String(n)) });
+  if (!n || n < 1 || n > 1440) { setIn({ rowLeadBad: true }); return; }
+  setIn({
+    rowLeads: toggleLead(state.rowLeads, String(n)),
+    rowLeadAdd: false, rowLeadVal: '', rowLeadBad: false,
+  });
 }
 
 /**
@@ -461,11 +465,16 @@ const fail = e => note(navigator.onLine === false
 function act(job, okText) {
   state.busy = true;
   state.notice = null;
-  render();
+  /*
+   * Открытая шторка перерисовывается на месте, а не полным render():
+   * полный пересобирает .wmodal заново, и анимация появления проигрывается
+   * ещё раз — на глаз шторка «мигает» на каждом действии.
+   */
+  if (state.modal) setIn({}); else render();
   // и промис, и функция: Promise.resolve(fn) резолвится самой функцией,
   // не вызывая её, — кнопка отчитывалась «готово», не сделав ничего
   return Promise.resolve(typeof job === 'function' ? job() : job)
-    .then(() => { state.busy = false; if (okText) note(okText); else render(); })
+    .then(() => { state.busy = false; if (okText) note(okText); else if (state.modal) setIn({}); else render(); })
     .catch(e => { state.busy = false; fail(e); });
 }
 
@@ -491,6 +500,8 @@ async function reload() {
     // На настройках нужны шаблон (для его шторки) и список устройств
     if (state.screen === 'settings') {
       jobs.push(data.loadTemplate().catch(() => null), data.loadAccount().catch(() => null));
+      // токены — для значения строки «Интеграция» в разделе аккаунта
+      jobs.push(data.loadTokens().catch(() => []));
       /*
        * Разрешения будильника спрашиваем у телефона тут же: список меняется
        * снаружи приложения — человек мог выдать или отобрать разрешение в
@@ -898,10 +909,11 @@ function progress() {
  * экрана сообщал то, чего на сервере нет, и на пустом дне утверждал, что
  * человек сейчас работает.
  */
+/*
+ * Кружка с процентом дел здесь больше нет: он дублировал плитку
+ * «дела сегодня» строкой ниже, а на телефоне его не было вовсе.
+ */
 function nowCard() {
-  const { percent, empty } = progress();
-  const C = 2 * Math.PI * 34;
-
   const minutes = minutesNow();
   const isToday = state.date === todayKey();
   const cur = isToday ? SCHEDULE.find(r => r.now) : null;
@@ -935,17 +947,7 @@ function nowCard() {
         live.left
           ? h('div.wnow-left', h('b', { text: live.left }), h('span', { text: live.leftNote }))
           : null,
-        h('div.wbar', h('i', { style: { width: `${Math.max(0, Math.min(100, live.share))}%` } }))),
-      (() => {
-        const box = h('div.wring');
-        box.innerHTML = `<svg viewBox="0 0 80 80">
-          <circle cx="40" cy="40" r="34" fill="none" stroke="${dark() ? 'rgba(233,233,237,0.10)' : 'rgba(41,43,49,0.12)'}" stroke-width="6"></circle>
-          <circle cx="40" cy="40" r="34" fill="none" stroke="${accent()}" stroke-width="6" stroke-linecap="round"
-            stroke-dasharray="${(C * percent) / 100} ${C}"></circle>
-        </svg>`;
-        add(box, h('span', { text: empty ? '—' : `${percent}%` }));
-        return box;
-      })()));
+        h('div.wbar', h('i', { style: { width: `${Math.max(0, Math.min(100, live.share))}%` } })))));
 }
 
 function statCards() {
@@ -1867,6 +1869,9 @@ const SET_PAGES = {
   devices: { icon: 'devices', title: 'Устройства', hint: () => devicesHint() },
 };
 
+/** Ключ в строке «Интеграция»: видно, выпущен ли он, без открытия шторки. */
+const tokenHint = () => (store.tokens?.[0] ? store.tokens[0].prefix + '…' : 'выпустить ключ');
+
 function devicesHint() {
   const n = 1 + (store.devices?.length ?? 0);
   const word = n === 1 ? 'устройство' : n < 5 ? 'устройства' : 'устройств';
@@ -2114,9 +2119,15 @@ function accountPanel() {
 
   const account = h('div.wpanel-list', cap('аккаунт'), avaRow);
   const accountRows = [
-    { icon: 'user', label: 'Имя', value: userName(), go: openAccount },
-    { icon: 'envelope-simple', label: 'Почта', value: store.user?.email ?? '—', go: openAccount },
-    { icon: 'lock-simple', label: 'Пароль', value: 'сменить', go: openAccount },
+    /*
+     * У каждой строки своя шторка: имя, пароль и токен — разные дела, и
+     * одна общая шторка «Аккаунт» заставляла искать токен под сменой
+     * пароля. Строки «Почта» нет: менять почту сервер не умеет, она видна
+     * справкой в шторке имени.
+     */
+    { icon: 'user', label: 'Имя', value: userName(), go: openName },
+    { icon: 'lock-simple', label: 'Пароль', value: 'сменить', go: openPassword },
+    { icon: 'key', label: 'Интеграция', value: tokenHint(), go: openToken },
     // устройства — «про меня», им место у персонажа; разделы дня и оформления
     // живут в общем списке и здесь не дублируются
     { icon: 'devices', label: 'Устройства', value: devicesHint(), go: () => set({ setPage: 'devices' }) },
@@ -2797,14 +2808,17 @@ function openAi() {
 
 // ── Аккаунт ──────────────────────────────────────────────────
 
-function openAccount() {
-  set({
-    modal: 'account', notice: null,
-    accName: store.settings?.displayName ?? '',
-    passOld: '', passNew: '', passNew2: '',
-    // сам секрет показывается один раз, сразу после выпуска
-    tokenShown: null,
-  });
+function openName() {
+  set({ modal: 'name', notice: null, accName: store.settings?.displayName ?? '' });
+}
+
+function openPassword() {
+  set({ modal: 'password', notice: null, passOld: '', passNew: '', passNew2: '' });
+}
+
+function openToken() {
+  // сам секрет показывается один раз, сразу после выпуска
+  set({ modal: 'token', notice: null, tokenShown: null });
   data.loadTokens().then(() => setIn({})).catch(fail);
 }
 
@@ -2936,6 +2950,7 @@ function openRow(r, date = state.date) {
      */
     rowStart: r.start, rowEnd: Math.min(1439, r.end ?? r.start + 30), rowField: 'start',
     rowTitle: r.title, rowAlarm: r.alarm, rowLeads: leadsOf(r),
+    rowLeadAdd: false, rowLeadVal: '', rowLeadBad: false,
     rowKind: r.isReminder ? 'reminder' : (r.kind ?? 'normal'),
     rowColor: r.color ?? null, rowConflict: 'overlap', rowNote: r.note ?? '', notice: null,
     rowRepeat: rule ? (REPEAT_OF[rule.freq] ?? 'Разово') : 'Разово',
@@ -2950,6 +2965,7 @@ function newRow({ date = state.date, start = 600, end = 660, kind = 'normal' } =
     modal: 'row', rowId: 'new', rowDate: date, rowWasDate: date,
     rowStart: start, rowEnd: Math.min(1439, end), rowField: 'start',
     rowTitle: '', rowAlarm: kind === 'reminder' ? 'notify' : 'off', rowLeads: ['at'],
+    rowLeadAdd: false, rowLeadVal: '', rowLeadBad: false,
     rowKind: kind, rowColor: null, rowConflict: 'overlap', rowNote: '', notice: null,
     rowRepeat: 'Разово', rowSeriesId: null,
     rowDays: { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false },
@@ -3561,7 +3577,9 @@ const TITLES = {
   food: () => 'Питание на день',
   meal: () => 'Приём пищи',
   calendar: () => 'Выбор дня',
-  account: () => 'Аккаунт',
+  name: () => 'Имя',
+  password: () => 'Пароль',
+  token: () => 'Интеграция',
   sound: () => state.soundKind,
   avatar: () => 'Фото профиля',
   template: () => 'Общее расписание',
@@ -3583,11 +3601,12 @@ const modalBody = () => [
   BODIES[state.modal]?.() ?? h('div'),
 ];
 
-function modal() {
+/** still — та же шторка, что и в прошлой отрисовке: без анимации появления. */
+function modal(still = false) {
   if (!state.modal) return null;
 
   const card = h('div.wmodal', {
-    class: WIDE.has(state.modal) ? 'wide' : '',
+    class: [WIDE.has(state.modal) ? 'wide' : '', still ? 'still' : ''].join(' ').trim(),
     role: 'dialog', 'aria-modal': 'true',
     onclick: e => e.stopPropagation(),
   },
@@ -3596,7 +3615,7 @@ function modal() {
       iconBtn('x', { title: 'Закрыть', onclick: closeModal, cls: 'wmodal-x' })),
     h('div.wmodal-body', ...modalBody()));
 
-  return h('div.wveil', { onclick: closeModal }, card);
+  return h('div.wveil', { class: still ? 'still' : null, onclick: closeModal }, card);
 }
 
 /** Две кнопки внизу шторки: слева тихая, справа главная. */
@@ -4044,14 +4063,35 @@ const BODIES = {
       .filter(k => /^\d+$/.test(k) && !LEADS.some(l => l.k === k))
       .map(k => sheetChip(leadOwnLabel(k), true,
         () => setIn({ rowLeads: toggleLead(state.rowLeads, k) }))));
-    add(leads, (() => {
-      const b = h('button.wchip-sheet.wchip-add', {
-        type: 'button', title: 'Свой срок', 'aria-label': 'Свой срок',
-        onclick: () => askOwnLead(),
-      });
-      add(b, ico('plus', '14px'));
-      return b;
-    })());
+    add(leads, state.rowLeadAdd
+      ? h('span.wlead-add',
+        h('input.winput.wlead-input', {
+          name: 'rowLeadVal', value: state.rowLeadVal ?? '',
+          class: state.rowLeadBad ? 'bad' : null,
+          inputmode: 'numeric', placeholder: 'минут',
+          oninput: e => { state.rowLeadVal = e.target.value; },
+          onkeydown: e => { if (e.key === 'Enter') { e.preventDefault(); addOwnLead(); } },
+        }),
+        (() => {
+          const ok = h('button.wchip.wchip-sheet.wchip-add', {
+            type: 'button', title: 'Добавить срок', 'aria-label': 'Добавить срок',
+            onclick: () => addOwnLead(),
+          });
+          add(ok, ico('check-bold', '14px'));
+          return ok;
+        })())
+      : (() => {
+        const b = h('button.wchip.wchip-sheet.wchip-add', {
+          type: 'button', title: 'Свой срок', 'aria-label': 'Свой срок',
+          onclick: () => {
+            setIn({ rowLeadAdd: true, rowLeadBad: false });
+            // поле только что появилось — курсор сразу в него
+            $('.wmodal [name="rowLeadVal"]')?.focus();
+          },
+        });
+        add(b, ico('plus', '14px'));
+        return b;
+      })());
 
     /*
      * Четыре степени в одну строку: они и так короткие, а сеткой два на два
@@ -4432,7 +4472,7 @@ const BODIES = {
     add(kinds,
       sheetChip('Просто заметка', !dated, () => setIn({ noteDated: false })),
       (() => {
-        const b = h('button.wchip-sheet.wchip-date', {
+        const b = h('button.wchip.wchip-sheet.wchip-date', {
           type: 'button',
           class: dated ? 'on' : '',
           // не выбрано — первое нажатие включает вид и сразу спрашивает дату
@@ -4673,87 +4713,12 @@ const BODIES = {
         })));
   },
 
-  // ── Аккаунт ──
-  account() {
+  // ── Имя ──
+  name() {
     /*
-     * Токен для интеграций живёт здесь же, внизу шторки аккаунта: это про
-     * доступ к своим данным, и искать его в другом месте незачем.
-     *
-     * Токен один. Их может быть сколько угодно, но человеку нужен «ключ от
-     * своего NewDay», а не список ключей: список — это уже задача, которую он
-     * не просил решать. Есть — показываем, нет — предлагаем выпустить.
+     * Почта здесь справкой, а не полем: менять её сервер не умеет, и
+     * отдельная шторка «Почта» была бы кнопкой, которая ничего не делает.
      */
-    const tokenBlock = () => {
-      const list = store.tokens ?? [];
-      const cur = list[0] ?? null;
-      const fresh = state.tokenShown;
-
-      const head = h('div.wclock-cap', { text: 'токен для интеграций', style: { marginTop: '4px' } });
-
-      if (!cur) {
-        return h('div.wtoken',
-          head,
-          h('div.wtoken-hint', {
-            text: 'Ключ, которым сторонняя программа читает и пишет ваш день по API. '
-              + 'Вставляется в неё как «Authorization: Bearer nd_…».',
-          }),
-          h('button.wbtn-wide', {
-            type: 'button', text: state.busy ? 'Выпускаю…' : 'Выпустить токен',
-            disabled: state.busy, onclick: issueToken,
-          }));
-      }
-
-      /*
-       * Секрет показывается один раз — сервер хранит только хеш. Пока он на
-       * экране, поле с ним и кнопка «Скопировать»; потом остаётся строка с
-       * префиксом, по которой видно, что токен есть, и когда им пользовались.
-       */
-      const shown = fresh
-        ? h('div',
-          h('div.wtoken-warn', { text: 'Скопируйте сейчас — второй раз он не покажется.' }),
-          h('div.wrow',
-            h('input.winput.wtoken-value', {
-              name: 'tokenValue', value: fresh, readOnly: true,
-              onclick: e => e.target.select(),
-            }),
-            h('button.wbtn-line', {
-              type: 'button', text: 'Скопировать',
-              onclick: () => copyText(fresh, 'Токен скопирован'),
-            })))
-        : h('div.wtoken-row',
-          ico('key', '17px'),
-          h('div.wtoken-body',
-            h('div.wtoken-name', { text: `${cur.prefix}…` }),
-            h('div.wtoken-meta', {
-              text: cur.last_used_at
-                ? `последний раз использован ${String(cur.last_used_at).slice(0, 16).replace('T', ' ')}`
-                : 'ещё не использовался',
-            })));
-
-      return h('div.wtoken',
-        head, shown,
-        h('div.wrow-end', { style: { marginTop: '10px' } },
-          h('button.wbtn-quiet', {
-            type: 'button', text: 'Удалить', disabled: state.busy,
-            onclick: () => revokeToken(cur.id),
-          }),
-          h('button.wbtn-line', {
-            type: 'button', text: state.busy ? 'Работаю…' : 'Перевыпустить',
-            disabled: state.busy, onclick: () => reissueToken(cur.id),
-          })),
-        h('div.wtoken-hint', {
-          text: 'Что можно делать этим токеном — в описании API: ',
-        }, h('a', { href: '/api/v1/openapi.json', target: '_blank', text: 'openapi.json' })));
-    };
-
-    const field = (label, key, type = 'text') => h('label',
-      h('span.wfield-label', { text: label }),
-      h('input.winput', {
-        name: key, type, value: state[key],
-        autocomplete: type === 'password' ? 'new-password' : 'off',
-        oninput: e => { state[key] = e.target.value; },
-      }));
-
     return h('div.wstack',
       h('div.wfile',
         ico('envelope-simple', '24px'),
@@ -4762,25 +4727,105 @@ const BODIES = {
           h('div.wfile-meta', {
             text: store.settings?.emailVerified ? 'почта подтверждена' : 'почта не подтверждена',
           }))),
-      field('как вас звать', 'accName'),
+      h('label',
+        h('span.wfield-label', { text: 'как вас звать' }),
+        h('input.winput', {
+          name: 'accName', value: state.accName, autocomplete: 'off',
+          oninput: e => { state.accName = e.target.value; },
+        })),
       h('button.wbtn-wide', {
         type: 'button', text: state.busy ? 'Сохраняю…' : 'Сохранить имя',
         disabled: state.busy, onclick: saveName,
-      }),
-      h('div.wclock-cap', { text: 'пароль' }),
-      field('текущий пароль', 'passOld', 'password'),
-      field('новый пароль', 'passNew', 'password'),
-      field('новый пароль ещё раз', 'passNew2', 'password'),
-      h('div.wrow-end',
-        h('button.wbtn-quiet', {
-          type: 'button', text: 'Выйти из аккаунта',
-          onclick: () => logOut(),
+      }));
+  },
+
+  // ── Пароль ──
+  password() {
+    const field = (label, key) => h('label',
+      h('span.wfield-label', { text: label }),
+      h('input.winput', {
+        name: key, type: 'password', value: state[key],
+        autocomplete: 'new-password',
+        oninput: e => { state[key] = e.target.value; },
+      }));
+    return h('div.wstack',
+      field('текущий пароль', 'passOld'),
+      field('новый пароль', 'passNew'),
+      field('новый пароль ещё раз', 'passNew2'),
+      h('button.wbtn-wide', {
+        type: 'button', text: state.busy ? 'Меняю…' : 'Сменить пароль',
+        disabled: state.busy, onclick: savePassword,
+      }));
+  },
+
+  // ── Интеграция ──
+  token() {
+    /*
+     * Токен один. Их может быть сколько угодно, но человеку нужен «ключ от
+     * своего NewDay», а не список ключей: список — это уже задача, которую
+     * он не просил решать. Есть — показываем, нет — предлагаем выпустить.
+     */
+    const cur = (store.tokens ?? [])[0] ?? null;
+    const fresh = state.tokenShown;
+
+    if (!cur) {
+      return h('div.wstack',
+        h('div.wtoken-hint', {
+          text: 'Ключ, которым сторонняя программа читает и пишет ваш день по API. '
+            + 'Вставляется в неё как «Authorization: Bearer nd_…».',
         }),
         h('button.wbtn-wide', {
-          type: 'button', text: state.busy ? 'Меняю…' : 'Сменить пароль',
-          disabled: state.busy, onclick: savePassword,
+          type: 'button', text: state.busy ? 'Выпускаю…' : 'Выпустить токен',
+          disabled: state.busy, onclick: issueToken,
+        }));
+    }
+
+    /*
+     * Секрет показывается один раз — сервер хранит только хеш. Пока он на
+     * экране, поле с ним и значок копирования; потом остаётся строка с
+     * префиксом, по которой видно, что токен есть и когда им пользовались.
+     */
+    const shown = fresh
+      ? h('div',
+        h('div.wtoken-warn', { text: 'Скопируйте сейчас — второй раз он не покажется.' }),
+        h('div.wrow',
+          h('input.winput.wtoken-value', {
+            name: 'tokenValue', value: fresh, readOnly: true,
+            onclick: e => e.target.select(),
+          }),
+          (() => {
+            const b = h('button.wplay', {
+              type: 'button', title: 'Скопировать', 'aria-label': 'Скопировать',
+              onclick: () => copyText(fresh, 'Токен скопирован'),
+            });
+            add(b, ico('copy', '16px'));
+            return b;
+          })()))
+      : h('div.wtoken-row',
+        ico('key', '17px'),
+        h('div.wtoken-body',
+          h('div.wtoken-name', { text: `${cur.prefix}…` }),
+          h('div.wtoken-meta', {
+            text: cur.last_used_at
+              ? `последний раз использован ${String(cur.last_used_at).slice(0, 16).replace('T', ' ')}`
+              : 'ещё не использовался',
+          })));
+
+    // кнопки одной высоты: «Удалить» слева как второстепенная
+    return h('div.wstack',
+      shown,
+      h('div.wrow-end',
+        h('button.wbtn-line', {
+          type: 'button', text: 'Удалить', disabled: state.busy,
+          onclick: () => revokeToken(cur.id),
+        }),
+        h('button.wbtn-line', {
+          type: 'button', text: state.busy ? 'Работаю…' : 'Перевыпустить',
+          disabled: state.busy, onclick: () => reissueToken(cur.id),
         })),
-      tokenBlock());
+      h('div.wtoken-hint', {
+        text: 'Что можно делать этим токеном — в описании API: ',
+      }, h('a', { href: '/api/v1/openapi.json', target: '_blank', text: 'openapi.json' })));
   },
 
   // ── Звук ──
@@ -5714,13 +5759,13 @@ function render() {
     replace(root,
       h('div.wpbody.wscroll', offline, announce, notice, screens[state.screen]()),
       phoneNav(),
-      modal());
+      modal(sameModal));
   } else {
     replace(root,
       sideBar(),
       h('div.wmain', topBar(),
         h('div.wbody.wscroll', offline, announce, notice, screens[state.screen]())),
-      modal());
+      modal(sameModal));
   }
   for (const [sel, top] of keepScroll) {
     const el = root.querySelector(sel);

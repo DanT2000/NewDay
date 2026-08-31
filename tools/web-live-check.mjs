@@ -1355,8 +1355,8 @@ await wait(600);
 await открытьРаздел('Аккаунт');
 await js(`[...document.querySelectorAll('.wrow-link')]
   .find(r => r.querySelector('span')?.textContent === 'Имя').click()`);
-проба('шторка аккаунта открылась',
-  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Аккаунт'`));
+проба('шторка имени открылась',
+  await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Имя'`));
 await js(`(() => { const i = document.querySelector('.wmodal input[name=accName]');
   i.value = 'Проверка имени'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
 await js(`[...document.querySelectorAll('.wmodal .wbtn-wide')].find(b => b.textContent.includes('имя')).click()`);
@@ -1374,16 +1374,17 @@ await js(`(async () => { const list = await (await fetch('/api/v1/tokens')).json
   for (const t of list) await fetch('/api/v1/tokens/' + t.id, { method: 'DELETE' }); })()`, true);
 await js(`document.querySelector('.wmodal-x')?.click()`);
 await waitFor('!document.querySelector(".wveil")');
+// токен переехал в свою шторку: строка «Интеграция» в разделе аккаунта
 await js(`[...document.querySelectorAll('.wrow-link')]
-  .find(r => r.querySelector('span')?.textContent === 'Имя').click()`);
-await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Аккаунт'`);
+  .find(r => r.querySelector('span')?.textContent === 'Интеграция').click()`);
+await waitFor(`document.querySelector('.wmodal-hd b')?.textContent === 'Интеграция'`);
 await wait(900);
 
 проба('без токена шторка предлагает его выпустить',
-  await js(`[...document.querySelectorAll('.wmodal .wtoken button')].some(b => b.textContent.includes('Выпустить'))`),
-  await js(`[...document.querySelectorAll('.wmodal .wtoken button')].map(b => b.textContent).join(' | ') || 'блока нет'`));
+  await js(`[...document.querySelectorAll('.wmodal button')].some(b => b.textContent.includes('Выпустить'))`),
+  await js(`[...document.querySelectorAll('.wmodal button')].map(b => b.textContent).join(' | ') || 'блока нет'`));
 
-await js(`[...document.querySelectorAll('.wmodal .wtoken button')].find(b => b.textContent.includes('Выпустить')).click()`);
+await js(`[...document.querySelectorAll('.wmodal button')].find(b => b.textContent.includes('Выпустить')).click()`);
 await waitFor(`Boolean(document.querySelector('.wmodal [name=tokenValue]'))`, 40);
 const секрет = await js(`document.querySelector('.wmodal [name=tokenValue]')?.value ?? ''`);
 проба('секрет показан целиком и один раз', /^nd_[a-z0-9]+_.+/.test(секрет),
@@ -1403,7 +1404,7 @@ const поТокену = await js(`fetch('/api/v1/days/${DAY}/full', {
 проба('по токену день читается', поТокену === 200, `ответ ${поТокену}`);
 
 // Перевыпуск: старый перестаёт действовать, новый приходит другим
-await js(`[...document.querySelectorAll('.wmodal .wtoken button')].find(b => b.textContent.includes('Перевыпустить')).click()`);
+await js(`[...document.querySelectorAll('.wmodal button')].find(b => b.textContent.includes('Перевыпустить')).click()`);
 await wait(1600);
 const второй = await js(`document.querySelector('.wmodal [name=tokenValue]')?.value ?? ''`);
 проба('перевыпуск даёт другой токен', второй && второй !== секрет, `${второй.slice(0, 12)}…`);
@@ -1413,7 +1414,7 @@ const старый = await js(`fetch('/api/v1/days/${DAY}/full', {
 }).then(r => r.status)`, true);
 проба('старый токен больше не действует', старый === 401, `ответ ${старый}`);
 
-await js(`[...document.querySelectorAll('.wmodal .wtoken button')].find(b => b.textContent === 'Удалить').click()`);
+await js(`[...document.querySelectorAll('.wmodal button')].find(b => b.textContent === 'Удалить').click()`);
 await wait(1400);
 проба('удаление убирает токен', (await js(`fetch('/api/v1/tokens').then(r=>r.json()).then(l => l.length)`, true)) === 0);
 
@@ -1542,34 +1543,26 @@ await wait(2500);
 await js(`document.querySelector('.wmodal-x')?.click()`);
 await wait(400);
 
-// ── Прокрутка длинной шторки ─────────────────────────────────
+// ── Шторка не пересоздаётся на действии ──────────────────────
 
 /*
- * Прокручивается сама шторка: `overflow-y` стоит на `.wmodal`, а не на её
- * содержимом. Перерисовка запоминала прокрутку `.wmodal-body`, у которой она
- * всегда ноль, — и любое действие в конце длинной шторки отправляло человека
- * читать её с самого верха. Заметнее всего в аккаунте: нажал «Выпустить
- * токен» — и ищи, куда нажимал.
+ * «Выпустить токен» раньше выглядел как перезагрузка: act() гнал полный
+ * render(), шторка пересобиралась с нуля и проигрывала анимацию появления
+ * заново. Теперь открытая шторка перерисовывает только своё тело — узел
+ * .wmodal обязан пережить действие, а сообщение об удаче лечь в шторку.
+ * Токен при этом живёт в своей шторке «Интеграция», а не в общем аккаунте.
  */
-await rpc(ws, 'Emulation.setDeviceMetricsOverride', { width: 1440, height: 620, deviceScaleFactor: 1, mobile: false });
-await wait(400);
-await js(`window.__wopen('account')`);
-await waitFor(`Boolean(document.querySelector('.wmodal .wtoken'))`, 40);
+await js(`window.__wopen('token')`);
+await waitFor(`Boolean(document.querySelector('.wmodal .wbtn-wide')) || Boolean(document.querySelector('.wmodal .wtoken-row'))`, 40);
 await wait(900);
-const доПрокрутки = await js(`(() => { const m = document.querySelector('.wmodal');
-  m.scrollTop = m.scrollHeight; return m.scrollTop; })()`);
-await js(`[...document.querySelectorAll('.wmodal .wtoken button')]
+await js(`(() => { const m = document.querySelector('.wmodal'); if (m) m.dataset.probe = 'жив'; })()`);
+await js(`[...document.querySelectorAll('.wmodal button')]
   .find(b => /Выпустить|Перевыпустить/.test(b.textContent))?.click()`);
 await wait(2000);
-const послеПрокрутки = await js(`document.querySelector('.wmodal')?.scrollTop ?? -1`);
-проба('действие в шторке не роняет её прокрутку',
-  доПрокрутки > 0 && Math.abs(послеПрокрутки - доПрокрутки) <= 3,
-  `${доПрокрутки} → ${послеПрокрутки}`);
-/*
- * Сообщение об удаче лежит в шторке, а не под затемнением. Наверх за ним не
- * тянем нарочно: результат — сам выпущенный токен — виден там, где нажимали,
- * и уехать от него к полосе значило бы спрятать то, за чем пришли.
- */
+проба('шторка пережила действие, а не пересобралась',
+  await js(`document.querySelector('.wmodal')?.dataset?.probe === 'жив'`));
+проба('свежий токен показан в шторке',
+  await js(`Boolean(document.querySelector('.wmodal [name="tokenValue"]'))`));
 проба('сообщение об удаче ушло в шторку, а не под затемнение',
   await js(`Boolean([...document.querySelectorAll('.wmodal .wnotice')]
     .find(n => n.textContent.includes('Токен')))`),
@@ -1577,15 +1570,17 @@ const послеПрокрутки = await js(`document.querySelector('.wmodal')
 // убираем за собой выпущенный токен
 await js(`fetch('/api/v1/tokens').then(r => r.json()).then(l =>
   Promise.all(l.map(t => fetch('/api/v1/tokens/' + t.id, { method: 'DELETE' }))))`, true);
+await js(`document.querySelector('.wmodal-x')?.click()`);
+await wait(400);
 
 /*
- * А вот отказ подкручиваем к глазам. Поля пароля стоят в самом низу аккаунта,
- * полоса с сообщением — сверху: не сдвинув шторку, человек нажимал «Сменить
- * пароль» второй и третий раз и считал кнопку сломанной.
+ * Отказ смены пароля виден в её собственной шторке: пароль переехал из
+ * общей шторки аккаунта в свою, и полоса «Пароли не совпали» обязана
+ * лежать рядом с полями, а не под затемнением.
  */
-const вКонце = await js(`(() => { const m = document.querySelector('.wmodal');
-  m.scrollTop = m.scrollHeight; return m.scrollTop; })()`);
-await wait(300);
+await js(`window.__wopen('password')`);
+await waitFor(`Boolean(document.querySelector('.wmodal [name="passOld"]'))`, 40);
+await wait(400);
 await js(`(() => {
   const set = (name, v) => { const f = document.querySelector('.wmodal [name=' + name + ']');
     if (f) { f.value = v; f.dispatchEvent(new Event('input', { bubbles: true })); } };
@@ -1593,20 +1588,11 @@ await js(`(() => {
 })()`);
 await wait(300);
 await js(`[...document.querySelectorAll('.wmodal button')].find(b => /Сменить пароль/.test(b.textContent))?.click()`);
-/*
- * Смотрим на прокрутку самой шторки, а не на попадание точкой: подкрутка
- * плавная, и мерить её отмеренной паузой значит получать разные ответы на
- * разных машинах. Уехала шторка к началу, где стоит полоса, — значит человек
- * сообщение увидит.
- */
-проба('отказ в конце длинной шторки подкручивает её к сообщению',
-  await waitFor(`document.querySelector('.wmodal')?.scrollTop < ${Math.max(1, вКонце - 40)}`, 30),
-  `${вКонце} → ${await js(`document.querySelector('.wmodal')?.scrollTop`)}; ${await видноСообщение()}`);
-проба('и сама полоса лежит в шторке',
+await wait(1200);
+проба('полоса «Пароли не совпали» лежит в шторке пароля',
   await js(`Boolean([...document.querySelectorAll('.wmodal .wnotice')]
     .find(n => n.textContent.includes('Пароли не совпали')))`));
 await js(`document.querySelector('.wmodal-x')?.click()`);
-await rpc(ws, 'Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
 await wait(500);
 
 // ── Помощник: кнопка оживает по мере набора ──────────────────

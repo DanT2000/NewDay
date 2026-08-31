@@ -325,6 +325,9 @@
 .wchip-flex { flex: 1; padding: 0; }
 /* «плюс» к срокам: та же плитка, только под значок */
 .wchip-add { display: inline-flex; align-items: center; justify-content: center; padding: 0 12px; }
+/* Свой срок: поле среди чипов вместо prompt браузера — высотой с чип */
+.wlead-add { display: inline-flex; gap: 6px; align-items: center; }
+.wlead-input { width: 96px; height: 34px; padding: 0 12px; border-radius: 10px; font: 500 13px/1 var(--ui); }
 
 .wseg { display: flex; gap: 3px; padding: 3px; border-radius: 11px; background: var(--surface); flex: none; }
 .wseg button {
@@ -570,9 +573,6 @@ select.winput { appearance: auto; cursor: pointer; }
 .wnow-left span { font: 400 13px/1 var(--ui); color: var(--faint); }
 .wbar { height: 5px; border-radius: 3px; background: var(--line); margin-top: 14px; overflow: hidden; }
 .wbar > i { display: block; height: 100%; background: var(--accent); }
-.wring { position: relative; width: 76px; height: 76px; flex: none; }
-.wring svg { width: 76px; height: 76px; transform: rotate(-90deg); }
-.wring span { position: absolute; inset: 0; display: grid; place-items: center; font: 500 16px/1 var(--mono); }
 
 /* Список расписания на «Сейчас» */
 .wsched { border-radius: 16px; background: var(--surface); padding: 8px 4px; }
@@ -1135,6 +1135,9 @@ select.winput { appearance: auto; cursor: pointer; }
   background-color: color-mix(in srgb, var(--dim) 55%, transparent);
 }
 @keyframes wpop { from { opacity: 0; transform: translateY(10px) scale(.99); } }
+/* Та же шторка при перерисовке: без анимации появления, иначе она «моргает» */
+.wveil.still { animation: none; }
+.wveil.still .wmodal, .wmodal.still { animation: none; }
 .wmodal.wide { width: 640px; }
 
 /*

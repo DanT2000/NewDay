@@ -30,7 +30,7 @@ const WANTED = {
     'envelope-simple', 'lock-simple', 'lock-simple-open', 'sign-out',
     'calendar-check', 'caret-left', 'caret-right', 'cell-signal-full',
     'chart-bar', 'check-circle', 'clock',
-    'clock-clockwise', 'device-mobile', 'dots-six-vertical', 'dots-three-vertical',
+    'clock-clockwise', 'copy', 'device-mobile', 'dots-six-vertical', 'dots-three-vertical',
     'file', 'file-arrow-down', 'file-arrow-up', 'gear', 'hand-tap', 'key',
     'laptop', 'list-checks', 'list-dashes', 'magic-wand', 'math-operations',
     'moon', 'music-note-simple', 'note', 'pencil-simple', 'plus', 'printer', 'puzzle-piece',
