@@ -239,6 +239,35 @@ test('очищенный день не заполняется шаблоном �
   } finally { await s.close(); }
 });
 
+/*
+ * Очистка шаблона обязана вычищать будущие дни, которые он успел заполнить:
+ * иначе «шаблон удалён», а суббота с воскресеньем всё ещё живут по нему.
+ * Прошлое при этом неприкосновенно — оно уже прожито.
+ */
+test('удаление шаблона вычищает заполненные им будущие дни', async () => {
+  const s = await loggedIn();
+  try {
+    const tpl = await api(s.url, s.cookie, 'POST', '/api/v1/series', {
+      name: 'Общее расписание', forceRows: true,
+      rows: [{ time: '07:00-07:30', title: 'Подъём' }],
+    });
+    const future = dayFromToday(6);
+    const filled = await getJson(s.url, s.cookie, `/api/v1/days/${future}/full`);
+    assert.strictEqual(filled.schedule.length, 1, 'день заполнился шаблоном');
+
+    // своя строка в другом будущем дне — её удаление шаблона трогать не должно
+    const other = dayFromToday(7);
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${other}/schedule`, { title: 'Своё дело', startMin: 600 });
+
+    await api(s.url, s.cookie, 'DELETE', `/api/v1/series/${tpl.id}`);
+
+    const after = await getJson(s.url, s.cookie, `/api/v1/days/${future}/full`);
+    assert.strictEqual(after.schedule.length, 0, 'заполненное шаблоном будущее вычищено');
+    const kept = await getJson(s.url, s.cookie, `/api/v1/days/${other}/full`);
+    assert.deepStrictEqual(kept.schedule.map(r => r.title), ['Своё дело'], 'свои строки целы');
+  } finally { await s.close(); }
+});
+
 test('ежегодный повтор попадает в то же число следующего года', async () => {
   const s = await loggedIn();
   try {

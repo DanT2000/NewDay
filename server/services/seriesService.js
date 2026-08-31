@@ -173,6 +173,14 @@ function seriesService(db) {
         remindBefore: Array.isArray(r.remindBefore) && r.remindBefore.length
           ? JSON.stringify(r.remindBefore) : null,
         color: r.color ?? null,
+        /*
+         * Метка серии — тем же series_id, что и у повторов. Без неё строки,
+         * которыми шаблон заполнил будущие дни, было не опознать: человек
+         * очищал шаблон, правило уходило, а суббота с воскресеньем так и
+         * жили по-старому. С меткой удаление шаблона вычищает будущее той
+         * же логикой, что и удаление повтора, — прошлое не трогая.
+         */
+        seriesId,
         sortOrder: i, done: 0,
       }));
     });
