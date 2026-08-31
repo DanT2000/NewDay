@@ -364,7 +364,13 @@ module.exports = function adminPanelRouter({ db, config, ai, access, push, clean
         userId: null,
         kind: 'check',
         messages: [{ role: 'user', content: 'Ответь одним словом: работаешь?' }],
-        maxTokens: 20,
+        /*
+         * Не 20: рассуждающие модели (gpt-oss, nemotron…) тратят первые
+         * токены на размышления, и с крошечным лимитом content приходит
+         * пустым — пинг честно работающей модели отвечал «Модель вернула
+         * пустой ответ». Четырёх сотен хватает подумать и сказать слово.
+         */
+        maxTokens: 400,
       });
     res.json(r.ok
       ? { ok: true, what, latencyMs: r.ms, ...(r.warning ? { warning: r.warning } : {}) }
