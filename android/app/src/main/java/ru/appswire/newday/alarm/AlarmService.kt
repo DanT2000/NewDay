@@ -40,6 +40,9 @@ class AlarmService : Service() {
         const val ACTION_START = "ru.appswire.newday.ALARM_START"
         const val ACTION_STOP = "ru.appswire.newday.ALARM_STOP"
         const val ACTION_SNOOZE = "ru.appswire.newday.ALARM_SNOOZE"
+        /** Тишина на время решения задачи и её конец — команды с экрана отключения. */
+        const val ACTION_SOUND_PAUSE = "ru.appswire.newday.ALARM_SOUND_PAUSE"
+        const val ACTION_SOUND_RESUME = "ru.appswire.newday.ALARM_SOUND_RESUME"
 
         const val CHANNEL_ALARM = "newday_alarm"
         const val CHANNEL_NOTIFY = "newday_notify"
@@ -98,6 +101,10 @@ class AlarmService : Service() {
     private var vibrator: Vibrator? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var rampHandler: Handler? = null
+    private var volumeGuard: Handler? = null
+    private var pauseHandler: Handler? = null
+    private var soundPaused = false
+    private var targetVolume = -1
     private var alarm: Alarm? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -106,6 +113,8 @@ class AlarmService : Service() {
         when (intent?.action) {
             ACTION_STOP -> { stopEverything(); return START_NOT_STICKY }
             ACTION_SNOOZE -> { snooze(); return START_NOT_STICKY }
+            ACTION_SOUND_PAUSE -> { pauseSound(); return START_NOT_STICKY }
+            ACTION_SOUND_RESUME -> { resumeSound("экран: бездействие кончилось тишину"); return START_NOT_STICKY }
         }
 
         val id = intent?.getLongExtra("alarmId", -1) ?: -1
@@ -299,15 +308,15 @@ class AlarmService : Service() {
             openSystemPlayer()
         }
 
+        startVolumeGuard(am)
+
         val grace = cfg.effectiveGraceSec
         if (grace > 0) {
             // Тихое начало: слышно, но не подбрасывает. Кто уже встал — просто
             // выключит, кто спит — дождётся полной громкости.
             val max = am.getStreamMaxVolume(AudioManager.STREAM_ALARM)
-            am.setStreamVolume(
-                AudioManager.STREAM_ALARM,
-                (max * 0.15).toInt().coerceAtLeast(1), 0,
-            )
+            targetVolume = (max * 0.15).toInt().coerceAtLeast(1)
+            am.setStreamVolume(AudioManager.STREAM_ALARM, targetVolume, 0)
             val handler = Handler(Looper.getMainLooper())
             rampHandler = handler
             handler.postDelayed({ escalate(a, cfg) }, grace * 1000L)
@@ -402,6 +411,7 @@ class AlarmService : Service() {
              * «быстрое» — пятнадцать секунд до полной громкости.
              */
             var level = (max * 0.25).toInt().coerceAtLeast(1)
+            targetVolume = level
             am.setStreamVolume(AudioManager.STREAM_ALARM, level, 0)
             val handler = Handler(Looper.getMainLooper())
             rampHandler = handler
@@ -411,14 +421,70 @@ class AlarmService : Service() {
                 override fun run() {
                     if (level >= max) return
                     level += 1
+                    targetVolume = level
                     am.setStreamVolume(AudioManager.STREAM_ALARM, level, 0)
                     handler.postDelayed(this, stepMs)
                 }
             }
             handler.postDelayed(step, stepMs)
         } else {
+            targetVolume = max
             am.setStreamVolume(AudioManager.STREAM_ALARM, max, 0)
         }
+    }
+
+    /**
+     * Замок громкости: раз в секунду возвращает убавленную громкость к целевой.
+     *
+     * Цель меняется вместе с фазами будильника — тихое начало, ступени
+     * нарастания, максимум, — поэтому сторож держит текущую цель, а не слепо
+     * максимум: мягкое начало остаётся тихим. Прибавить громкость руками
+     * можно (это будит), убавить — нельзя: через секунду она возвращается.
+     */
+    private fun startVolumeGuard(am: AudioManager) {
+        volumeGuard?.removeCallbacksAndMessages(null)
+        val handler = Handler(Looper.getMainLooper())
+        volumeGuard = handler
+        handler.postDelayed(object : Runnable {
+            override fun run() {
+                val target = targetVolume
+                if (target > 0 && am.getStreamVolume(AudioManager.STREAM_ALARM) < target) {
+                    am.setStreamVolume(AudioManager.STREAM_ALARM, target, 0)
+                }
+                handler.postDelayed(this, 1000L)
+            }
+        }, 1000L)
+    }
+
+    /**
+     * Тишина, пока человек решает задачу на экране отключения.
+     *
+     * Экран шлёт паузу на каждое касание (не чаще раза в секунду); звук
+     * вернёт либо экран — после 15 секунд бездействия, со сбросом задач, —
+     * либо страховка ниже: если команд нет 25 секунд, значит экрана больше
+     * нет (человек ушёл кнопкой «домой» или процесс экрана умер), и молчащий
+     * будильник обязан заорать снова — иначе его победили кнопкой «домой».
+     */
+    private fun pauseSound() {
+        if (alarm == null || currentAlarmId < 0) return
+        if (!soundPaused) {
+            soundPaused = true
+            try { player?.pause() } catch (e: Exception) { Log.d("NewDayAlarm", "Плеер не встал на паузу: " + e.message) }
+            vibrator?.cancel()
+            Log.i("NewDayAlarm", "SOUND_PAUSE тишина: человек решает задачу")
+        }
+        val handler = pauseHandler ?: Handler(Looper.getMainLooper()).also { pauseHandler = it }
+        handler.removeCallbacksAndMessages(null)
+        handler.postDelayed({ resumeSound("страховка: команд с экрана нет 25 с") }, 25_000L)
+    }
+
+    private fun resumeSound(why: String) {
+        pauseHandler?.removeCallbacksAndMessages(null)
+        if (!soundPaused || currentAlarmId < 0) return
+        soundPaused = false
+        try { player?.start() } catch (e: Exception) { Log.e("NewDayAlarm", "Плеер не завёлся после паузы: " + e.message) }
+        alarm?.let { startVibration(it, gentle = false) }
+        Log.i("NewDayAlarm", "SOUND_RESUME музыка снова: " + why)
     }
 
     /**
@@ -507,6 +573,12 @@ class AlarmService : Service() {
     private fun releasePlayback() {
         rampHandler?.removeCallbacksAndMessages(null)
         rampHandler = null
+        volumeGuard?.removeCallbacksAndMessages(null)
+        volumeGuard = null
+        pauseHandler?.removeCallbacksAndMessages(null)
+        pauseHandler = null
+        soundPaused = false
+        targetVolume = -1
         try {
             player?.stop()
         } catch (e: Exception) {

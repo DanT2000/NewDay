@@ -55,6 +55,8 @@ class AlarmActivity : Activity() {
     private lateinit var steps: StepCounter
     private var scanner: CodeScanner? = null
     private var rescueTimer: CountDownTimer? = null
+    private var idleTimer: CountDownTimer? = null
+    private var lastPause = 0L                        // когда последний раз слали паузу звука
     private var rescued = false                       // уже ушли на аварийную задачу
     private var canScan = false                       // есть камера и разрешение
     private var canWalk = false                       // есть шагомер и разрешение
@@ -106,6 +108,56 @@ class AlarmActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.statusBarColor = Style.BG
         window.navigationBarColor = Style.BG
+    }
+
+    // ── Тишина, пока человек решает ──────────────────────────
+
+    /**
+     * Любое касание экрана — признак «проснулся и решает»: музыка замолкает,
+     * и каждый новый тап держит тишину. Пятнадцать секунд без касаний —
+     * человек заснул обратно: музыка возвращается (громкость держит замок в
+     * службе), а задачи начинаются заново, с первой.
+     */
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent?): Boolean {
+        if (ev?.action == android.view.MotionEvent.ACTION_DOWN) noteActivity()
+        return super.dispatchTouchEvent(ev)
+    }
+
+    /** Сигнал активности: касание, шаг шагомера или пойманный камерой код. */
+    private fun noteActivity() {
+        // в мягком начале звук и так тихий, и там своя кнопка «Выключить»
+        if (AlarmService.graceUntilMs > System.currentTimeMillis()) return
+        if (AlarmService.currentAlarmId < 0) return
+        val now = System.currentTimeMillis()
+        // не чаще раза в секунду: дёргать службу на каждый тап клавиатуры незачем
+        if (now - lastPause > 1000L) {
+            lastPause = now
+            startService(Intent(this, AlarmService::class.java).apply { action = AlarmService.ACTION_SOUND_PAUSE })
+        }
+        idleTimer?.cancel()
+        idleTimer = object : CountDownTimer(IDLE_RESUME_MS, IDLE_RESUME_MS) {
+            override fun onTick(msLeft: Long) { /* тишину не отсчитываем вслух */ }
+            override fun onFinish() { backToNoise() }
+        }.start()
+    }
+
+    /**
+     * Заснул посреди задач: музыка снова, прогресс — с нуля.
+     *
+     * Тишина — награда за то, что решаешь, а не лазейка доспать с телефоном
+     * в руке: решённые до сна задачи не считаются, набор генерируется заново.
+     */
+    private fun backToNoise() {
+        if (isFinishing || isDestroyed) return
+        if (AlarmService.currentAlarmId < 0) return
+        Log.i("NewDayAlarm", "IDLE_RESET 15 с без активности: музыка и задачи заново")
+        startService(Intent(this, AlarmService::class.java).apply { action = AlarmService.ACTION_SOUND_RESUME })
+        releaseSensors()
+        index = 0
+        rescued = false
+        tasks = TaskFactory.makeSet(config, canScan, canWalk)
+        showTask()
+        footView.text = "Заснули? Задачи начинаются заново"
     }
 
     // ── Разметка ─────────────────────────────────────────────
@@ -418,6 +470,7 @@ class AlarmActivity : Activity() {
         stage.addView(card.apply { layoutParams = LinearLayout.LayoutParams(MATCH, WRAP) })
 
         val cam = CodeScanner(this) { text ->
+            noteActivity()   // пойманный код, даже чужой, — человек ищет и сканирует
             if (task.check(text)) {
                 Log.i("NewDayAlarm", "QR_OK код совпал")
                 next()
@@ -453,6 +506,7 @@ class AlarmActivity : Activity() {
         scanner?.stop()
         frame.removeAllViews()
         val cam = CodeScanner(this) { text ->
+            noteActivity()
             if (task.check(text)) next()
             else { hint.text = "Снова не тот код"; wrong(frame); restartScanner(frame, hint, task) }
         }
@@ -496,6 +550,7 @@ class AlarmActivity : Activity() {
 
         val started = steps.start { n ->
             runOnUiThread {
+                noteActivity()   // шаг — тоже активность: идёшь — тихо
                 val done = n.coerceAtMost(task.target)
                 counter.text = done.toString() + " / " + task.target
                 fill.layoutParams = FrameLayout.LayoutParams(
@@ -632,6 +687,7 @@ class AlarmActivity : Activity() {
             else "Будильник выключен, задач решено: " + index,
         )
         timer?.cancel()
+        idleTimer?.cancel()
         startService(Intent(this, AlarmService::class.java).apply { action = AlarmService.ACTION_STOP })
         openApp()
         finish()
@@ -639,6 +695,7 @@ class AlarmActivity : Activity() {
 
     private fun snooze() {
         timer?.cancel()
+        idleTimer?.cancel()
         startService(Intent(this, AlarmService::class.java).apply { action = AlarmService.ACTION_SNOOZE })
         finish()
     }
@@ -688,6 +745,7 @@ class AlarmActivity : Activity() {
     override fun onDestroy() {
         Log.i("NewDayAlarm", "Экран отключения закрыт")
         timer?.cancel()
+        idleTimer?.cancel()
         // Камера, оставленная включённой, держит железо и жжёт индикатор
         // камеры — человек справедливо решает, что за ним подсматривают
         releaseSensors()
@@ -697,5 +755,7 @@ class AlarmActivity : Activity() {
     companion object {
         private const val MATCH = LinearLayout.LayoutParams.MATCH_PARENT
         private const val WRAP = LinearLayout.LayoutParams.WRAP_CONTENT
+        /** Столько тишины без активности — и музыка врубается обратно. */
+        private const val IDLE_RESUME_MS = 15_000L
     }
 }
