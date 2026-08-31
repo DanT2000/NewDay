@@ -1992,6 +1992,39 @@ function lookPanel() {
     h('div.wpanel-label', { text: 'Цвет приложения' }), swatches);
 }
 
+/*
+ * Часовые пояса России — от Калининграда до Камчатки. Список короткий и
+ * закрытый нарочно: полный набор IANA — сотни строк, а человеку нужен свой
+ * город, а не Гонолулу. Пояс не из списка (переехал за пределы РФ) режим
+ * «Авто» подхватит с устройства сам, а в ручном списке он допишется отдельной
+ * строкой, чтобы select его показал.
+ */
+const RU_ZONES = [
+  ['Europe/Kaliningrad', 'Калининград', 'UTC+2'],
+  ['Europe/Moscow', 'Москва', 'UTC+3'],
+  ['Europe/Samara', 'Самара', 'UTC+4'],
+  ['Asia/Yekaterinburg', 'Екатеринбург', 'UTC+5'],
+  ['Asia/Omsk', 'Омск', 'UTC+6'],
+  ['Asia/Krasnoyarsk', 'Красноярск', 'UTC+7'],
+  ['Asia/Irkutsk', 'Иркутск', 'UTC+8'],
+  ['Asia/Yakutsk', 'Якутск', 'UTC+9'],
+  ['Asia/Vladivostok', 'Владивосток', 'UTC+10'],
+  ['Asia/Magadan', 'Магадан', 'UTC+11'],
+  ['Asia/Kamchatka', 'Камчатка', 'UTC+12'],
+];
+
+/** Пояс устройства в записи IANA — основа режима «Авто». */
+function deviceTimeZone() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || null; }
+  catch { return null; }
+}
+
+/** Пояс словами: «Екатеринбург · UTC+5», а незнакомый — как есть. */
+function zoneLabel(tz) {
+  const z = RU_ZONES.find(z => z[0] === tz);
+  return z ? `${z[1]} · ${z[2]}` : tz;
+}
+
 function dayPanel() {
   const flags = store.settings?.settings ?? {};
   const switches = [
@@ -2014,7 +2047,60 @@ function dayPanel() {
       sw(on));
     return row;
   }));
-  return day;
+
+  /*
+   * Часовой пояс. Числа расписания — это ярлыки настенных часов, а звонят и
+   * считаются по поясу аккаунта. «Авто» держит пояс равным поясу устройства
+   * (переехал — всё поехало само); «Вручную» закрепляет город и устройство
+   * уже не трогает его. Так переезд не заставляет переписывать день.
+   */
+  const tz = store.settings?.timezone || 'Europe/Moscow';
+  const auto = flags.tzAuto !== false;
+  const tzBlock = h('div.wpanel-list', cap('часовой пояс'));
+
+  const seg = h('div.wsegline');
+  add(seg, ...[['auto', 'Авто'], ['manual', 'Вручную']].map(([k, label]) =>
+    h('button', {
+      type: 'button', text: label, class: (k === 'auto') === auto ? 'on' : '',
+      onclick: () => {
+        if ((k === 'auto') === auto) return;
+        if (k === 'auto') {
+          const dev = deviceTimeZone();
+          const patch = { settings: { tzAuto: true } };
+          if (dev && dev !== tz) patch.timezone = dev;
+          act(api.saveSettings(patch).then(() => data.boot()), 'Часовой пояс — авто');
+        } else {
+          act(api.saveSettings({ settings: { tzAuto: false } }).then(() => data.boot()),
+            'Часовой пояс — вручную');
+        }
+      },
+    })));
+  add(tzBlock, seg);
+
+  if (auto) {
+    add(tzBlock, h('div.wrow-sw-hint', {
+      text: 'Берётся с устройства: ' + zoneLabel(tz),
+      style: { padding: '10px 2px 0' },
+    }));
+  } else {
+    const sel = h('select.winput', {
+      style: { marginTop: '10px' },
+      onchange: e => act(
+        api.saveSettings({ timezone: e.target.value, settings: { tzAuto: false } }).then(() => data.boot()),
+        'Часовой пояс сохранён'),
+    });
+    const zones = RU_ZONES.some(z => z[0] === tz) ? RU_ZONES : [...RU_ZONES, [tz, tz, '']];
+    for (const [id, city, off] of zones) {
+      const opt = h('option', { value: id, text: off ? `${city} · ${off}` : city });
+      if (id === tz) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    add(tzBlock, sel);
+  }
+
+  const wrap = h('div');
+  add(wrap, day, tzBlock);
+  return wrap;
 }
 
 function soundsPanel() {
@@ -5917,6 +6003,23 @@ async function bootstrap() {
      */
     const view = settings.settings?.planView;
     if (view === 'day' || view === 'week' || view === 'month') state.view = view;
+
+    /*
+     * Режим «Авто»: пояс аккаунта равняется на пояс телефона. Меняем только
+     * когда он реально разошёлся и только из приложения — иначе десктопный
+     * браузер в другом поясе перетягивал бы одеяло. Пуши, будильники и
+     * «сегодня» читают тот же пояс, поэтому одной правкой встаёт всё.
+     */
+    if (api.isNative() && settings.settings?.tzAuto !== false) {
+      const dev = deviceTimeZone();
+      if (dev && dev !== settings.timezone) {
+        try {
+          await api.saveSettings({ timezone: dev });
+          const fresh = await data.boot();
+          state.date = askedDate() ?? fresh.today;
+        } catch { /* нет связи — оставим прежний пояс, поправится при связи */ }
+      }
+    }
   } catch (e) {
     /*
      * Не вошли — обработчик выше уже увёл на страницу входа. Всё остальное
