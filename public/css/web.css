@@ -685,7 +685,6 @@ select.winput { appearance: auto; cursor: pointer; }
 /* название сжимается, колокольчик — нет: он метка, а не текст */
 .wsched-title > span { min-width: 0; }
 /* Колокольчик перед названием: строка та же, а времени она не занимает */
-.wsched-kind { color: var(--warn); flex: none; }
 .wsched-row.moment .wsched-dot { background: transparent; border: 1px solid var(--warn); }
 .wsched-row.past .wsched-title { color: var(--dim); }
 .wsched-row.now .wsched-title { font: 500 16px/1.3 var(--ui); }

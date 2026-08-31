@@ -881,8 +881,11 @@ function scheduleList() {
       h('span.wsched-time', { text: r.end === null ? hhmm(r.start) : `${hhmm(r.start)}–${hhmm(r.end)}` }),
       h('span.wsched-mark', h('span.wsched-dot')),
       h('div.wsched-body',
+        // Заголовок — только текст, без значка перед ним: колокольчик
+        // напоминания сдвигал название на 20px вправо, и «Сон» стоял не
+        // вровень с блоками. Напоминание и так помечено полой точкой на
+        // рельсе и подписью «напоминание» снизу — метки достаточно.
         h('div.wsched-title',
-          r.isReminder ? ico('bell', '13px', 'wsched-kind') : null,
           h('span', { text: r.title })),
         sub.length ? h('div.wsched-sub', { text: sub.join(' · ') }) : null),
       // пустой значок вместо null: колонка держит ширину, и строки без
