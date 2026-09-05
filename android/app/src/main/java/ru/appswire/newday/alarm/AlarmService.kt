@@ -339,7 +339,10 @@ class AlarmService : Service() {
             mp.configureAndStart()
             mp
         } catch (e: Exception) {
-            Log.e("NewDayAlarm", "Звук '" + file + "' не открылся: " + e.message + " — беру системный")
+            // Не в ассетах — это норма для своего звука: следующим пробуем
+            // filesDir/sounds. Раньше строка обещала «беру системный», хотя до
+            // системного ещё две попытки, и в логе тест выглядел провалом.
+            Log.i("NewDayAlarm", "Звука '" + file + "' нет в ассетах — ищу среди своих")
             mp.release()
             null
         }
@@ -352,11 +355,15 @@ class AlarmService : Service() {
      */
     private fun openCustomPlayer(file: String): MediaPlayer? {
         val f = java.io.File(filesDir, "sounds/$file")
-        if (!f.isFile) return null
+        if (!f.isFile) {
+            Log.w("NewDayAlarm", "Своего звука '" + file + "' на телефоне нет — беру системный")
+            return null
+        }
         val mp = MediaPlayer()
         return try {
             mp.setDataSource(f.absolutePath)
             mp.configureAndStart()
+            Log.i("NewDayAlarm", "SOUND_CUSTOM играет свой звук '" + file + "'")
             mp
         } catch (e: Exception) {
             Log.e("NewDayAlarm", "Свой звук '" + file + "' не открылся: " + e.message)

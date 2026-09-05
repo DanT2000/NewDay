@@ -8,6 +8,8 @@ import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.os.CountDownTimer
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -51,6 +53,8 @@ class AlarmActivity : Activity() {
     private lateinit var stage: LinearLayout          // меняющаяся часть: окно или задача
     private lateinit var capView: TextView
     private lateinit var footView: TextView
+    private lateinit var clockView: TextView             // большие часы в шапке
+    private val clockTicker = Handler(Looper.getMainLooper())
 
     private lateinit var steps: StepCounter
     private var scanner: CodeScanner? = null
@@ -179,11 +183,19 @@ class AlarmActivity : Activity() {
         }
         head.addView(ui.cap(dow))
         head.addView(ui.spacer(10))
-        head.addView(
-            ui.mono(SimpleDateFormat("HH:mm", Locale.getDefault()).format(now), 64f).apply {
-                letterSpacing = -0.02f
-            },
-        )
+        /*
+         * Часы живые, а не снимок момента срабатывания.
+         *
+         * Раньше время бралось один раз при построении экрана: будильник
+         * зазвонил в 20:22 — и в 20:25 экран всё ещё показывал 20:22. Для
+         * человека, который спросонья смотрит «сколько сейчас», это враньё.
+         * Обновляем на границе каждой минуты.
+         */
+        clockView = ui.mono(SimpleDateFormat("HH:mm", Locale.getDefault()).format(now), 64f).apply {
+            letterSpacing = -0.02f
+        }
+        head.addView(clockView)
+        scheduleClockTick()
         head.addView(ui.spacer(8))
         head.addView(
             ui.title(alarm?.body?.ifBlank { alarm?.title } ?: "Пора вставать", 17f, Style.DIM),
@@ -240,6 +252,18 @@ class AlarmActivity : Activity() {
         }
         root.addView(scroll)
         setContentView(root)
+    }
+
+    /** Следующий тик — ровно на начале следующей минуты, дальше сам. */
+    private fun scheduleClockTick() {
+        clockTicker.removeCallbacksAndMessages(null)
+        val now = System.currentTimeMillis()
+        val untilNextMinute = 60_000L - now % 60_000L
+        clockTicker.postDelayed({
+            if (isFinishing || isDestroyed) return@postDelayed
+            clockView.text = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+            scheduleClockTick()
+        }, untilNextMinute)
     }
 
     // ── Мягкое начало ────────────────────────────────────────
@@ -746,6 +770,7 @@ class AlarmActivity : Activity() {
         Log.i("NewDayAlarm", "Экран отключения закрыт")
         timer?.cancel()
         idleTimer?.cancel()
+        clockTicker.removeCallbacksAndMessages(null)
         // Камера, оставленная включённой, держит железо и жжёт индикатор
         // камеры — человек справедливо решает, что за ним подсматривают
         releaseSensors()
