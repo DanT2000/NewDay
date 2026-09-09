@@ -596,7 +596,6 @@ select.winput { appearance: auto; cursor: pointer; }
   align-items: center; gap: 6px; padding: 2px 12px; cursor: pointer;
   border: 0; background: transparent; color: inherit; width: 100%; text-align: left;
 }
-.wsched-row:hover { background: var(--raise); }
 /*
  * Время — постоянной ширины, и от неё зависит вся строка.
  *
@@ -660,6 +659,7 @@ select.winput { appearance: auto; cursor: pointer; }
 .wsched-body {
   min-width: 0; padding: 10px 12px; border-radius: 12px;
   background: var(--raise);
+  transition: background .12s, box-shadow .12s;
 }
 .wsched-row.past .wsched-body { background: color-mix(in srgb, var(--raise) 55%, transparent); }
 
@@ -678,6 +678,27 @@ select.winput { appearance: auto; cursor: pointer; }
   box-shadow: inset 3px 0 0 var(--pin);
 }
 .wsched-row.inner + .wsched-row.inner .wsched-body { border-radius: 4px; }
+/*
+ * Наведение подсвечивает карточку, а не всю строку.
+ *
+ * Раньше при наведении серела вся строка сетки: время, рельс и карточка
+ * накрывались одним прямоугольником без скруглений — плашка поверх плашки.
+ * Отклик даём там, куда смотрит человек: сама карточка чуть теплеет к
+ * акценту и получает тонкую рамку, как заметка при наведении, а время
+ * темнеет до основного цвета. Строка читается активной, но заливки нет.
+ * У вложенной строки цветная черта слева остаётся — рамка добавляется к ней.
+ */
+.wsched-row:hover .wsched-body,
+.wsched-row:focus-visible .wsched-body {
+  background: color-mix(in srgb, var(--accent) 9%, var(--raise));
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+.wsched-row.inner:hover .wsched-body,
+.wsched-row.inner:focus-visible .wsched-body {
+  box-shadow: inset 3px 0 0 var(--pin), inset 0 0 0 1px var(--accent-line);
+}
+.wsched-row:hover .wsched-time, .wsched-row:focus-visible .wsched-time { color: var(--text); }
+.wsched-row:focus-visible { outline: none; }
 .wsched-title {
   font: 400 15px/1.3 var(--ui); color: var(--text);
   display: flex; align-items: center; gap: 7px; min-width: 0;
