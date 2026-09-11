@@ -125,16 +125,35 @@ export async function boot() {
   }
 }
 
+/*
+ * Опоздавший ответ не должен побеждать свежий.
+ *
+ * Человек листает дни быстрее, чем отвечает сеть: два нажатия «вперёд» —
+ * два запроса в пути, и раньше в `store.day` оставался тот, что вернулся
+ * последним, а не тот, который человек ждёт. Отсюда весь набор странностей
+ * на телефоне: под сегодняшним числом висел вчерашний день, только что
+ * добавленная задача пропадала с экрана, удалённая возвращалась.
+ *
+ * Считаем поколения: применяем только ответ на последнюю просьбу. В
+ * локальную копию кладём все — там они по своим датам и пригодятся без сети.
+ */
+let dayGen = 0;
+let rangeGen = 0;
+
 export async function loadDay(date) {
+  const gen = ++dayGen;
   try {
-    store.day = await api.getDay(date);
+    const day = await api.getDay(date);
+    keep(`day.${date}`, day);
+    if (gen !== dayGen) return store.day;
+    store.day = day;
     store.offline = false;
-    keep(`day.${date}`, store.day);
     return store.day;
   } catch (e) {
     if (e?.status === 401) throw e;
     const saved = kept(`day.${date}`);
     if (!saved) throw e;
+    if (gen !== dayGen) return store.day;
     store.day = saved.value;
     store.offline = true;
     return store.day;
@@ -157,9 +176,13 @@ export async function loadRange(date, view) {
     from = keyOf(mondayOf(date));
     to = addDays(from, 6);
   }
+  const gen = ++rangeGen;
   try {
-    store.range = await api.GET(`/days/range?from=${from}&to=${to}`);
-    keep(`range.${from}.${to}`, store.range);
+    const range = await api.GET(`/days/range?from=${from}&to=${to}`);
+    keep(`range.${from}.${to}`, range);
+    // лист месяца листается так же быстро, как дни, — тот же счёт поколений
+    if (gen !== rangeGen) return store.range;
+    store.range = range;
     // связь есть — полоса «нет связи» должна уйти и с экрана недели,
     // а не ждать, пока человек переключит экран
     store.offline = false;
@@ -169,6 +192,7 @@ export async function loadRange(date, view) {
     // сетка недели и месяца без сети показывает последнее известное
     const saved = kept(`range.${from}.${to}`);
     if (!saved) throw e;
+    if (gen !== rangeGen) return store.range;
     store.range = saved.value;
     store.offline = true;
     return store.range;

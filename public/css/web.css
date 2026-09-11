@@ -1404,18 +1404,36 @@ select.winput { appearance: auto; cursor: pointer; }
 }
 .wpscreen { display: flex; flex-direction: column; gap: 18px; }
 
-.wphead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 10px; }
 /*
- * Дате хватает места на одну строку, иначе кнопки переезжают вниз целой
- * группой. `min-width` считан по самой длинной дате — «26 сентября».
+ * Шапка дня не меняет высоту. Никогда.
+ *
+ * Здесь был перенос по месту: если дата не влезала рядом с кнопками, группа
+ * кнопок целиком уезжала на вторую строку. На экране 375 px (Redmi при
+ * плотности 520 dpi) под дату остаётся ровно 159 px: 375 − 32 отступа −
+ * 176 на четыре кнопки с промежутками − 8. А сама дата занимает от 157 до
+ * 165 px — «17 сентября» влезает, «14 сентября» шире на один пиксель и не
+ * влезает. Стрелка, календарь и помощник прыгали вниз на 55 px при переходе
+ * с одного числа на другое: человек нажимал «вперёд» второй раз и попадал
+ * пальцем туда, где кнопки уже нет, — день уезжал назад.
+ *
+ * Теперь строка одна при любой ширине: перенос запрещён, а размер числа
+ * считается от места, которое осталось. Делитель 6 — ширина самой длинной
+ * даты в долях кегля («20 сентября» — 165 px при 28 px). На широком экране
+ * упирается в те же 28 px, что и раньше.
  */
-.wphead-text { flex: 1 1 auto; min-width: max-content; }
+.wphead { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+.wphead-text { flex: 1 1 auto; min-width: 0; }
 .wphead-btns { display: flex; align-items: center; gap: 8px; margin-left: auto; flex: none; }
 .wphead-dow {
   font: 500 12px/1 var(--ui); letter-spacing: .12em;
   text-transform: uppercase; color: var(--faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.wphead-num { font: 500 28px/1.1 var(--ui); letter-spacing: -.02em; margin-top: 8px; white-space: nowrap; }
+.wphead-num {
+  font: 500 clamp(17px, calc((100vw - 216px) / 6), 28px)/1.1 var(--ui);
+  letter-spacing: -.02em; margin-top: 8px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .wphead-title { font: 500 22px/1.1 var(--ui); letter-spacing: -.02em; }
 .wphead-hint { font: 400 13px/1.4 var(--ui); color: var(--faint); margin-top: 7px; }
 
