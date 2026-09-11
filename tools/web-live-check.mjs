@@ -485,8 +485,8 @@ await wait(700);
  */
 const оглавление = `[...document.querySelectorAll('.wset-cols > .wpanel-list .wrow-link, .wsettings > .wpanel-list .wrow-link')]
   .map(e => e.querySelector('span').textContent).join(',')`;
-проба('в настройках семь разделов',
-  (await js(оглавление)) === 'Аккаунт,Оформление,Будильник,Звуки,День и питание,Данные,Устройства',
+проба('в настройках восемь разделов, сообщение о проблеме — первым',
+  (await js(оглавление)) === 'Сообщить о проблеме,Аккаунт,Оформление,Будильник,Звуки,День и питание,Данные,Устройства',
   await js(оглавление));
 проба('на компьютере раздел открыт сбоку, без перехода',
   await js(`Boolean(document.querySelector('.wset-cols .wset-detail')) && !document.querySelector('.wset-back')`));
@@ -1872,6 +1872,50 @@ const наСервере = await js(`fetch('/api/v1/announce').then(r => r.json(
 проба('стенд убран за собой: объявления больше нет',
   наСервере === 'false/' && !(await waitFor(`Boolean(document.querySelector('.wannounce'))`, 10)),
   `сервер отдаёт «${наСервере}»`);
+
+// ── Сообщение о проблеме ──
+/*
+ * Кнопка «одно нажатие»: человек рассказывает, что сломалось, а приложение
+ * добавляет обстоятельства. Проверяем именно их: без сборки и экрана
+ * сообщение «не работает» помогает не больше, чем его отсутствие.
+ */
+await nav('Настройки');
+await wait(600);
+await js(`[...document.querySelectorAll('.wpanel-list .wrow-link')].find(b => b.textContent.includes('Сообщить о проблеме')).click()`);
+проба('раздел «Сообщить о проблеме» открывается',
+  await waitFor(`Boolean(document.querySelector('.wrep-rec'))`));
+проба('запись голосом — главная кнопка раздела',
+  await js(`(() => { const r = document.querySelector('.wrep-rec'); return Boolean(r) && r.getBoundingClientRect().height >= 50; })()`));
+
+await js(`(() => { const t = document.querySelector('textarea[name="repText"]');
+  t.value = 'Проба живого прогона'; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+await js(`[...document.querySelectorAll('.wset-detail button, .wsettings button')].find(b => b.textContent === 'Отправить').click()`);
+проба('сообщение ушло и человеку об этом сказали',
+  await waitFor(`Boolean(document.querySelector('.wrep-done'))`, 80),
+  await js(`document.querySelector('.wrep-done')?.innerText.replace(/\\n/g, ' | ')`, true));
+
+const сообщение = await js(`(async () => {
+  const r = await (await fetch('/api/v1/reports')).json();
+  if (!r.reports?.length) return null;
+  const full = await (await fetch('/api/v1/reports/' + r.reports[0].id)).json();
+  return { id: full.id, текст: full.text, сборка: full.context.сборка,
+    экран: full.context.экран, окно: full.context.окно, событий: full.log.length };
+})()`, true);
+проба('владелец видит сообщение со сборкой и экраном',
+  Boolean(сообщение) && /^newday-/.test(сообщение.сборка || '') && сообщение.экран === 'settings',
+  JSON.stringify(сообщение));
+проба('вместе с сообщением приехал дневник событий',
+  (сообщение?.событий ?? 0) > 0, `${сообщение?.событий ?? 0} записей`);
+
+// Уборка: сообщения стенда не должны копиться от прогона к прогону —
+// чистим все, включая оставшиеся от прогонов, упавших на полпути
+await js(`(async () => {
+  const r = await (await fetch('/api/v1/reports')).json();
+  for (const one of r.reports || []) await fetch('/api/v1/reports/' + one.id, { method: 'DELETE' });
+  return true;
+})()`, true);
+проба('стенд убран за собой: сообщений не осталось',
+  (await js(`fetch('/api/v1/reports').then(r => r.json()).then(r => r.reports.length)`, true)) === 0);
 
 console.log('\n── Итог ──');
 const плохо = пробы.filter(([, ok]) => !ok).length;

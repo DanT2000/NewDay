@@ -233,6 +233,31 @@ function buildSpec(appUrl) {
       '/sounds/{id}': { delete: { tags: ['Звуки'], summary: 'Удалить звук', parameters: [idParam], responses: { 200: ok('{ success: true }') } } },
       '/sounds/{id}/file': { get: { tags: ['Звуки'], summary: 'Сам аудиофайл', description: 'Отдаётся с верным Content-Type и `Cache-Control: private, max-age=3600` — годится для тега audio.', parameters: [idParam], responses: { 200: { description: 'Аудиофайл' }, 404: ok('Не ваш или не существует') } } },
 
+      '/reports': {
+        post: {
+          tags: ['Сообщения о проблемах'],
+          summary: 'Сообщить о проблеме (multipart: text?, audio?, shot?, context?, log?)',
+          description: 'Пишет любой вошедший. Что-то одно быть обязано: текст, запись голоса или снимок экрана. '
+            + 'Запись расшифровывается сразу; если распознавание отказало, сообщение всё равно принимается, '
+            + 'файл сохраняется, а причина возвращается в `voiceError`. '
+            + '`context` и `log` — JSON-строки с обстоятельствами и последними событиями приложения.',
+          responses: { 201: ok('{ id, text, voiceError, hasAudio, hasShot, status, createdAt, from }'), 400: ok('Пустое сообщение или не картинка') },
+        },
+        get: {
+          tags: ['Сообщения о проблемах'],
+          summary: 'Список сообщений (только владелец)',
+          description: 'Фильтры: `status` — new | seen | done, `limit`, `before` (номер, до которого листать).',
+          responses: { 200: ok('{ reports: [...], counts }'), 403: ok('Не владелец') },
+        },
+      },
+      '/reports/{id}': {
+        get: { tags: ['Сообщения о проблемах'], summary: 'Сообщение целиком, с обстоятельствами и дневником', parameters: [idParam], responses: { 200: ok('{ ..., context, log }'), 403: ok('Не владелец') } },
+        patch: { tags: ['Сообщения о проблемах'], summary: 'Пометить: new | seen | done', parameters: [idParam], requestBody: body('{ status }'), responses: { 200: ok('Сообщение') } },
+        delete: { tags: ['Сообщения о проблемах'], summary: 'Удалить сообщение вместе с файлами', parameters: [idParam], responses: { 204: { description: 'Удалено' } } },
+      },
+      '/reports/{id}/audio': { get: { tags: ['Сообщения о проблемах'], summary: 'Запись голоса', parameters: [idParam], responses: { 200: { description: 'Аудиофайл' }, 404: ok('Не приложено') } } },
+      '/reports/{id}/shot': { get: { tags: ['Сообщения о проблемах'], summary: 'Снимок экрана', parameters: [idParam], responses: { 200: { description: 'Картинка' }, 404: ok('Не приложено') } } },
+
       '/ai/status': { get: { tags: ['Помощник'], summary: 'Включён ли помощник и распознавание речи', responses: { 200: ok('{ ready, voice }') } } },
       '/ai/parse': { post: { tags: ['Помощник'], summary: 'Разобрать текст в пункты плана', requestBody: body('{ text, date }'), responses: { 200: ok('{ items }') } } },
       '/ai/improve': { post: { tags: ['Помощник'], summary: 'Предложить, чем дополнить день', requestBody: body('{ date }'), responses: { 200: ok('{ items }') } } },

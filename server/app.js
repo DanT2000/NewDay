@@ -22,6 +22,7 @@ const settingsRouter = require('./routes/v1/settings');
 const notesRouter = require('./routes/v1/notes');
 const announceRouter = require('./routes/v1/announce');
 const soundsRouter = require('./routes/v1/sounds');
+const reportsRouter = require('./routes/v1/reports');
 const adminRouter = require('./routes/v1/admin');
 const adminPanelRouter = require('./routes/adminPanel');
 const aiRouter = require('./routes/v1/ai');
@@ -189,6 +190,7 @@ function createApp({ db, config, fetchImpl, env = process.env }) {
   app.use('/api/v1/ai', aiRouter({ ai, access }));
   app.use('/api/v1/notes', notesRouter({ db }));
   app.use('/api/v1/sounds', soundsRouter({ db, config }));
+  app.use('/api/v1/reports', reportsRouter({ db, config, ai }));
   app.use('/api/v1/admin', adminRouter({ db, config, ai }));
   app.use('/api/v1/settings', settingsRouter({ db, config }));
   /**

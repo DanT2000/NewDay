@@ -11,6 +11,7 @@ const MIGRATIONS = [
   require('./010-admin-panel'),
   require('./011-block-and-ip'),
   require('./012-integrations'),
+  require('./013-reports'),
 ];
 
 function currentVersion(db) {

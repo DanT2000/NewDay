@@ -14,12 +14,18 @@ function loadConfig(env = process.env) {
   const soundsDir = env.SOUNDS_DIR || (dbPath === ':memory:'
     ? path.join(os.tmpdir(), 'newday-sounds')
     : path.join(path.dirname(dbPath), 'sounds'));
+  // Сообщения о проблемах: запись голоса и снимок экрана. Там же, рядом с
+  // базой, — строка отчёта без своего файла бесполезна, жить им вместе.
+  const reportsDir = env.REPORTS_DIR || (dbPath === ':memory:'
+    ? path.join(os.tmpdir(), 'newday-reports')
+    : path.join(path.dirname(dbPath), 'reports'));
   return {
     nodeEnv: env.NODE_ENV || 'development',
     port: Number(env.PORT || 3000),
     dbPath,
     apkDir,
     soundsDir,
+    reportsDir,
     // Токен для выкладки APK из CI. Пока не задан — эндпоинт выкладки закрыт.
     apkUploadToken: env.APK_UPLOAD_TOKEN || '',
     sessionSecret: env.SESSION_SECRET || 'newday-dev-secret-change-in-production',

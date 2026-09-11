@@ -1112,6 +1112,52 @@ select.winput { appearance: auto; cursor: pointer; }
 .wdev-tag { font: 400 11px/1 var(--ui); letter-spacing: .06em; text-transform: uppercase; color: var(--accent); flex: none; }
 .wpanel-note { font: 400 13px/1.5 var(--ui); color: var(--faint); margin-top: 12px; }
 
+/* ── Сообщение о проблеме ─────────────────────────────────────
+ *
+ * Голос — главная кнопка раздела, поэтому она во всю ширину и с акцентом:
+ * человек, у которого только что что-то сломалось, должен попасть в неё не
+ * глядя. Во время записи кнопка краснеет и показывает счётчик — иначе
+ * непонятно, идёт запись или уже нет.
+ */
+.wrep-rec {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  width: 100%; height: 54px; margin-top: 14px; border-radius: 14px; cursor: pointer;
+  border: 1px solid var(--accent); background: var(--accent-soft);
+  color: var(--accent); font: 500 15px/1 var(--ui);
+}
+.wrep-rec.on { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
+.wrep-time { font: 500 14px/1 var(--mono); margin-left: 2px; }
+/* Приложенное: видно, что именно уедет, и тут же способ передумать */
+.wrep-file {
+  display: flex; align-items: center; gap: 10px; margin-top: 10px;
+  padding: 10px 12px; border-radius: 12px; background: var(--raise);
+  font: 400 13px/1.3 var(--ui); color: var(--dim);
+}
+.wrep-file > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wrep-text { display: block; margin-top: 16px; }
+.wrep-text .wtextarea { height: 120px; margin-top: 8px; }
+.wrep-text + .wbtn-dashed { margin-top: 12px; width: 100%; }
+.wrep-what {
+  display: block; margin-top: 16px; padding: 0; border: 0; background: transparent;
+  color: var(--accent); font: 400 13px/1.4 var(--ui); cursor: pointer; text-align: left;
+}
+/* Список событий — моноширинный: это выписка, а не текст */
+.wrep-log {
+  margin-top: 10px; padding: 12px; border-radius: 12px; background: var(--surface);
+  font: 400 11px/1.6 var(--mono); color: var(--faint);
+  max-height: 220px; overflow-y: auto; overscroll-behavior: contain;
+}
+.wrep-log div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wrep-rec + .wbtn-wide, .wrep-what + .wbtn-wide, .wrep-log + .wbtn-wide,
+.wrep-file + .wbtn-wide { margin-top: 16px; }
+.wbtn-wide + .wrep-done { margin-top: 14px; }
+.wrep-done {
+  display: flex; flex-direction: column; gap: 4px; padding: 12px 14px;
+  border-radius: 12px; background: color-mix(in srgb, var(--accent) 10%, transparent);
+  font: 400 13px/1.5 var(--ui); color: var(--dim);
+}
+.wrep-done b { font: 500 14px/1.3 var(--ui); color: var(--text); }
+
 /* ── Шторка ────────────────────────────────────────────────── */
 
 /*

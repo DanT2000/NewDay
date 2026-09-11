@@ -149,6 +149,21 @@
         модератору.
     -->
 
+    <!--
+        Микрофон: голосовой ввод помощника и сообщение о проблеме голосом.
+
+        Без этой строки getUserMedia в вебвью отказывал наглухо: Capacitor
+        просит у системы RECORD_AUDIO, система видит незаявленное разрешение
+        и отказывает не спрашивая человека, а страница получает
+        NotAllowedError — будто человек сам запретил. Спрашивается разрешение
+        по первому нажатию «записать», не раньше.
+
+        MODIFY_AUDIO_SETTINGS идёт в паре: его Capacitor запрашивает вместе с
+        записью, и без объявления отказ приходит на оба сразу.
+    -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
     <!-- Будильник -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />

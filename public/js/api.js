@@ -15,8 +15,12 @@
  * абсолютный адрес сервера и device-токен в заголовке: cookie кросс-доменно
  * не пройдут, и полагаться на них было бы самообманом.
  */
+import * as diag from './diag.js';
+
 const KEY_BASE = 'newday.apiBase';
 const KEY_TOKEN = 'newday.deviceToken';
+/** Дольше этого — уже заметно человеку, и в дневнике этому место. */
+const SLOW_MS = 2000;
 
 export const isNative = () => Boolean(globalThis.Capacitor?.isNativePlatform?.());
 
@@ -53,6 +57,7 @@ export function setUnauthorizedHandler(fn) { onUnauthorized = fn; }
 
 async function request(method, path, body, headers = {}) {
   const token = deviceToken();
+  const started = Date.now();
   let res;
   try {
     res = await fetch(apiBase() + path, {
@@ -65,8 +70,16 @@ async function request(method, path, body, headers = {}) {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
   } catch {
+    diag.note('сеть', `${method} ${path} — не дозвонились`, { мс: Date.now() - started });
     throw new ApiError(0, 'NETWORK', 'Нет связи с сервером');
   }
+  /*
+   * Долгие запросы — в дневник. «Приложение тормозит» почти всегда значит
+   * «сервер отвечал четыре секунды», и без отметок это не отличить от
+   * медленной отрисовки.
+   */
+  const ms = Date.now() - started;
+  if (ms > SLOW_MS) diag.note('медленно', `${method} ${path}`, { мс: ms });
 
   if (res.status === 401) {
     onUnauthorized();
@@ -78,6 +91,7 @@ async function request(method, path, body, headers = {}) {
   // Без этой проверки такой ответ выглядел бы как успешный вызов API.
   const type = res.headers.get('content-type') || '';
   if (!type.includes('application/json')) {
+    diag.note('отказ', `${method} ${path} → ответ не JSON (${res.status}, ${type || 'без типа'})`);
     throw new ApiError(res.status, 'BAD_RESPONSE',
       'Сервер ответил не по-JSON. Проверьте адрес сервера в настройках входа.');
   }
@@ -85,6 +99,7 @@ async function request(method, path, body, headers = {}) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const e = data.error || {};
+    diag.note('отказ', `${method} ${path} → ${res.status} ${e.message || e.code || ''}`.trim(), { мс: ms });
     throw new ApiError(res.status, e.code || 'ERROR', e.message || `Ошибка ${res.status}`, e.details);
   }
   return data;
@@ -109,6 +124,7 @@ export async function postForm(path, form) {
       body: form,
     });
   } catch {
+    diag.note('сеть', `форма ${path} — не дозвонились`);
     throw new ApiError(0, 'NETWORK', 'Нет связи с сервером');
   }
 
@@ -116,6 +132,7 @@ export async function postForm(path, form) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const e = data.error || {};
+    diag.note('отказ', `форма ${path} → ${res.status} ${e.message || e.code || ''}`.trim());
     throw new ApiError(res.status, e.code || 'ERROR', e.message || `Ошибка ${res.status}`);
   }
   return data;

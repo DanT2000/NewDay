@@ -30,6 +30,7 @@ import { renderEmojiPicker } from '../emoji.js';
  * честно отвечает «нет» — раздел разрешений тогда просто не показывается.
  */
 import * as native from '../native.js';
+import * as diag from '../diag.js';
 
 /** Часовая сетка: 18 часов с 06:00, строка часа — 44 px. */
 const HOUR_H = 44;
@@ -86,6 +87,14 @@ const state = {
   aiDraft: null,
   // открытый раздел настроек; null — оглавление
   setPage: null,
+  /*
+   * Сообщение о проблеме. Запись и снимок живут здесь до отправки: пока
+   * человек их не отправил, они нигде больше не лежат — ни на сервере, ни
+   * в локальной копии.
+   */
+  repText: '', repAudio: null, repAudioSec: 0, repShot: null,
+  repRec: null, repSec: 0, repTick: null,
+  repSending: false, repDone: null, repWhat: false,
 };
 
 /*
@@ -343,6 +352,7 @@ function periodLabel() {
 
 /** Перейти на дату: меняем и сразу перечитываем — день другой. */
 function go(date) {
+  diag.note('день', `${state.date} → ${date}`);
   state.date = date;
   render();
   reload();
@@ -453,9 +463,14 @@ function note(text, bad = false) {
  * по-разному. «Не удалось сохранить» при выключенном интернете звучит как
  * поломка приложения, хотя приложение тут ни при чём.
  */
-const fail = e => note(navigator.onLine === false
-  ? 'Нет связи — правка не ушла на сервер. Появится связь, попробуйте снова'
-  : (e?.message || 'Не удалось сохранить'), true);
+function fail(e) {
+  // В дневник — до показа: если человек тут же пойдёт жаловаться, отказ
+  // должен быть в списке последних событий
+  diag.note('беда', e?.message || 'не удалось сохранить');
+  note(navigator.onLine === false
+    ? 'Нет связи — правка не ушла на сервер. Появится связь, попробуйте снова'
+    : (e?.message || 'Не удалось сохранить'), true);
+}
 
 /**
  * Действие в шторке: кнопка занята, пока запрос в пути, исход виден.
@@ -1904,6 +1919,12 @@ function notesScreen() {
  * возвращает в оглавление, где человек уже ориентируется.
  */
 const SET_PAGES = {
+  /*
+   * Первым в списке и с жуком: пока приложение обкатывается, рассказать о
+   * поломке важнее, чем поменять тему. Два нажатия из любого места — вкладка
+   * «Настройки» и эта строка.
+   */
+  report: { icon: 'bug-beetle', title: 'Сообщить о проблеме', hint: () => 'голосом или текстом' },
   account: { icon: 'user', title: 'Аккаунт', hint: () => store.user?.email ?? '' },
   look: { icon: 'paint-brush', title: 'Оформление', hint: () => ({ system: 'системная тема', light: 'светлая тема', dark: 'тёмная тема' })[state.theme] ?? '' },
   alarm: { icon: 'alarm-fill', title: 'Будильник', hint: () => (store.settings?.settings?.alarmMode === 'advanced' ? 'продвинутый' : 'простой') },
@@ -1940,6 +1961,7 @@ function settingsScreen() {
 
   const cur = page ?? 'account';
   const bodies = {
+    report: reportPanel,
     account: accountPanel,
     look: lookPanel,
     alarm: alarmPanel,
@@ -1974,6 +1996,7 @@ function settingsMaster(cur) {
 function settingsPage(key) {
   const p = SET_PAGES[key];
   const body = {
+    report: reportPanel,
     account: accountPanel,
     look: lookPanel,
     alarm: alarmPanel,
@@ -1990,6 +2013,220 @@ function settingsPage(key) {
     }, ico('caret-left', '16px'), h('span', { text: 'Настройки' })),
     h('div.whead-title', { text: p.title, style: { marginBottom: '18px' } }),
     h('div.wsettings', body()));
+}
+
+/* ── Сообщение о проблеме ────────────────────────────────────
+ *
+ * Кнопка для живого пользования: человек наткнулся на поломку, нажал,
+ * наговорил своими словами — и вернулся к делам. Разбираться будет не он,
+ * поэтому к словам приложение добавляет обстоятельства: какая сборка, какой
+ * экран, что отвечал сервер, какие ошибки случились перед этим.
+ *
+ * Голос важнее текста: набирать на телефоне посреди дела никто не станет, а
+ * сказать — станет. Поэтому запись первой кнопкой и крупно.
+ *
+ * Расшифровка не обязана удаться — сервер сохранит запись в любом случае и
+ * честно скажет, что прочитать не вышло. Потерять сказанное нельзя: человек
+ * второй раз это не расскажет.
+ */
+
+const repSecLabel = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
+/** Расширение из типа записи: «audio/webm;codecs=opus» → «webm». */
+const repExt = type => ({
+  'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'm4a',
+  'audio/mpeg': 'mp3', 'audio/wav': 'wav',
+}[String(type || '').split(';')[0].trim()] || 'webm');
+
+function repStop() {
+  clearInterval(state.repTick);
+  state.repTick = null;
+  const rec = state.repRec;
+  state.repRec = null;
+  if (rec && rec.state !== 'inactive') { try { rec.stop(); } catch { /* уже стоит */ } }
+}
+
+async function repRecord() {
+  if (state.repRec) { repStop(); return; }
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    state.notice = 'Это устройство не умеет записывать звук — напишите текстом';
+    state.noticeBad = true; render(); return;
+  }
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch (e) {
+    const name = e?.name ?? '';
+    state.notice = name === 'NotAllowedError' || name === 'SecurityError'
+      ? 'Микрофон запрещён. Разрешите доступ к микрофону в настройках приложения'
+      : name === 'NotFoundError'
+        ? 'Микрофон не найден'
+        : `Микрофон не открылся: ${e?.message || name || 'неизвестная причина'}`;
+    state.noticeBad = true;
+    diag.note('микрофон', state.notice);
+    render();
+    return;
+  }
+
+  const chunks = [];
+  const rec = new MediaRecorder(stream);
+  const t0 = Date.now();
+  state.repRec = rec;
+  state.repSec = 0;
+  state.notice = null;
+  rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+  rec.onstop = () => {
+    stream.getTracks().forEach(t => t.stop());
+    state.repAudio = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+    state.repAudioSec = Math.max(1, Math.round((Date.now() - t0) / 1000));
+    render();
+  };
+  rec.start();
+  render();
+  /*
+   * Счётчик обновляем прямо в узле, а не через render: полная перерисовка
+   * каждую секунду отбирала бы курсор у поля, в котором человек пишет.
+   */
+  state.repTick = setInterval(() => {
+    state.repSec = Math.round((Date.now() - t0) / 1000);
+    const el = $('.wrep-time');
+    if (el) el.textContent = repSecLabel(state.repSec);
+    // Три минуты — предел: дальше это уже не сообщение о проблеме
+    if (state.repSec >= 180) repStop();
+  }, 1000);
+}
+
+async function repSend() {
+  repStop();
+  if (!state.repText.trim() && !state.repAudio && !state.repShot) {
+    state.notice = 'Напишите или наговорите, что случилось';
+    state.noticeBad = true; render(); return;
+  }
+  state.repSending = true;
+  state.repDone = null;
+  state.notice = null;
+  render();
+  try {
+    const form = new FormData();
+    form.append('text', state.repText.trim());
+    form.append('context', JSON.stringify(await diag.context({
+      экран: state.screen,
+      разделНастроек: state.setPage ?? '',
+      выбранныйДень: state.date,
+      поясАккаунта: store.settings?.timezone ?? '',
+      сегодняПоСерверу: store.settings?.today ?? '',
+      тема: state.theme,
+    })));
+    form.append('log', JSON.stringify(diag.entries()));
+    if (state.repAudio) form.append('audio', state.repAudio, `zapis.${repExt(state.repAudio.type)}`);
+    if (state.repShot) form.append('shot', state.repShot, state.repShot.name || 'snimok.png');
+
+    const sent = await api.postForm('/reports', form);
+    state.repDone = sent;
+    state.repText = '';
+    state.repAudio = null;
+    state.repAudioSec = 0;
+    state.repShot = null;
+    diag.note('сообщение', `отправлено №${sent.id}`);
+  } catch (e) {
+    fail(e);
+  }
+  state.repSending = false;
+  render();
+}
+
+function reportPanel() {
+  const panel = h('div.wpanel', cap('сообщить о проблеме'));
+  add(panel, h('div.wpanel-note', {
+    text: 'Расскажите своими словами, что пошло не так. Вместе с сообщением уйдут '
+      + 'версия приложения, экран, на котором вы были, и последние события — по ним '
+      + 'видно причину. Ни задачи, ни заметки, ни расписание не отправляются.',
+  }));
+
+  // ── Голос ──
+  const пишем = Boolean(state.repRec);
+  const recBtn = h(`button.wrep-rec${пишем ? '.on' : ''}`, {
+    type: 'button', onclick: repRecord,
+  });
+  add(recBtn,
+    ico(пишем ? 'stop' : 'microphone-fill', '20px'),
+    h('span', { text: пишем ? 'Остановить запись' : (state.repAudio ? 'Записать заново' : 'Записать голосом') }),
+    пишем ? h('span.wrep-time', { text: repSecLabel(state.repSec) }) : null);
+  add(panel, recBtn);
+
+  if (state.repAudio && !пишем) {
+    const row = h('div.wrep-file');
+    const drop = h('button.wsq', { type: 'button', title: 'Убрать запись', 'aria-label': 'Убрать запись',
+      onclick: () => set({ repAudio: null, repAudioSec: 0 }) });
+    add(drop, ico('trash', '15px'));
+    add(row, ico('waveform', '16px'),
+      h('span', { text: `запись ${repSecLabel(state.repAudioSec)}` }), drop);
+    add(panel, row);
+  }
+
+  // ── Текст ──
+  add(panel, h('label.wrep-text',
+    h('span.wfield-label', { text: 'или напишите' }),
+    h('textarea.wtextarea', {
+      name: 'repText', value: state.repText,
+      placeholder: 'Например: добавил задачу на 14 сентября, она не появилась',
+      oninput: e => { state.repText = e.target.value; },
+    })));
+
+  // ── Снимок экрана ──
+  const picker = h('input', {
+    type: 'file', accept: 'image/*', style: { display: 'none' },
+    onchange: e => {
+      const f = e.target.files?.[0];
+      if (f) set({ repShot: f });
+    },
+  });
+  const shotBtn = h('button.wbtn-dashed', { type: 'button', onclick: () => picker.click() });
+  add(shotBtn, ico('paperclip', '15px'),
+    h('span', { text: state.repShot ? 'Заменить снимок' : 'Приложить снимок экрана' }));
+  add(panel, picker, shotBtn);
+
+  if (state.repShot) {
+    const row = h('div.wrep-file');
+    const drop = h('button.wsq', { type: 'button', title: 'Убрать снимок', 'aria-label': 'Убрать снимок',
+      onclick: () => set({ repShot: null }) });
+    add(drop, ico('trash', '15px'));
+    add(row, ico('image', '16px'),
+      h('span', { text: `${state.repShot.name} · ${Math.round(state.repShot.size / 1024)} КБ` }), drop);
+    add(panel, row);
+  }
+
+  // ── Что именно уйдёт ──
+  const toggle = h('button.wrep-what', {
+    type: 'button', onclick: () => set({ repWhat: !state.repWhat }),
+  });
+  add(toggle, h('span', { text: state.repWhat ? 'Скрыть, что уйдёт вместе с сообщением' : 'Показать, что уйдёт вместе с сообщением' }));
+  add(panel, toggle);
+  if (state.repWhat) {
+    const last = diag.entries().slice(-12).reverse();
+    add(panel, h('div.wrep-log',
+      h('div', { text: `экран · ${state.screen}, день · ${state.date}` }),
+      h('div', { text: `окно · ${innerWidth}×${innerHeight}, пояс · ${store.settings?.timezone ?? '—'}` }),
+      ...last.map(e => h('div', { text: `${e.t.slice(11, 19)} ${e.kind} · ${e.text}` })),
+      last.length ? null : h('div', { text: 'событий пока нет' })));
+  }
+
+  // ── Отправка ──
+  add(panel, h('button.wbtn-wide', {
+    type: 'button', disabled: state.repSending,
+    text: state.repSending ? 'Отправляю…' : 'Отправить',
+    onclick: repSend,
+  }));
+
+  if (state.repDone) {
+    const d = state.repDone;
+    add(panel, h('div.wrep-done',
+      h('b', { text: `Отправлено, сообщение №${d.id}` }),
+      h('span', { text: d.voiceError
+        ? `Запись сохранена, но расшифровать её не вышло: ${d.voiceError.toLowerCase()}. Послушаю сам.`
+        : (d.text ? `Записано: «${d.text.slice(0, 160)}»` : 'Спасибо, посмотрю.') })));
+  }
+
+  return panel;
 }
 
 function lookPanel() {
@@ -2911,6 +3148,8 @@ function openLink(kind, label) {
  */
 function logOut() {
   data.forgetLocal();
+  // дневник — тоже след человека: в нём его экраны, дни и отказы сервера
+  diag.forget();
   // токен устройства стирается после ответа сервера: запрос на выход сам
   // ходит с этим токеном, и сервер по нему же его отзывает. Сотри раньше —
   // отзывать было бы нечем, и токен остался бы жив на сервере
@@ -6025,6 +6264,8 @@ addEventListener('mouseup', () => {
  * часовом поясе человека; рисовать до этого значит мигнуть чужой темой.
  */
 async function bootstrap() {
+  // Дневник — до первого запроса: интересное случается как раз на запуске
+  diag.watch();
   api.setUnauthorizedHandler(() => {
     // протухший токен устройства стираем, как это делает и обработчик по
     // умолчанию: иначе точка входа продолжала бы верить, что человек вошёл,
