@@ -440,6 +440,10 @@ select.winput { appearance: auto; cursor: pointer; }
 }
 .wtextarea:focus { border-color: var(--accent); }
 /* Комментарий к строке — не статья: поле низкое, и это видно до набора */
+.wtpl-text {
+  height: 300px; font: 400 12px/1.55 var(--mono); white-space: pre;
+  overflow: auto; resize: vertical;
+}
 .wtextarea-slim { height: 76px; padding: 12px 14px; font-size: 14px; line-height: 1.45; }
 
 .wfield-label {

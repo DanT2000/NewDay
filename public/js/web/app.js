@@ -2123,7 +2123,9 @@ const SET_PAGES = {
   look: { icon: 'paint-brush', title: 'Оформление', hint: () => ({ system: 'системная тема', light: 'светлая тема', dark: 'тёмная тема' })[state.theme] ?? '' },
   alarm: { icon: 'alarm-fill', title: 'Будильник', hint: () => (store.settings?.settings?.alarmMode === 'advanced' ? 'продвинутый' : 'простой') },
   sounds: { icon: 'speaker-high', title: 'Звуки', hint: () => state.sound },
-  day: { icon: 'fork-knife', title: 'День и питание', hint: () => '' },
+  // Значок про день, а не про еду: в разделе и часовой пояс, и начало дня,
+  // и план по питанию — вилка с ножом обещала только последнее
+  day: { icon: 'sun-horizon', title: 'День и питание', hint: () => '' },
   data: { icon: 'database', title: 'Данные', hint: () => 'шаблон, экспорт, импорт' },
   devices: { icon: 'devices', title: 'Устройства', hint: () => devicesHint() },
 };
@@ -2593,6 +2595,7 @@ function soundsPanel() {
 function dataPanel() {
   const links = [
     { icon: 'calendar-check', label: 'Общее расписание', value: 'шаблон дня', m: 'template' },
+    { icon: 'magic-wand', label: 'Шаблон для помощника', value: 'текст дня', m: 'aiTemplate' },
     { icon: 'file-arrow-down', label: 'Экспорт данных', value: 'JSON', m: 'export' },
     { icon: 'file-arrow-up', label: 'Импорт данных', value: 'JSON', m: 'import' },
   ];
@@ -3184,9 +3187,23 @@ let vendorInfo = null;
  * Останавливается сам, когда шторка звука закрылась (см. render).
  */
 let previewAudio = null;
+/*
+ * Кто сейчас хозяин плеера.
+ *
+ * `play()` отвечает не сразу, а остановить звук можно в любой момент —
+ * нажатием на другой, закрытием шторки, уходом с экрана. Тогда обещание
+ * `play()` отклоняется с AbortError, и человек читал английское «The play()
+ * request was interrupted because the media was removed from the document»
+ * как ошибку приложения. Ошибки нет: звук остановили, потому что его
+ * попросили остановить. Каждый запуск получает номер, и опоздавший ответ
+ * молча уходит в никуда, вместо того чтобы гасить чужой уже играющий звук.
+ */
+let previewToken = 0;
 
 function stopPreview() {
-  if (!previewAudio) return;
+  // всё, что сейчас в пути, с этого мгновения чужое
+  previewToken += 1;
+  if (!previewAudio) { state.soundPlay = null; return; }
   try { previewAudio.pause(); } catch { /* уже остановлен */ }
   if (previewAudio.src.startsWith('blob:')) URL.revokeObjectURL(previewAudio.src);
   previewAudio = null;
@@ -3226,21 +3243,29 @@ async function togglePreview(playKey, src) {
    * вернём как было.
    */
   state.soundPlay = playKey;
+  const token = ++previewToken;
   paintPlayButtons();
+  let url = src;
   try {
-    let url = src;
     if (!url) {
       // свой звук: тег audio заголовков не умеет, а доступ живёт на токене
       const id = playKey.slice(2);
       url = URL.createObjectURL(await api.sounds.fileBlob(id));
     }
     // Пока файл ехал, человек мог нажать «остановить» или включить другой
-    if (state.soundPlay !== playKey) { URL.revokeObjectURL(url); return; }
-    previewAudio = new Audio(url);
-    previewAudio.loop = false;
-    previewAudio.onended = () => { stopPreview(); paintPlayButtons(); };
-    await previewAudio.play();
+    if (token !== previewToken) {
+      if (url !== src) URL.revokeObjectURL(url);
+      return;
+    }
+    const audio = new Audio(url);
+    audio.loop = false;
+    audio.onended = () => { if (token === previewToken) { stopPreview(); paintPlayButtons(); } };
+    previewAudio = audio;
+    await audio.play();
   } catch (e) {
+    // Звук остановили, пока он собирался зазвучать, — это не поломка
+    if (token !== previewToken || e?.name === 'AbortError') return;
+    if (url && url !== src) URL.revokeObjectURL(url);
     stopPreview();
     paintPlayButtons();
     fail(e);
@@ -3308,6 +3333,10 @@ function openLink(kind, label) {
     // Вид выгрузки сбрасываем: «календарь», выбранный в экспорте, в импорте
     // не значит ничего, и ни одна кнопка не выглядела бы нажатой
     set({ modal: 'file', fileKind: kind, fileScope: null, notice: null });
+    return;
+  }
+  if (kind === 'aiTemplate') {
+    set({ modal: 'aiTemplate', notice: null });
     return;
   }
   if (kind === 'sound') {
@@ -4159,6 +4188,7 @@ const TITLES = {
   template: () => 'Общее расписание',
   tplRow: () => 'Строка шаблона',
   file: () => (state.fileKind === 'import' ? 'Импорт данных' : 'Экспорт данных'),
+  aiTemplate: () => 'Шаблон для помощника',
   print: () => 'Печать дня',
 };
 
@@ -5402,6 +5432,39 @@ const BODIES = {
       }, h('a', { href: '/api/v1/openapi.json', target: '_blank', text: 'openapi.json' })));
   },
 
+  // ── Шаблон для помощника ──
+  aiTemplate() {
+    const text = aiTemplateFor(state.date);
+    return h('div.wstack',
+      h('div.whint', {
+        text: 'Заполните по этому образцу и отдайте помощнику — он разберёт день целиком: '
+          + 'расписание, питание, задачи, привычки и заметки. Заголовки нужны, порядок строк — нет. '
+          + 'Метки в скобках необязательны: [работа] [еда] [спорт] [отдых] красят время, '
+          + '[будильник] ставит звонок, [напоминание] делает точку без длительности.',
+      }),
+      h('textarea.wtextarea.wtpl-text', { name: 'aiTemplate', value: text, readonly: true }),
+      h('div.wrow-end',
+        h('button.wbtn-quiet', {
+          type: 'button', text: 'Скопировать',
+          onclick: async () => {
+            try {
+              await navigator.clipboard.writeText(text);
+              sheetNotice('Шаблон скопирован');
+            } catch {
+              // без разрешения на буфер — выделяем, дальше человек сам
+              const field = $('textarea[name="aiTemplate"]');
+              field?.select();
+              sheetNotice('Выделил — скопируйте сами', true);
+            }
+          },
+        }),
+        h('button.wbtn-wide', {
+          type: 'button', text: 'Открыть помощника',
+          disabled: !store.ai.ready,
+          onclick: () => set({ modal: 'ai', aiStep: 'input', aiText: text }),
+        })));
+  },
+
   // ── Звук ──
   sound() {
     const forAlarm = state.soundKind !== 'Звук уведомлений';
@@ -5444,6 +5507,35 @@ const BODIES = {
 
     const groups = [];
     const wanted = manifest.filter(s => (forAlarm ? s.kind === 'alarm' : true));
+
+    /*
+     * «Случайный» — не файл, а режим, поэтому его нет в манифесте.
+     *
+     * Один и тот же сигнал за неделю становится фоном: человек выучивает
+     * первые полсекунды и выключает будильник, не просыпаясь. Здесь злые
+     * звуки идут вперемешку и подряд, каждое утро в новом порядке, а если
+     * включено мягкое начало — сначала рассвет, и только потом петух с
+     * сиреной. Прослушать можно тоже: берём случайный из тех же злых.
+     */
+    if (forAlarm) {
+      const злые = manifest.filter(x => x.kind === 'alarm' && x.mood === 'злой');
+      if (злые.length > 1) {
+        groups.push(h('div.wclock-cap', { text: 'вперемешку', style: { margin: '6px 0 2px' } }));
+        groups.push(soundRow('Случайный', 'злые подряд, каждый раз в новом порядке', {
+          icon: 'shuffle',
+          on: state[key] === 'Случайный',
+          playKey: 'random',
+          src: `/sounds/${злые[Math.floor(Math.random() * злые.length)].file}`,
+          pick: () => {
+            state[key] = 'Случайный';
+            render();
+            data.saveSettings({ sound: 'Случайный', soundFile: 'random' })
+              .then(() => native.pushAlarmConfig?.(store.settings))
+              .catch(fail);
+          },
+        }));
+      }
+    }
     for (const mood of ['мягкий', 'злой']) {
       const items = wanted.filter(s => s.mood === mood);
       if (!items.length) continue;
@@ -5902,7 +5994,63 @@ async function importFile(file, mode) {
 
 // ── Помощник ─────────────────────────────────────────────────
 
-const AI_TAG = { schedule: 'расписание', reminder: 'напоминание', task: 'дело' };
+/**
+ * Шаблон дня: то, что помощник разбирает без единого уточнения.
+ *
+ * Речь он понимает и так, но день целиком голосом не надиктуешь — а
+ * набирать свободным текстом каждый раз заново значит гадать, поймёт ли он
+ * «мясо 200–250 г» как состав обеда или как отдельное дело. Заголовки
+ * снимают догадки: под «Питанием» всё питание, под «Задачами» все задачи.
+ * Ровно этот же вид описан в правилах разбора на сервере.
+ *
+ * Даты внутри нет нарочно: она подставляется на день, открытый в
+ * приложении, — иначе шаблон устаревает на следующее утро.
+ */
+const AI_TEMPLATE = `День: {дата}
+
+Расписание:
+09:00–09:10 — Подъём, вода, туалет [будильник]
+09:10–09:30 — Душ, зубы, заправить кровать
+09:30–09:50 — Библия, 1–2 главы
+09:50–10:20 — Завтрак [еда]
+10:20–13:00 — Основной рабочий блок [работа]
+14:30–15:00 — Обед [еда]
+15:00–15:30 — Отдых [отдых]
+15:30–18:30 — Работа над проектами [работа]
+19:00–19:30 — Ужин [еда]
+21:30–21:45 — NewDay: план на следующий день [будильник]
+21:45–22:30 — Прогулка 40–45 минут [спорт]
+23:59 — Сон [напоминание]
+
+Питание:
+Завтрак 09:50–10:20 — 2–4 яйца; овсянка 50–70 г сухого; овощи 200–300 г; чай без сахара ~700 ккал
+Обед 14:30–15:00 — гречка/рис 70–80 г сухого; мясо 200–250 г; овощи 200–300 г ~800 ккал
+Ужин 19:00–19:30 — гречка/рис 60–80 г сухого; мясо 200–250 г; овощи 200–300 г ~750 ккал
+
+Задачи:
+- работа: разобрать почту
+- дом: купить хлеб и молоко
+
+Привычки:
+- Вода 8 стаканов, каждый день
+- Зарядка, по будням
+
+Заметки:
+- Купить билеты до конца недели`;
+
+/** Шаблон с подставленным днём — тем, который открыт сейчас. */
+const aiTemplateFor = date => AI_TEMPLATE.replace('{дата}', date);
+
+const AI_TAG = {
+  schedule: 'расписание', reminder: 'напоминание', task: 'дело',
+  meal: 'питание', habit: 'привычка', note: 'заметка',
+};
+/** Куда кладём приём пищи, если модель назвала слот своими словами. */
+const MEAL_SLOTS = ['breakfast', 'lunch', 'dinner', 'snack', 'other'];
+/** Виды блоков расписания — ими помощник красит время в дне. */
+const AI_BLOCKS = ['normal', 'work', 'meal', 'sport', 'rest'];
+/** Как часто повторяется привычка: маска дней недели, воскресенье — нулевой бит. */
+const HABIT_MASK = { daily: 127, weekdays: 62, weekend: 65 };
 
 /** Почему «Разобрать» пока нельзя нажать: занято, не подключён или пусто. */
 const aiNotReady = () => state.busy || !store.ai.ready || !state.aiText.trim();
@@ -5965,6 +6113,22 @@ async function aiSend(answer) {
   }
 }
 
+/**
+ * Заметка дня от помощника.
+ *
+ * Заметка на день одна, и запись поверх стёрла бы то, что человек написал
+ * сам. Поэтому дописываем в конец, отделив пустой строкой: своё остаётся
+ * на месте, новое видно снизу.
+ */
+async function appendDayNote(date, title, text) {
+  const свежее = [String(title ?? '').trim(), String(text ?? '').trim()]
+    .filter(Boolean).join('\n');
+  if (!свежее) return;
+  const day = await api.getDay(date);
+  const было = String(day.notes ?? '').trim();
+  await api.patchDay(date, { notes: было ? `${было}\n\n${свежее}` : свежее }, day.rev);
+}
+
 /** Записать выбранное. По запросу на пункт — их единицы, пакетного нет. */
 async function aiApply(items) {
   state.busy = true; render();
@@ -5973,7 +6137,34 @@ async function aiApply(items) {
     for (const it of items) {
       const date = /^\d{4}-\d{2}-\d{2}$/.test(it.date || '') ? it.date : state.date;
       const start = toMin(it.start);
-      if (it.kind === 'task' || (it.kind === 'reminder' && start === null)) {
+      if (it.kind === 'meal') {
+        /*
+         * Состав едет в заметку приёма пищи как есть, со всеми граммами:
+         * «мясо 200–250 г» — это и есть смысл записи, пересказывать его
+         * своими словами значит потерять то единственное, ради чего человек
+         * питание и записывает.
+         */
+        await data.createMeal(date, {
+          title: it.title || 'Приём пищи',
+          slot: MEAL_SLOTS.includes(it.slot) ? it.slot : 'other',
+          timeMin: start,
+          endMin: toMin(it.end),
+          note: String(it.details ?? '').slice(0, 1000),
+          calories: Number.isFinite(Number(it.kcal)) ? Number(it.kcal) : null,
+          remindBefore: start === null ? [] : [0],
+        });
+      } else if (it.kind === 'habit') {
+        await data.createHabit({
+          title: it.title,
+          emoji: '✅',
+          polarity: 'do',
+          scheduleMask: HABIT_MASK[it.days] ?? 127,
+          timesPerWeek: null,
+          mode: 'ongoing',
+        });
+      } else if (it.kind === 'note') {
+        await appendDayNote(date, it.title, it.details);
+      } else if (it.kind === 'task' || (it.kind === 'reminder' && start === null)) {
         await data.createTask(date, adapt.taskToServer({ title: it.title, cat: it.category === 'work' ? 'work' : 'home' }));
       } else {
         /*
@@ -5985,8 +6176,11 @@ async function aiApply(items) {
         await data.createRow(date, adapt.rowToServer({
           title: it.title, start: start ?? 0,
           end: it.kind === 'reminder' ? null : toMin(it.end),
-          kind: it.kind === 'reminder' ? 'reminder' : 'normal',
+          kind: it.kind === 'reminder'
+            ? 'reminder'
+            : (AI_BLOCKS.includes(it.block) ? it.block : 'normal'),
           alarm: it.alarm ?? 'notify', leads: ['at'],
+          note: String(it.details ?? ''),
         }));
       }
       ok += 1;

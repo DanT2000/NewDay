@@ -37,6 +37,12 @@ import androidx.core.app.NotificationManagerCompat
 class AlarmService : Service() {
 
     companion object {
+        /** Условное значение настройки: играть злые звуки вперемешку. */
+        const val RANDOM = "random"
+        /** Самые злые из набора — то, чем невозможно не проснуться. */
+        private val HARSH = listOf("rooster.ogg", "siren.ogg", "klaxon.ogg", "reveille.ogg", "alert.ogg")
+        /** Чем начинается тихая фаза, когда включено мягкое начало. */
+        private const val SOFT_FIRST = "dawn.ogg"
         const val ACTION_START = "ru.appswire.newday.ALARM_START"
         const val ACTION_STOP = "ru.appswire.newday.ALARM_STOP"
         const val ACTION_SNOOZE = "ru.appswire.newday.ALARM_SNOOZE"
@@ -105,6 +111,14 @@ class AlarmService : Service() {
     private var pauseHandler: Handler? = null
     private var soundPaused = false
     private var targetVolume = -1
+
+    /*
+     * Режим «случайный»: очередь злых звуков и признак тихой фазы.
+     * RANDOM — не имя файла, а условное значение настройки: такого файла в
+     * ассетах нет и быть не должно.
+     */
+    private val randomQueue = mutableListOf<String>()
+    private var randomSoft = false
     private var alarm: Alarm? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -302,10 +316,13 @@ class AlarmService : Service() {
         // либо в filesDir/sounds (свой, загруженный человеком). Любая ошибка
         // с файлом — и звоним системным: будильник с не тем звуком будит,
         // молчащий будильник — нет.
-        player = if (cfg.soundFile.isNotBlank()) {
-            openAssetPlayer(cfg.soundFile) ?: openCustomPlayer(cfg.soundFile) ?: openSystemPlayer()
-        } else {
-            openSystemPlayer()
+        randomSoft = cfg.effectiveGraceSec > 0
+        randomQueue.clear()
+        player = when {
+            cfg.soundFile == RANDOM -> openRandomPlayer() ?: openSystemPlayer()
+            cfg.soundFile.isNotBlank() ->
+                openAssetPlayer(cfg.soundFile) ?: openCustomPlayer(cfg.soundFile) ?: openSystemPlayer()
+            else -> openSystemPlayer()
         }
 
         startVolumeGuard(am)
@@ -324,6 +341,67 @@ class AlarmService : Service() {
         } else {
             goLoud(a, cfg, am)
         }
+    }
+
+    /**
+     * «Случайный» — не файл, а режим.
+     *
+     * Один и тот же сигнал за неделю становится фоном: человек выучивает
+     * первые полсекунды и просыпается ровно настолько, чтобы его выключить.
+     * Поэтому здесь набор самых злых звуков, вперемешку и подряд: кончился
+     * один — сразу следующий, порядок каждый раз новый.
+     *
+     * Если включено мягкое начало, первым идёт спокойный рассвет — ровно
+     * столько, сколько длится тихая фаза. Кто уже проснулся, выключит по
+     * рассвету; кто спит — получит петуха, сирену и клаксон по нарастающей.
+     */
+    private fun openRandomPlayer(): MediaPlayer? {
+        val file = if (randomSoft) SOFT_FIRST else nextHarsh()
+        val mp = MediaPlayer()
+        return try {
+            assets.openFd("public/sounds/$file").use { fd ->
+                mp.setDataSource(fd.fileDescriptor, fd.startOffset, fd.length)
+            }
+            mp.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ALARM)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build(),
+            )
+            // В этом режиме зацикливать нечего: кончился звук — берём следующий
+            mp.isLooping = randomSoft
+            mp.setOnCompletionListener { switchSound() }
+            mp.prepare()
+            mp.start()
+            Log.i("NewDayAlarm", "SOUND_RANDOM играет '" + file + "'")
+            mp
+        } catch (e: Exception) {
+            Log.e("NewDayAlarm", "Случайный звук '" + file + "' не открылся: " + e.message)
+            mp.release()
+            null
+        }
+    }
+
+    /** Следующий злой звук: очередь перетасовывается, когда кончилась. */
+    private fun nextHarsh(): String {
+        if (randomQueue.isEmpty()) randomQueue.addAll(HARSH.shuffled())
+        return randomQueue.removeAt(0)
+    }
+
+    /**
+     * Сменить звук на ходу. Громкость живёт на потоке будильника, а не на
+     * плеере, поэтому новый подхватывает ту же ступень нарастания.
+     */
+    private fun switchSound() {
+        if (currentAlarmId < 0 || soundPaused) return
+        val old = player
+        player = openRandomPlayer() ?: openSystemPlayer()
+        try {
+            old?.stop()
+        } catch (e: Exception) {
+            Log.d("NewDayAlarm", "Прежний звук уже остановлен")
+        }
+        old?.release()
     }
 
     /**
@@ -403,6 +481,11 @@ class AlarmService : Service() {
         if (currentAlarmId != a.id) return   // будильник уже выключили
         graceUntilMs = 0L
         Log.i("NewDayAlarm", "GRACE_END мягкое начало кончилось — будим по-настоящему")
+        // В случайном режиме рассвет доиграл своё: дальше злые, вперемешку
+        if (randomSoft) {
+            randomSoft = false
+            switchSound()
+        }
         val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         goLoud(a, cfg, am)
         startVibration(a, gentle = false)
