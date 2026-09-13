@@ -32,14 +32,6 @@ import { renderEmojiPicker } from '../emoji.js';
 import * as native from '../native.js';
 import * as diag from '../diag.js';
 
-/** Часовая сетка: 18 часов с 06:00, строка часа — 44 px. */
-const HOUR_H = 44;
-const FROM_MIN = 6 * 60;
-const HOURS = 18;
-const PX_PER_MIN = HOUR_H / 60;
-/** Шаг протягивания: четверть часа — то, чем люди мыслят расписание. */
-const SNAP = 15;
-
 const state = {
   theme: 'dark', color: 'violet', screen: 'today', scale: 1,
   date: '', view: 'week',
@@ -1478,24 +1470,120 @@ function phoneNav() {
 let dragging = null;
 
 /*
- * Минута в сетке по вертикали. Верх ограничен последней минутой суток, а не
- * их концом: 24:00 в сутках не существует, и протягивание до самого низа
- * давало 1440 — сервер такое время не принимает, и блок не создавался вовсе.
- */
-const snap = px => FROM_MIN
-  + Math.max(0, Math.min(HOURS * 60 - SNAP, Math.round((px / PX_PER_MIN) / SNAP) * SNAP));
-
-/**
- * Дорожки для пересечений.
+ * Ось времени сетки: минута → пиксель.
  *
- * Считаем по группам, а не по всему дню. Если в дне есть хотя бы одна пара
- * наложений, деление ширины на всё подряд сжимало бы и одинокие блоки — и
- * тогда «Подъём» на полчаса становится узкой полоской без названия. Здесь
- * группа — цепочка блоков, которые действительно задевают друг друга;
- * ширину делят только они.
+ * Час в сетке был ровно 44 пикселя, и это ломалось там, где день плотный.
+ * Десятиминутное дело получало семь пикселей — полоску без названия; три
+ * дела подряд в одном часу наезжали друг на друга, потому что минимальная
+ * высота блока (20 px) больше, чем место, которое ему отведено. А «Сон» в
+ * 23:59 вылезал за низ колонки и обрезался: его просто не было видно.
+ *
+ * Теперь ось кусочно-линейная. Обычный час — те же 44 пикселя, но в местах,
+ * где дела идут плотно, ось растягивается ровно настолько, чтобы каждому
+ * блоку хватило высоты на строку названия. Так делают календари, к которым
+ * человек привык: час с четырьмя делами выше, чем пустой час, и это
+ * читается как «здесь плотно», а не как поломка.
+ *
+ * Ось общая на все видимые дни: в неделе колонки обязаны идти вровень,
+ * иначе 10:00 в понедельник и 10:00 во вторник окажутся на разной высоте.
  */
+
+/** Высота обычного часа. */
+const HOUR_H = 44;
+/** Ниже этого в блоке не поместится строка названия. */
+const MIN_BLOCK_H = 26;
+/** Начало и длина сетки по умолчанию: с 06:00 до полуночи. */
+const FROM_MIN = 6 * 60;
+const HOURS = 18;
+const PX_PER_MIN = HOUR_H / 60;
+const SNAP = 15;
+
 /** Сколько места занимает момент в сетке: своей длительности у него нет. */
 const MOMENT_MIN = 20;
+
+function timeAxis(daysItems) {
+  /*
+   * Границы сетки. Обычно с 06:00 до 24:00, но если в дне есть дела раньше
+   * или позже — сетка расширяется до них. Раньше всё, что начиналось до
+   * шести утра, молча выбрасывалось: данные есть, а в расписании их нет.
+   */
+  let from = FROM_MIN;
+  let to = FROM_MIN + HOURS * 60;
+  for (const items of daysItems) {
+    for (const r of items) {
+      from = Math.min(from, Math.floor(r.start / 60) * 60);
+      to = Math.max(to, Math.min(1440, Math.ceil(r.end / 60) * 60));
+    }
+  }
+
+  // Узлы оси: каждый час плюс начала и концы всех блоков
+  const marks = new Set();
+  for (let m = from; m <= to; m += 60) marks.add(m);
+  marks.add(to);
+  for (const items of daysItems) {
+    for (const r of items) {
+      if (r.start > from && r.start < to) marks.add(r.start);
+      if (r.end > from && r.end < to) marks.add(r.end);
+    }
+  }
+  const points = [...marks].sort((a, b) => a - b);
+
+  const seg = [];
+  for (let i = 0; i + 1 < points.length; i++) {
+    seg.push({ a: points[i], b: points[i + 1], h: (points[i + 1] - points[i]) * PX_PER_MIN });
+  }
+
+  /*
+   * Растягиваем под короткие блоки — от самых коротких к длинным. Короткому
+   * нужно больше всех, и если начать с длинных, его отрезок успеет вырасти
+   * за чужой счёт и потребует меньше, чем на самом деле нужно.
+   */
+  const all = daysItems.flat().slice().sort((x, y) => (x.end - x.start) - (y.end - y.start));
+  for (const r of all) {
+    const mine = [];
+    let have = 0;
+    for (let i = 0; i < seg.length; i++) {
+      if (seg[i].a >= r.start && seg[i].b <= r.end) { mine.push(i); have += seg[i].h; }
+    }
+    if (!mine.length || have >= MIN_BLOCK_H) continue;
+    const k = MIN_BLOCK_H / have;
+    for (const i of mine) seg[i].h *= k;
+  }
+
+  // Пределы отрезков по вертикали — по ним считается и минута, и пиксель
+  let acc = 0;
+  for (const s of seg) { s.top = acc; acc += s.h; }
+  const total = acc;
+
+  /** Минута → пиксель от верха сетки. */
+  const y = min => {
+    const m = Math.max(from, Math.min(to, min));
+    for (const s of seg) {
+      if (m >= s.a && m <= s.b) return s.top + ((m - s.a) / (s.b - s.a)) * s.h;
+    }
+    return m <= from ? 0 : total;
+  };
+
+  /** Пиксель → минута, с округлением до четверти часа: обратный ход для протягивания. */
+  const minAt = px => {
+    const p = Math.max(0, Math.min(total, px));
+    for (const s of seg) {
+      if (p >= s.top && p <= s.top + s.h) {
+        const min = s.a + ((p - s.top) / s.h) * (s.b - s.a);
+        return Math.max(from, Math.min(to - SNAP, Math.round(min / SNAP) * SNAP));
+      }
+    }
+    return from;
+  };
+
+  /** Часы сетки с их настоящей высотой — по ним рисуются подписи и линии. */
+  const hours = [];
+  for (let m = from; m < to; m += 60) {
+    hours.push({ min: m, top: y(m), h: y(Math.min(to, m + 60)) - y(m) });
+  }
+
+  return { from, to, total, y, minAt, hours };
+}
 
 function lanesFor(rows) {
   /*
@@ -1508,9 +1596,8 @@ function lanesFor(rows) {
    * честно и никого не перекрывает.
    */
   const items = rows
-    .filter(r => r.start >= FROM_MIN)
     .map(r => (r.end === null
-      ? { ...r, end: Math.min(1439, r.start + MOMENT_MIN), moment: true }
+      ? { ...r, end: Math.min(1440, r.start + MOMENT_MIN), moment: true }
       : r))
     .sort((a, b) => a.start - b.start || b.end - a.end);
 
@@ -1558,11 +1645,37 @@ function rowsForDate(date) {
   return rows.map(r => adapt.scheduleRow(r, { isToday: date === todayKey(), minutes }));
 }
 
-function planColumn(index, dateKey) {
+/** Задачи нужного дня — тем же способом, что и строки расписания. */
+function tasksForDate(date) {
+  const day = (store.range?.days ?? []).find(d => d.date === date);
+  if (day?.tasks) return day.tasks;
+  if (store.day?.date === date) {
+    const t = store.day.tasks ?? {};
+    return [...(t.work ?? []), ...(t.home ?? [])];
+  }
+  return [];
+}
+
+/**
+ * Колонка дня. `axis` общая на все колонки — иначе один и тот же час
+ * оказался бы на разной высоте в соседних днях.
+ */
+function planColumn(dateKey, axis) {
   const { items, place } = lanesFor(rowsForDate(dateKey));
   const isSel = dateKey === state.date;
 
-  const col = h('div.wplan-col', { class: isSel ? 'on' : '' });
+  const col = h('div.wplan-col', {
+    class: isSel ? 'on' : '',
+    style: { height: `${Math.round(axis.total)}px` },
+  });
+
+  /*
+   * Линии часов рисуем узлами, а не фоном-градиентом: часы теперь разной
+   * высоты, и повторяющийся узор их не повторит.
+   */
+  for (const hour of axis.hours) {
+    add(col, h('div.wplan-line', { style: { top: `${Math.round(hour.top)}px` } }));
+  }
 
   /*
    * Протягивание не перерисовывает экран. Меняется только пунктирный след,
@@ -1571,15 +1684,15 @@ function planColumn(index, dateKey) {
    */
   const paint = (sel, from, to) => {
     const a = Math.min(from, to), b = Math.max(from, to);
-    sel.style.top = `${(a - FROM_MIN) * PX_PER_MIN}px`;
-    sel.style.height = `${Math.max(18, (b - a) * PX_PER_MIN)}px`;
+    sel.style.top = `${axis.y(a)}px`;
+    sel.style.height = `${Math.max(18, axis.y(b) - axis.y(a))}px`;
     sel.textContent = `${hhmm(a)}–${hhmm(b)}`;
   };
 
   col.addEventListener('mousedown', e => {
     if (e.button !== 0) return;
     e.preventDefault();
-    const from = snap(e.clientY - col.getBoundingClientRect().top);
+    const from = axis.minAt(e.clientY - col.getBoundingClientRect().top);
     const sel = h('div.wsel');
     add(col, sel);
     dragging = { col, sel, from, to: from + SNAP, date: dateKey };
@@ -1588,7 +1701,7 @@ function planColumn(index, dateKey) {
 
   col.addEventListener('mousemove', e => {
     if (dragging?.col !== col) return;
-    const to = snap(e.clientY - col.getBoundingClientRect().top);
+    const to = axis.minAt(e.clientY - col.getBoundingClientRect().top);
     if (to === dragging.to) return;
     dragging.to = to;
     paint(dragging.sel, dragging.from, to);
@@ -1596,15 +1709,17 @@ function planColumn(index, dateKey) {
 
   for (const r of items) {
     const { lane: i, of } = place[r.id];
-    const height = Math.max(20, (r.end - r.start) * PX_PER_MIN - 4);
+    const top = axis.y(r.start);
+    const height = Math.max(MIN_BLOCK_H, axis.y(r.end) - top - 3);
     const compact = height < 48;
     const step = 100 / of;
     const block = h('button.wblock', {
       type: 'button',
-      class: [compact ? 'compact' : '', i > 0 ? 'inner' : '', r.moment ? 'moment' : ''].filter(Boolean).join(' '),
+      class: [compact ? 'compact' : '', i > 0 ? 'inner' : '', r.moment ? 'moment' : '',
+        r.past ? 'past' : ''].filter(Boolean).join(' '),
       style: {
-        top: `${(r.start - FROM_MIN) * PX_PER_MIN}px`,
-        height: `${height}px`,
+        top: `${Math.round(top)}px`,
+        height: `${Math.round(height)}px`,
         zIndex: String(1 + i),
         ...(r.color ? { '--pin': PALETTE[r.color][dark() ? 'dark' : 'light'] } : {}),
         ...(of > 1
@@ -1670,12 +1785,45 @@ function planColumn(index, dateKey) {
 
   if (dateKey === todayKey()) {
     const minutes = minutesNow();
-    if (minutes >= FROM_MIN && minutes <= FROM_MIN + HOURS * 60) {
-      add(col, h('div.wnowline', { style: { top: `${(minutes - FROM_MIN) * PX_PER_MIN}px` } }, h('i')));
+    if (minutes >= axis.from && minutes <= axis.to) {
+      add(col, h('div.wnowline', { style: { top: `${Math.round(axis.y(minutes))}px` } }, h('i')));
     }
   }
 
   return col;
+}
+
+/**
+ * Задачи дня под колонкой расписания.
+ *
+ * Расписание отвечает на вопрос «когда», задачи — «что вообще нужно
+ * сделать», и второе от первого не зависит. В сетке их не было вовсе:
+ * человек видел неделю времени и не видел ни одного дела, которое к
+ * времени не привязано.
+ */
+function planTasks(dateKey) {
+  const rows = tasksForDate(dateKey);
+  // не `box`: так зовётся общий помощник-галочка, и локальная переменная
+  // закрыла бы его собой
+  const wrap = h('div.wptasks', { class: dateKey === state.date ? 'on' : '' });
+  if (!rows.length) {
+    add(wrap, h('button.wptasks-add', {
+      type: 'button', text: '+ задача',
+      onclick: () => set({ modal: 'task', taskId: 'new', taskCat: 'work', taskTitle: '', date: dateKey }),
+    }));
+    return wrap;
+  }
+  add(wrap, ...rows.map(t => {
+    const row = h('button.wptask', {
+      type: 'button',
+      class: t.done ? 'done' : '',
+      title: t.text,
+      onclick: () => busy(api.tasks.update(dateKey, t.id, { done: !t.done })),
+    });
+    add(row, box(Boolean(t.done)), h('span', { text: t.text }));
+    return row;
+  }));
+  return wrap;
 }
 
 function planScreen() {
@@ -1696,36 +1844,52 @@ function planScreen() {
       },
     })));
 
-  const addBtn = h('button.wbtn', { type: 'button', onclick: () => newRow() });
-  add(addBtn, ico('plus', '16px'), h('span', { text: 'Блок' }));
+  /*
+   * Кнопка ростом с переключатель рядом. Была на 52 пикселя против его 38 —
+   * две соседние кнопки разной высоты выглядят как случайность вёрстки.
+   */
+  const addBtn = h('button.wbtn.wbtn-seg', { type: 'button', onclick: () => newRow() });
+  add(addBtn, ico('plus', '15px'), h('span', { text: 'Блок' }));
 
   const head = h('div.whead',
     h('div.whead-text',
       h('div.whead-title', { text: 'Расписание' }),
       h('div.whead-hint', {
         text: state.view === 'month'
-          ? 'Клик по дню открывает его целиком. Числами показано, сколько дел запланировано.'
-          : 'Потяните по сетке, чтобы создать блок — отпустите, и откроется редактор. Клик по блоку — редактирование или удаление.',
+          ? 'Клик по дню открывает его целиком. Сверху в клетке — задачи, под ними расписание.'
+          : 'Потяните по сетке, чтобы создать блок. Колесо мыши с Shift листает дни, клик по блоку — правка.',
       })),
     seg, addBtn);
 
   if (state.view === 'month') return h('div', head, monthGrid());
+
+  const keys = [];
+  for (let i = 0; i < 7; i++) {
+    const dt = new Date(mon); dt.setDate(mon.getDate() + i);
+    const key = keyOf(dt);
+    if (single && key !== state.date) continue;
+    keys.push({ key, dt, i });
+  }
+
+  // Ось одна на все колонки: иначе 10:00 в разных днях окажется на разной высоте
+  const axis = timeAxis(keys.map(({ key }) => lanesFor(rowsForDate(key)).items));
 
   const cols = single ? 1 : 7;
   const gridCols = `58px repeat(${cols}, minmax(0, 1fr))`;
 
   const headRow = h('div.wplan-head', { style: { gridTemplateColumns: gridCols } }, h('span'));
   const grid = h('div.wplan-grid', { style: { gridTemplateColumns: gridCols } });
+  const tasksRow = h('div.wplan-tasks', { style: { gridTemplateColumns: gridCols } },
+    h('span.wptasks-cap', { text: 'задачи' }));
 
   const hours = h('div.wplan-hours');
-  add(hours, ...Array.from({ length: HOURS }, (_, i) => h('div.wplan-hour', { text: `${pad2(i + 6)}:00` })));
+  add(hours, ...axis.hours.map(hour => h('div.wplan-hour', {
+    text: hhmm(hour.min),
+    style: { height: `${Math.round(hour.h)}px` },
+  })));
   add(grid, hours);
 
-  for (let i = 0; i < 7; i++) {
-    const dt = new Date(mon); dt.setDate(mon.getDate() + i);
-    const key = keyOf(dt);
-    if (single && key !== state.date) continue;
-
+  for (const { key, dt, i } of keys) {
     const dayBtn = h('button.wplan-day', {
       type: 'button', class: key === state.date ? 'on' : '',
       // через go: иначе открытый день менялся, а содержимое оставалось от прежнего
@@ -1745,10 +1909,11 @@ function planScreen() {
         h('span.wplan-day-num', { text: pad2(dt.getDate()) }));
     }
     add(headRow, dayBtn);
-    add(grid, planColumn(i, key));
+    add(grid, planColumn(key, axis));
+    add(tasksRow, planTasks(key));
   }
 
-  return h('div', head, headRow, grid);
+  return h('div', head, headRow, grid, tasksRow);
 }
 
 /**
@@ -1773,6 +1938,8 @@ function monthCells(y, m) {
 
 /** Сколько строк дня влезает в клетку месяца, не сминая её. */
 const MONTH_FIT = 3;
+/** Столько задач влезает в клетку месяца до «ещё N». */
+const MONTH_TASKS = 3;
 
 function monthGrid() {
   const cur = dayOf();
@@ -1801,6 +1968,27 @@ function monthGrid() {
     });
 
     const items = h('div.wcell-items');
+
+    /*
+     * Задачи впереди расписания.
+     *
+     * Расписание — это когда, задача — что вообще нужно сделать в этот день.
+     * На листе месяца второе важнее: человек смотрит месяц, чтобы понять,
+     * где у него что назначено, а не чтобы прочитать, во сколько завтрак.
+     */
+    const dayTasks = tasksForDate(key);
+    add(items, ...dayTasks.slice(0, MONTH_TASKS).map(t => {
+      const line = h('button.wcell-task', {
+        type: 'button', class: t.done ? 'done' : '', title: t.text,
+        onclick: e => {
+          e.stopPropagation();
+          busy(api.tasks.update(key, t.id, { done: !t.done }));
+        },
+      });
+      add(line, box(Boolean(t.done)), h('span.wcell-name', { text: t.text }));
+      return line;
+    }));
+
     add(items, ...rows.slice(0, MONTH_FIT).map(r => {
       const line = h('button.wcell-item', {
         type: 'button',
@@ -1816,7 +2004,8 @@ function monthGrid() {
     }));
 
     // Сколько не влезло — сказано прямо: иначе человек считает, что это всё
-    const rest = rows.length - MONTH_FIT;
+    const rest = Math.max(0, rows.length - MONTH_FIT)
+      + Math.max(0, dayTasks.length - MONTH_TASKS);
     if (rest > 0) {
       add(items, h('button.wcell-more', {
         type: 'button',
@@ -1832,7 +2021,12 @@ function monthGrid() {
           onclick: e => { e.stopPropagation(); if (!c.out) { set({ date: key, view: 'day' }); reload(); } },
         }),
         h('span', { style: { flex: '1' } }),
-        rows.length ? h('span.wcell-count', { text: String(rows.length) }) : null),
+        dayTasks.length
+          ? h('span.wcell-count.tasks', { text: String(dayTasks.length), title: 'задач в этот день' })
+          : null,
+        rows.length
+          ? h('span.wcell-count', { text: String(rows.length), title: 'строк расписания' })
+          : null),
       items);
     return cell;
   }));
@@ -6239,6 +6433,70 @@ const askedDate = () => /^#(\d{4}-\d{2}-\d{2})$/.exec(location.hash)?.[1];
 addEventListener('hashchange', () => {
   const asked = askedDate();
   if (asked && asked !== state.date) go(asked);
+});
+
+/*
+ * Листание дней: смахнуть пальцем, прокрутить колесом с Shift, нажать
+ * стрелку на клавиатуре.
+ *
+ * Порог нарочно большой — 90 пикселей и вдвое больше по горизонтали, чем по
+ * вертикали. Лист дня прокручивают пальцем вверх-вниз постоянно, и день,
+ * который уезжает от случайного косого движения, хуже, чем отсутствие жеста
+ * вовсе: человек теряет место и не понимает, почему.
+ *
+ * Жест слушаем на окне, а не на экране: разметка пересобирается при каждой
+ * перерисовке, и обработчик на узле не пережил бы первое же обновление.
+ */
+const SWIPE_MIN = 90;
+const SWIPE_SLOPE = 2;
+let touchFrom = null;
+
+addEventListener('touchstart', e => {
+  touchFrom = (e.touches.length === 1 && !state.modal)
+    ? { x: e.touches[0].clientX, y: e.touches[0].clientY }
+    : null;
+}, { passive: true });
+
+addEventListener('touchend', e => {
+  const from = touchFrom;
+  touchFrom = null;
+  if (!from || state.modal) return;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - from.x;
+  const dy = t.clientY - from.y;
+  if (Math.abs(dx) < SWIPE_MIN || Math.abs(dx) < Math.abs(dy) * SWIPE_SLOPE) return;
+  // влево — вперёд: лист уезжает за пальцем, как страница
+  shiftPeriod(dx < 0 ? 1 : -1);
+}, { passive: true });
+
+/*
+ * Колесо листает только с Shift либо по-настоящему горизонтальным движением
+ * тачпада: обычная прокрутка колесом — это чтение длинного дня, и менять
+ * под ней день было бы издевательством.
+ */
+let wheelAt = 0;
+addEventListener('wheel', e => {
+  if (state.modal) return;
+  const sideways = Math.abs(e.deltaX) > Math.abs(e.deltaY) * SWIPE_SLOPE && Math.abs(e.deltaX) > 30;
+  if (!e.shiftKey && !sideways) return;
+  const delta = sideways ? e.deltaX : e.deltaY;
+  if (Math.abs(delta) < 10) return;
+  // одно движение — один день: без этого инерция тачпада пролистывает неделю
+  const now = Date.now();
+  if (now - wheelAt < 350) return;
+  wheelAt = now;
+  shiftPeriod(delta > 0 ? 1 : -1);
+}, { passive: true });
+
+/* Стрелки на клавиатуре — то же самое, когда руки на клавиатуре. */
+addEventListener('keydown', e => {
+  if (state.modal || e.altKey || e.ctrlKey || e.metaKey) return;
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  const t = e.target;
+  // в поле ввода стрелки двигают курсор, а не день
+  if (t && (t.isContentEditable || /^(input|textarea|select)$/i.test(t.tagName))) return;
+  e.preventDefault();
+  shiftPeriod(e.key === 'ArrowRight' ? 1 : -1);
 });
 
 // Escape закрывает шторку — привычнее, чем искать крестик

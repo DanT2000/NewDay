@@ -43,7 +43,7 @@ test('счётчики считают строки и выполненное', a
     await api(s.url, s.cookie, 'PATCH', `/api/v1/days/${d}/schedule/${one.id}`, { done: true });
 
     const r = await getJson(s.url, s.cookie, `/api/v1/days/range?from=${d}&to=${d}`);
-    assert.deepStrictEqual(r.days[0].counts, { schedule: 2, done: 1 });
+    assert.deepStrictEqual(r.days[0].counts, { schedule: 2, done: 1, tasks: 0, tasksDone: 0 });
   } finally { await s.close(); }
 });
 
@@ -65,7 +65,12 @@ test('в период попадают и повторяющиеся строк�
   } finally { await s.close(); }
 });
 
-test('период отдаёт только расписание и счётчики', async () => {
+/*
+ * Задачи едут вместе с расписанием: в неделе и месяце они показываются под
+ * днями, и без них сетка отвечала бы только на вопрос «когда», умалчивая
+ * о том, что вообще нужно сделать. Еда — по-прежнему нет: она в самом дне.
+ */
+test('период отдаёт расписание, задачи и счётчики — но не еду', async () => {
   const s = await loggedIn();
   try {
     const d = today();
@@ -73,9 +78,10 @@ test('период отдаёт только расписание и счётч�
     await api(s.url, s.cookie, 'POST', `/api/v1/days/${d}/meals`, { title: 'Обед', calories: 640 });
 
     const r = await getJson(s.url, s.cookie, `/api/v1/days/range?from=${d}&to=${d}`);
-    assert.deepStrictEqual(Object.keys(r.days[0]).sort(), ['counts', 'date', 'schedule']);
-    // Задачи и еда в сетке не нужны — за ними идут в сам день
-    assert.ok(!JSON.stringify(r).includes('Закрыть отчёт'));
+    assert.deepStrictEqual(Object.keys(r.days[0]).sort(), ['counts', 'date', 'schedule', 'tasks']);
+    assert.strictEqual(r.days[0].tasks[0].text, 'Закрыть отчёт за июль');
+    assert.deepStrictEqual(r.days[0].counts, { schedule: 0, done: 0, tasks: 1, tasksDone: 0 });
+    assert.ok(!JSON.stringify(r).includes('640'), 'еда в сетку не едет');
   } finally { await s.close(); }
 });
 

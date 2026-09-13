@@ -233,9 +233,21 @@ const geom = await js(`(() => {
  * 18:00–19:00, 19:30–20:30 — свободно ровно здесь. Прошлые прогоны целились
  * в 16:00 и в 18:00 и попадали в блок: нажатие по блоку открывает его
  * правку, и проверка молча проверяла не то.
+ *
+ * Пиксели берём у самой сетки, а не считаем «одиннадцать часов по сорок
+ * четыре». Час теперь бывает выше обычного — там, где дел много, ось
+ * растягивается, — и арифметика по постоянной высоте целилась в половину
+ * четвёртого вместо пяти вечера.
  */
-const y1 = geom.top + 11 * 44;
-const y2 = geom.top + 11.75 * 44;
+const часовые = await js(`(() => {
+  const el = [...document.querySelectorAll('.wplan-hour')].find(e => e.textContent === '17:00');
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return { top: Math.round(r.top), h: Math.round(r.height) };
+})()`);
+if (!часовые) throw new Error('в сетке нет часа 17:00 — проба протягивания не может прицелиться');
+const y1 = часовые.top;
+const y2 = часовые.top + Math.round(часовые.h * 0.75);
 const mouse = (type, y) => rpc(ws, 'Input.dispatchMouseEvent', {
   type, x: geom.x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1,
 });

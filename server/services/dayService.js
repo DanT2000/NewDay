@@ -82,12 +82,25 @@ function dayService(db, opts = {}) {
     for (let i = 0; i < total; i++) {
       series.materializeDay(user.id, cur, { today });
       const rows = schedule.list(user.id, cur);
+      /*
+       * Задачи едут вместе с расписанием.
+       *
+       * Расписание — это когда, а задачи — что вообще нужно сделать; на
+       * неделе и в месяце второе важнее первого. Раньше выборка за период
+       * отдавала только строки времени, и сетка физически не могла показать
+       * задачи — за ними пришлось бы ходить в каждый день отдельным запросом,
+       * то есть сорок два запроса на лист месяца.
+       */
+      const dayTasks = tasks.list(user.id, cur);
       days.push({
         date: cur,
         schedule: rows,
+        tasks: dayTasks,
         counts: {
           schedule: rows.length,
           done: rows.filter(r => r.done === 1).length,
+          tasks: dayTasks.length,
+          tasksDone: dayTasks.filter(t => t.done === 1).length,
         },
       });
       if (i + 1 < total) cur = addDays(cur, 1);
