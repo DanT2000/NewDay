@@ -19,6 +19,7 @@
 
 const { appSettingsRepo } = require('../repos/appSettings');
 const { aiUsageRepo } = require('../repos/aiUsage');
+const { looksLikeTemplate, parseDayTemplate } = require('../lib/dayTemplate');
 const { createAiFetch } = require('../lib/aiFetch');
 
 const CHAT_TIMEOUT_MS = 90_000;
@@ -208,6 +209,23 @@ function aiService(db, { env = process.env, fetchImpl, now = () => Date.now() } 
    * заново уезжает тот же разговор плюс одна короткая реплика.
    */
   async function parse({ userId, text, date, timezone, history = [] }) {
+    /*
+     * Заполненный шаблон разбираем кодом, а не моделью.
+     *
+     * Формат известен заранее — его же приложение и предлагает, — а модель
+     * на длинном размеченном тексте ведёт себя хуже, а не лучше: на живом
+     * сервере gpt-oss съел разделы «Питание», «Привычки» и «Заметки»
+     * целиком, оставив от двенадцати пунктов восемь. Там, где гадать не
+     * нужно, гадание — худший из способов. Заодно шаблон работает мгновенно,
+     * бесплатно и тогда, когда провайдер лежит.
+     */
+    if (looksLikeTemplate(text)) {
+      const { items } = parseDayTemplate(text, { date });
+      if (items.length) {
+        return { ok: true, ms: 0, model: 'шаблон', cost: 0, items, question: null, options: [] };
+      }
+    }
+
     const r = await chat({
       userId, kind: 'parse',
       smart: text.length > 1500,

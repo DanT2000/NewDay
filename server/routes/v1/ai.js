@@ -13,6 +13,7 @@
 const express = require('express');
 const busboy = require('busboy');
 const { wrap, ApiError, badRequest } = require('../../lib/errors');
+const { looksLikeTemplate } = require('../../lib/dayTemplate');
 
 /** Диктовка длиннее двадцати минут — это уже не планирование дня. */
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
@@ -32,7 +33,12 @@ module.exports = function aiRouter({ ai, access }) {
     if (!text) throw badRequest('Нет текста');
     if (text.length > MAX_TEXT) throw badRequest('Слишком длинный текст');
     access.gate(req.user, res);
-    ready(ai);
+    /*
+     * Шаблон разбирается без модели, поэтому и подключённый помощник ему не
+     * нужен: требовать его значило бы не дать человеку записать свой день,
+     * когда провайдер молчит.
+     */
+    if (!looksLikeTemplate(text)) ready(ai);
 
     const r = await ai.parse({
       userId: req.user.id,
