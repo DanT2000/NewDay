@@ -12,6 +12,7 @@ const MIGRATIONS = [
   require('./011-block-and-ip'),
   require('./012-integrations'),
   require('./013-reports'),
+  require('./014-sport-reps-range'),
 ];
 
 function currentVersion(db) {

@@ -138,17 +138,36 @@ function scheduleLine(raw, date) {
 
 function mealLine(raw, date) {
   const slot = SLOTS.find(s => s.re.test(raw));
-  if (!slot) return null;
+  if (!slot) {
+    /*
+     * Строка в «Питании», но не приём пищи: «Итого: примерно 1700–2150 ккал
+     * без большого количества масла». Это план на день целиком — он едет в
+     * план питания дня, а не пропадает молча.
+     */
+    return { kind: 'foodPlan', details: raw.trim(), date };
+  }
   const title = raw.match(/^[^\s\d–—−-]+/)?.[0] ?? 'Приём пищи';
 
   const times = new RegExp(`${TIME}(?:\\s*${DASH}\\s*${TIME})?`).exec(raw);
-  const kcal = /(\d{3,5})\s*ккал/i.exec(raw);
-  // Состав — всё после длинного тире; если тире нет, всё после времени
+  /*
+   * Калории бывают вилкой: «~450–600 ккал». Храним верх — это потолок, в
+   * который человек укладывается, и сумма верхов сходится с его же «итого».
+   * Раньше брали только число перед «ккал», а «~450–» оставалось висеть в
+   * составе обеда.
+   */
+  const kcalRe = new RegExp(`[~≈]?\\s*(\\d{3,5})(?:\\s*${DASH}\\s*(\\d{3,5}))?\\s*ккал\\.?`, 'i');
+  const kcal = kcalRe.exec(raw);
+
+  // Состав — всё после первого длинного тире; если тире нет, всё после времени
   let details = '';
   const dash = new RegExp(`\\s${DASH}\\s`).exec(raw);
   if (dash) details = raw.slice(dash.index + dash[0].length);
   else if (times) details = raw.slice(times.index + times[0].length);
-  details = details.replace(/[~≈]?\s*\d{3,5}\s*ккал\.?/i, '').trim().replace(/[,;]\s*$/, '');
+  details = details.replace(kcalRe, '').trim()
+    // тире, которым калории отделялись от состава, осталось без пары
+    .replace(new RegExp(`(?:\\s*${DASH})+\\s*$`), '')
+    .replace(/[,;]\s*$/, '')
+    .trim();
 
   return {
     kind: 'meal',
@@ -157,37 +176,68 @@ function mealLine(raw, date) {
     start: times ? hhmm(times[1], times[2]) : null,
     end: times && times[3] !== undefined ? hhmm(times[3], times[4]) : null,
     details,
-    kcal: kcal ? Number(kcal[1]) : null,
+    kcal: kcal ? Number(kcal[2] ?? kcal[1]) : null,
     date,
   };
 }
 
 /**
- * Упражнение: «Жим лёжа 4×8 60 кг».
+ * Упражнение: «Жим лёжа 4×8 60 кг», «Отжимания от стены — 3×8–12 — свой вес».
  *
  * Подходы, повторы и вес — три числа, и человек пишет их так, как привык:
- * «4х8», «4*8», «3 по 12». Вес с килограммами, а иногда без. Всё, что
- * числами не оказалось, — название упражнения.
+ * «4х8», «4*8», «3 по 12», вилкой «3×8–12». Вес с килограммами или словами
+ * «свой вес». Поля часто разделены длинным тире — тогда название то, что
+ * стоит до первого тире.
+ *
+ * Строка без подходов и веса, но с точкой или длинная — это не упражнение, а
+ * примечание к тренировке: «Отдых между подходами — 60–90 секунд. Если колени
+ * начинают болеть — вставания прекращаешь». Раньше она становилась пятым
+ * «упражнением» с названием в полтора предложения. Теперь уходит в заметку
+ * дня — сказанное не теряется, но и в список подходов не лезет.
  */
 function sportLine(raw, date) {
-  const nxm = /(\d{1,3})\s*(?:[x×хХ*]|по)\s*(\d{1,3})/.exec(raw);
+  const nxm = new RegExp(`(\\d{1,3})\\s*(?:[x×хХ*]|по)\\s*(\\d{1,3})(?:\\s*${DASH}\\s*(\\d{1,3}))?`).exec(raw);
   const kg = /(\d{1,3}(?:[.,]\d{1,2})?)\s*кг/i.exec(raw);
-  let title = raw;
-  if (nxm) title = title.replace(nxm[0], ' ');
-  if (kg) title = title.replace(kg[0], ' ');
-  /*
-   * Единица без своего числа — мусор: от «Планка 3 по 60 сек» после выемки
-   * чисел оставалось «Планка сек». Срезаем только если числа действительно
-   * нашлись: у «Бег 30 мин» ничего не выняли, и «мин» там при деле.
-   */
-  if (nxm || kg) title = title.replace(/\s*(?:сек|секунд|мин|минут|раз|повт)[а-яё]*\.?\s*$/i, '');
-  title = title.replace(/\s{2,}/g, ' ').replace(/[,;–—-]\s*$/, '').trim();
+  const bodyweight = /свой\s+вес|собственн[а-яё]*\s+вес|без\s+веса/i.exec(raw);
+
+  if (!nxm && !kg && !bodyweight) {
+    const words = raw.trim().split(/\s+/).length;
+    if (/[.!?]/.test(raw) || words > 6) {
+      return { kind: 'note', title: 'К тренировке', details: raw.trim(), date };
+    }
+  }
+
+  // «Название — 3×8–12 — вес»: название до первого тире, если в нём нет цифр подходов
+  const sep = new RegExp(`\\s${DASH}\\s`).exec(raw);
+  let title;
+  if (sep && (nxm || kg || bodyweight) && !/\d\s*[x×хХ*]\s*\d/.test(raw.slice(0, sep.index))) {
+    title = raw.slice(0, sep.index);
+  } else {
+    title = raw;
+    if (nxm) title = title.replace(nxm[0], ' ');
+    if (kg) title = title.replace(kg[0], ' ');
+    if (bodyweight) title = title.replace(bodyweight[0], ' ');
+    /*
+     * Единица без своего числа — мусор: от «Планка 3 по 60 сек» после выемки
+     * чисел оставалось «Планка сек». Срезаем только если числа действительно
+     * нашлись: у «Бег 30 мин» ничего не выняли, и «мин» там при деле.
+     */
+    if (nxm || kg) title = title.replace(/\s*(?:сек|секунд|мин|минут|раз|повт)[а-яё]*\.?\s*$/i, '');
+  }
+  title = title.replace(/\s{2,}/g, ' ')
+    .replace(new RegExp(`(?:\\s*${DASH})+\\s*$`), '')
+    .replace(/[,;]\s*$/, '')
+    .trim();
   if (!title) return null;
+
+  const low = nxm ? Number(nxm[2]) : null;
+  const high = nxm && nxm[3] !== undefined ? Number(nxm[3]) : null;
   return {
     kind: 'sport',
     title,
     sets: nxm ? Number(nxm[1]) : null,
-    reps: nxm ? Number(nxm[2]) : null,
+    reps: low,
+    repsMax: high !== null && high > low ? high : null,
     weight: kg ? Number(kg[1].replace(',', '.')) : null,
     date,
   };
@@ -210,15 +260,26 @@ function habitLine(raw, date) {
   let title = raw;
   if (found) {
     /*
-     * Отрезаем хвост «, каждый день» вместе с запятой. Скобки вокруг
-     * образца обязательны: внутри него есть «или», и без них правило
-     * читалось как «запятая и первый вариант» ИЛИ «второй вариант и всё
-     * до конца» — от «Зарядка, по будням» оставалось «Зарядкаям».
+     * Отрезаем хвост «, каждый день» вместе с тем, что его отделяет: запятой,
+     * точкой с запятой или длинным тире. Сначала резалась только запятая, и
+     * из «Не курить — каждый день» выходила привычка «Не курить —» — рядом
+     * с настоящей «Не курить», то есть дубль с мусором в конце.
+     *
+     * Скобки вокруг образца обязательны: внутри него есть «или», и без них
+     * правило читалось как «первый вариант» ИЛИ «второй и всё до конца».
      */
-    title = raw.replace(new RegExp(`[,;]?\\s*(?:${found.re.source}).*$`, 'i'), '').trim();
+    title = raw.replace(new RegExp(`\\s*(?:[,;]|${DASH})?\\s*(?:${found.re.source}).*$`, 'i'), '').trim();
   }
+  title = title.replace(new RegExp(`(?:\\s*${DASH})+\\s*$`), '').trim();
   if (!title) return null;
-  return { kind: 'habit', title, days: found ? found.days : 'daily', date };
+  return {
+    kind: 'habit',
+    title,
+    days: found ? found.days : 'daily',
+    // «Не курить» — привычка, которую держат отказом, а не делом
+    polarity: /^не\s/i.test(title) ? 'avoid' : 'do',
+    date,
+  };
 }
 
 /**

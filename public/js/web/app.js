@@ -524,9 +524,14 @@ async function reload() {
   const needsRange = state.screen === 'plan';
   try {
     const jobs = [];
-    // Объявление — единственное, что нужно на любом экране: его видят все
-    // вошедшие, и на «Заметках» оно так же обязательно, как на «Сейчас»
-    jobs.push(loadAnnounce({ paint: false }));
+    /*
+     * Объявление — единственное, что нужно на любом экране, но ждать его
+     * день не обязан. Дневник сообщения о проблеме показал, как запрос
+     * объявления шёл двенадцать секунд — и всё это время экран дня стоял
+     * прежним, потому что перерисовка ждала все запросы сразу. Объявление
+     * нарисует себя само, когда придёт.
+     */
+    loadAnnounce();
     if (needsDay || state.modal) jobs.push(data.loadDay(state.date));
     if (needsRange) jobs.push(data.loadRange(state.date, state.view));
     // Правила повторов: по ним редактор напоминания понимает, повтор это или разовое
@@ -3786,7 +3791,7 @@ const openSport = x => set({
   sportId: x?.id ?? 'new',
   sportTitle: x ? x.raw.exercise ?? '' : '',
   sportSets: x?.sets ?? '',
-  sportReps: x?.reps ?? '',
+  sportReps: x?.repsMax ? `${x.reps}–${x.repsMax}` : (x?.reps ?? ''),
   sportWeight: x?.weight ?? '',
 });
 
@@ -5237,10 +5242,11 @@ const BODIES = {
         })),
       h('div.wrow3',
         num('sportSets', 'подходы', '4'),
-        num('sportReps', 'повторы', '8'),
+        num('sportReps', 'повторы', '8–12'),
         num('sportWeight', 'вес, кг', '60')),
       h('div.wclock-cap', {
-        text: 'Пустое поле значит «не задано»: у планки нет веса, у растяжки — повторов.',
+        text: 'Повторы можно вилкой: 8–12. Пустое поле значит «не задано» — '
+          + 'у планки нет веса, у растяжки нет повторов.',
       }),
       h('div.wrow-end',
         h('button.wbtn-quiet', {
@@ -5554,11 +5560,21 @@ const BODIES = {
     return h('div.wstack',
       h('div.whint', {
         text: 'Заполните по этому образцу и отдайте помощнику — он разберёт день целиком: '
-          + 'расписание, питание, задачи, привычки и заметки. Заголовки нужны, порядок строк — нет. '
+          + 'расписание, питание, тренировку, задачи, привычки и заметки. Разбирает сам '
+          + 'приложение, без нейросети, поэтому мгновенно. Заголовки нужны, порядок строк — нет. '
           + 'Метки в скобках необязательны: [работа] [еда] [спорт] [отдых] красят время, '
-          + '[будильник] ставит звонок, [напоминание] делает точку без длительности.',
+          + '[будильник] ставит звонок, [напоминание] делает точку без длительности. '
+          + 'Повторы вилкой — «3×8–12», вес — «3 кг» или «свой вес».',
       }),
-      h('textarea.wtextarea.wtpl-text', { name: 'aiTemplate', value: text, readonly: true }),
+      /*
+       * Поле ростом с сам образец. Было на триста пикселей со своей прокруткой,
+       * и раздел «Тренировка» оказывался ниже края — человек видел расписание
+       * и питание и честно решал, что спорта в образце нет.
+       */
+      h('textarea.wtextarea.wtpl-text', {
+        name: 'aiTemplate', value: text, readonly: true,
+        rows: text.split('\n').length + 1,
+      }),
       h('div.wrow-end',
         h('button.wbtn-quiet', {
           type: 'button', text: 'Скопировать',
@@ -5604,7 +5620,7 @@ const BODIES = {
         h('div.wopt-body',
           h('div.wopt-title', { text: name }),
           h('div.wopt-hint', { text: hint })),
-        h('button.wplay', {
+        opts.noPlay ? null : h('button.wplay', {
           type: 'button', class: playing ? 'on' : '',
           // по этой отметке paintPlayButtons находит кнопку и переключает её
           // одну, не перерисовывая шторку
@@ -5637,11 +5653,16 @@ const BODIES = {
       const злые = manifest.filter(x => x.kind === 'alarm' && x.mood === 'злой');
       if (злые.length > 1) {
         groups.push(h('div.wclock-cap', { text: 'вперемешку', style: { margin: '6px 0 2px' } }));
-        groups.push(soundRow('Случайный', 'злые подряд, каждый раз в новом порядке', {
+        /*
+         * Без кнопки «послушать»: слушать тут нечего — это те же злые звуки
+         * из списка ниже, только вперемешку. Кнопка играла один случайный из
+         * них и обещала больше, чем показывала.
+         */
+        groups.push(soundRow('Случайный', 'все злые из списка ниже, вперемешку и подряд', {
           icon: 'shuffle',
           on: state[key] === 'Случайный',
           playKey: 'random',
-          src: `/sounds/${злые[Math.floor(Math.random() * злые.length)].file}`,
+          noPlay: true,
           pick: () => {
             state[key] = 'Случайный';
             render();
@@ -6165,6 +6186,7 @@ const aiTemplateFor = date => AI_TEMPLATE.replace('{дата}', date);
 const AI_TAG = {
   schedule: 'расписание', reminder: 'напоминание', task: 'дело',
   meal: 'питание', habit: 'привычка', note: 'заметка', sport: 'тренировка',
+  foodPlan: 'план питания',
 };
 /** Куда кладём приём пищи, если модель назвала слот своими словами. */
 const MEAL_SLOTS = ['breakfast', 'lunch', 'dinner', 'snack', 'other'];
@@ -6250,6 +6272,35 @@ async function appendDayNote(date, title, text) {
   await api.patchDay(date, { notes: было ? `${было}\n\n${свежее}` : свежее }, day.rev);
 }
 
+/**
+ * План питания дня от помощника: «Итого: примерно 1700–2150 ккал».
+ * Дописываем к тому, что человек написал сам, — как и заметку.
+ */
+async function appendFoodPlan(date, text) {
+  const свежее = String(text ?? '').trim();
+  if (!свежее) return;
+  const day = await api.getDay(date);
+  const было = String(day.foodPlan ?? day.food_plan ?? '').trim();
+  if (было.includes(свежее)) return;
+  await api.patchDay(date, { foodPlan: было ? `${было}\n${свежее}` : свежее }, day.rev);
+}
+
+/*
+ * Названия привычек аккаунта — для проверки на дубль. Сравниваем без
+ * регистра и без знаков по краям: «Не курить» и «не курить —» — одна и та
+ * же привычка, и вторую заводить нельзя.
+ */
+let habitTitles = null;
+const habitKey = t => String(t ?? '').toLowerCase().replace(/[\s–—−,.;:!-]+/g, ' ').trim();
+async function habitExists(title) {
+  if (!habitTitles) {
+    const list = await api.habits.list().catch(() => []);
+    const rows = Array.isArray(list) ? list : (list.habits ?? []);
+    habitTitles = new Set(rows.map(h => habitKey(h.title)));
+  }
+  return habitTitles.has(habitKey(title));
+}
+
 /** Записать выбранное. По запросу на пункт — их единицы, пакетного нет. */
 async function aiApply(items) {
   state.busy = true; render();
@@ -6276,17 +6327,26 @@ async function aiApply(items) {
         });
       } else if (it.kind === 'sport') {
         await data.createSport(date, adapt.sportToServer({
-          title: it.title, sets: it.sets, reps: it.reps, weight: it.weight,
+          title: it.title, sets: it.sets, reps: it.reps, repsMax: it.repsMax, weight: it.weight,
         }));
+      } else if (it.kind === 'foodPlan') {
+        await appendFoodPlan(date, it.details);
       } else if (it.kind === 'habit') {
+        /*
+         * Привычки живут не в дне, а в аккаунте. Шаблон дня человек шлёт
+         * каждый вечер с тем же списком привычек, и без проверки каждый
+         * вечер добавлял бы ещё пять одинаковых. Такая уже есть — пропускаем.
+         */
+        if (await habitExists(it.title)) { ok += 1; continue; }
         await data.createHabit({
           title: it.title,
-          emoji: '✅',
-          polarity: 'do',
+          emoji: it.polarity === 'avoid' ? '🚫' : '✅',
+          polarity: it.polarity === 'avoid' ? 'avoid' : 'do',
           scheduleMask: HABIT_MASK[it.days] ?? 127,
           timesPerWeek: null,
           mode: 'ongoing',
         });
+        habitTitles = null;
       } else if (it.kind === 'note') {
         await appendDayNote(date, it.title, it.details);
       } else if (it.kind === 'task' || (it.kind === 'reminder' && start === null)) {
@@ -6734,6 +6794,65 @@ document.addEventListener('visibilitychange', () => {
 setInterval(() => {
   if (document.visibilityState === 'visible') loadAnnounce();
 }, ANNOUNCE_EVERY);
+
+/*
+ * Часы «Сейчас».
+ *
+ * Текущая активность считалась только в момент загрузки дня. Человек открыл
+ * приложение в 11:30, оставил вкладку, в 12:10 вернулся — а на экране всё
+ * ещё блок, который кончился в полдень: пересчитать было некому. Серое
+ * прошедшее время в сетке стояло на месте так же.
+ *
+ * Теперь раз в минуту, ровно на её границе, «сейчас» пересчитывается и
+ * экран перерисовывается — смена блока в 12:00 видна в 12:00, а не в
+ * 12:00:59. Только на экранах, где время что-то значит, и только когда
+ * человек ничего не набирает: открытая шторка или поле в фокусе подождут
+ * следующей минуты, иначе перерисовка отобрала бы курсор посреди слова.
+ */
+const CLOCK_SCREENS = ['today', 'tasks', 'plan'];
+let clockDay = null;
+
+function clockTick() {
+  if (document.visibilityState !== 'visible' || !store.settings) return;
+  const today = todayKey();
+  /*
+   * Полночь, пока приложение было открыто. Если человек смотрел «сегодня»,
+   * он смотрит его и дальше: переносим на новый день и перечитываем.
+   */
+  if (clockDay && today !== clockDay) {
+    const было = clockDay;
+    clockDay = today;
+    if (state.screen === 'today' && state.date === было) { go(today); return; }
+  }
+  clockDay = today;
+  if (!CLOCK_SCREENS.includes(state.screen)) return;
+  if (state.modal || dragging) return;
+  const a = document.activeElement;
+  if (a && (a.isContentEditable || /^(input|textarea|select)$/i.test(a.tagName))) return;
+  fill();
+  render();
+}
+
+function clockLoop() {
+  // до начала следующей минуты — плюс запас, чтобы не попасть в конец текущей
+  setTimeout(() => { clockTick(); clockLoop(); }, 60000 - (Date.now() % 60000) + 80);
+}
+clockLoop();
+
+/*
+ * Возврат к приложению пересчитывает «сейчас» сразу, не дожидаясь минуты:
+ * в фоне браузер таймеры душит, и за полчаса в другой вкладке часы могли не
+ * тикнуть ни разу. Если отсутствие было долгим, перечитываем и сам день —
+ * с другого устройства в нём могло что-то поменяться.
+ */
+let hiddenSince = null;
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') { hiddenSince = Date.now(); return; }
+  const away = hiddenSince ? Date.now() - hiddenSince : 0;
+  hiddenSince = null;
+  if (away > 5 * 60 * 1000) { reload(); return; }
+  clockTick();
+});
 
 /*
  * Уходя со страницы, отпускаем микрофон. Закрытую вкладку браузер разбирает

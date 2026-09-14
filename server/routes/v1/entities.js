@@ -143,6 +143,8 @@ const sanitizeSport = (body, { partial }) => pick(body, {
   exercise:  x => v.str(x, { max: 200, field: 'упражнение' }),
   sets:      x => v.int(x, { min: 0, max: 999, field: 'подходы', nullable: true }),
   reps:      x => v.int(x, { min: 0, max: 999, field: 'повторы', nullable: true }),
+  // верх вилки «8–12»; пусто — повторов ровно столько, сколько в reps
+  repsMax:   x => v.int(x, { min: 0, max: 999, field: 'повторы до', nullable: true }),
   weight:    x => v.num(x, { min: 0, max: 999, field: 'вес', nullable: true }),
   done:      x => v.bool(x),
   sortOrder: x => v.int(x, { min: 0, max: 100000, field: 'порядок', nullable: true }),

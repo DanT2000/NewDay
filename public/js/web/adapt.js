@@ -165,6 +165,7 @@ export const sport = day => (day?.sport ?? []).map(x => ({
   title: x.exercise || 'Упражнение',
   sets: x.sets ?? null,
   reps: x.reps ?? null,
+  repsMax: x.reps_max ?? null,
   weight: x.weight ?? null,
   done: x.done === 1,
   meta: sportMeta(x),
@@ -173,20 +174,32 @@ export const sport = day => (day?.sport ?? []).map(x => ({
 
 function sportMeta(x) {
   const parts = [];
-  if (x.sets && x.reps) parts.push(`${x.sets} × ${x.reps}`);
+  // «8–12», а не «8»: верх вилки — то, к чему человек растёт
+  const reps = x.reps && x.reps_max ? `${x.reps}–${x.reps_max}` : x.reps;
+  if (x.sets && reps) parts.push(`${x.sets} × ${reps}`);
   else if (x.sets) parts.push(`${x.sets} подх.`);
-  else if (x.reps) parts.push(`${x.reps} повт.`);
-  if (x.weight) parts.push(`${x.weight} кг`);
+  else if (reps) parts.push(`${reps} повт.`);
+  if (x.weight) parts.push(`${String(x.weight).replace('.', ',')} кг`);
   return parts.join(' · ');
 }
 
 /** Что уходит на сервер из редактора упражнения. Пусто — значит не задано. */
-export const sportToServer = ({ title, sets, reps, weight }) => ({
-  exercise: String(title ?? '').trim(),
-  sets: numOrNull(sets),
-  reps: numOrNull(reps),
-  weight: numOrNull(weight),
-});
+export const sportToServer = ({ title, sets, reps, repsMax, weight }) => {
+  /*
+   * В поле повторов можно вписать вилку: «8–12». Так её человек и пишет, и
+   * заставлять его делить одно на два поля незачем.
+   */
+  const fork = /^\s*(\d{1,3})\s*[–—−-]\s*(\d{1,3})\s*$/.exec(String(reps ?? ''));
+  const low = fork ? Number(fork[1]) : numOrNull(reps);
+  const high = fork ? Number(fork[2]) : numOrNull(repsMax);
+  return {
+    exercise: String(title ?? '').trim(),
+    sets: numOrNull(sets),
+    reps: low,
+    repsMax: high !== null && low !== null && high > low ? high : null,
+    weight: numOrNull(weight),
+  };
+};
 
 const numOrNull = v => {
   const t = String(v ?? '').trim().replace(',', '.');
