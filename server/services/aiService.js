@@ -40,11 +40,12 @@ const SYSTEM = {
 хлеб») и заполненный шаблон дня с заголовками. Разбирай и то, и другое.
 Отвечай ТОЛЬКО JSON, без пояснений и без markdown.
 
-{"items":[{"kind":"schedule|task|reminder|meal|habit|note",
+{"items":[{"kind":"schedule|task|reminder|meal|habit|note|sport",
 "title":"строка","start":"HH:MM|null","end":"HH:MM|null","date":"YYYY-MM-DD",
 "block":"normal|work|meal|sport|rest|null","category":"work|home|life|buy|null",
 "slot":"breakfast|lunch|dinner|snack|other|null","details":"строка|null",
-"kcal":число|null,"days":"daily|weekdays|weekend|null",
+"kcal":число|null,"sets":число|null,"reps":число|null,"weight":число|null,
+"days":"daily|weekdays|weekend|null",
 "repeat":"once|daily|weekly|monthly|yearly|null",
 "remind":["at","5","15","30","60","day"],"alarm":"off|notify|sound|alarm"}],
 "question":"уточняющий вопрос|null","options":["короткий вариант ответа"]}
@@ -60,13 +61,16 @@ const SYSTEM = {
   калории в kcal, если названы;
 - habit — привычка: как часто, в days (daily каждый день, weekdays будни,
   weekend выходные);
-- note — заметка: короткий заголовок в title, сам текст в details.
+- note — заметка: короткий заголовок в title, сам текст в details;
+- sport — упражнение тренировки: название в title, подходы в sets, повторы
+  в reps, вес в weight. «Жим лёжа 4×8 60 кг» — это sets 4, reps 8, weight 60.
 
 Шаблон дня. Если текст размечен заголовками — разбирай по ним:
 «День: YYYY-MM-DD» — эта дата у всех пунктов, где своя не названа.
 «Расписание:» — строки «09:00–09:30 — Название [метка]».
 «Питание:» — строки «Завтрак 09:50–10:20 — состав ~700 ккал».
 «Задачи:» — строки «- работа: текст» или просто «- текст».
+«Тренировка:» — строки «- Жим лёжа 4×8 60 кг».
 «Привычки:» — строки «- Название, каждый день».
 «Заметки:» — строки «- текст».
 Метка в квадратных скобках у строки расписания: [работа] [еда] [спорт]

@@ -152,6 +152,50 @@ function mealMeta(m) {
 const SLOT_LABEL = { breakfast: 'завтрак', lunch: 'обед', dinner: 'ужин', snack: 'перекус' };
 
 /**
+ * Тренировка: по строке на упражнение.
+ *
+ * Подходы, повторы и вес — три разных числа, и сводить их в одну строку
+ * текста нельзя: «4×8 60 кг» человек пишет руками, а приложение обязано
+ * уметь показать, сколько осталось, и перенести план на другой день.
+ * Пустое число — это «не задано», а не ноль: у планки нет веса, у
+ * растяжки нет повторов.
+ */
+export const sport = day => (day?.sport ?? []).map(x => ({
+  id: x.id,
+  title: x.exercise || 'Упражнение',
+  sets: x.sets ?? null,
+  reps: x.reps ?? null,
+  weight: x.weight ?? null,
+  done: x.done === 1,
+  meta: sportMeta(x),
+  raw: x,
+}));
+
+function sportMeta(x) {
+  const parts = [];
+  if (x.sets && x.reps) parts.push(`${x.sets} × ${x.reps}`);
+  else if (x.sets) parts.push(`${x.sets} подх.`);
+  else if (x.reps) parts.push(`${x.reps} повт.`);
+  if (x.weight) parts.push(`${x.weight} кг`);
+  return parts.join(' · ');
+}
+
+/** Что уходит на сервер из редактора упражнения. Пусто — значит не задано. */
+export const sportToServer = ({ title, sets, reps, weight }) => ({
+  exercise: String(title ?? '').trim(),
+  sets: numOrNull(sets),
+  reps: numOrNull(reps),
+  weight: numOrNull(weight),
+});
+
+const numOrNull = v => {
+  const t = String(v ?? '').trim().replace(',', '.');
+  if (!t) return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+};
+
+/**
  * Привычки. Неделя приходит списком дней со статусом — переводим в те же
  * четыре состояния, которыми рисуются полоски: сделано, пропущено,
  * отложено, выходной.

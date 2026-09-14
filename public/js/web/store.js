@@ -387,6 +387,10 @@ export const createTask = (date, body) => api.tasks.create(date, body);
 export const updateTask = (date, id, body) => api.tasks.update(date, id, body);
 export const removeTask = (date, id) => api.tasks.remove(date, id);
 
+export const createSport = (date, body) => api.sport.create(date, body);
+export const updateSport = (date, id, body) => api.sport.update(date, id, body);
+export const removeSport = (date, id) => api.sport.remove(date, id);
+
 export const createMeal = (date, body) => api.meals.create(date, body);
 export const updateMeal = (date, id, body) => api.meals.update(date, id, body);
 export const removeMeal = (date, id) => api.meals.remove(date, id);

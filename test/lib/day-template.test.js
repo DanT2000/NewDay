@@ -29,6 +29,11 @@ const ПОЛНЫЙ = `День: ${DATE}
 Обед 14:30–15:00 — гречка/рис 70–80 г сухого; мясо 200–250 г; овощи 200–300 г ~800 ккал
 Ужин 19:00–19:30 — гречка/рис 60–80 г сухого; мясо 200–250 г; овощи 200–300 г ~750 ккал
 
+Тренировка:
+- Жим лёжа 4×8 60 кг
+- Тяга верхнего блока 3×12
+- Планка 3 по 60 сек
+
 Задачи:
 - работа: разобрать почту
 - дом: купить хлеб и молоко
@@ -55,7 +60,8 @@ test('шаблон узнаётся по заголовкам, а живая р�
 test('день разбирается целиком, ни один раздел не теряется', () => {
   const { items, date } = parseDayTemplate(ПОЛНЫЙ, { date: '2026-01-01' });
   assert.equal(date, DATE, 'дата берётся из строки «День», а не из открытого дня');
-  assert.deepEqual(видов(items), { schedule: 5, reminder: 1, meal: 3, task: 2, habit: 2, note: 1 });
+  assert.deepEqual(видов(items),
+    { schedule: 5, reminder: 1, meal: 3, sport: 3, task: 2, habit: 2, note: 1 });
   assert.ok(items.every(i => i.date === DATE), 'у каждого пункта своя дата проставлена');
 });
 
@@ -145,4 +151,25 @@ test('пустые строки и мусор между разделами ни
     `Расписание:\n\n  \n09:00–10:00 — Дело\n\nЗадачи:\n\n- одна\n\nЗаметки:\n`,
     { date: DATE });
   assert.deepEqual(видов(items), { schedule: 1, task: 1 });
+});
+
+test('тренировка: подходы, повторы и вес разбираются как числа', () => {
+  const { items } = parseDayTemplate(ПОЛНЫЙ, { date: DATE });
+  const sport = items.filter(i => i.kind === 'sport');
+  assert.deepEqual(sport.map(x => [x.title, x.sets, x.reps, x.weight]), [
+    ['Жим лёжа', 4, 8, 60],
+    ['Тяга верхнего блока', 3, 12, null],
+    ['Планка', 3, 60, null],
+  ]);
+});
+
+test('упражнение без чисел — просто название', () => {
+  const { items } = parseDayTemplate(`Тренировка:
+- Растяжка
+Заметки:
+- всё`, { date: DATE });
+  const x = items.find(i => i.kind === 'sport');
+  assert.equal(x.title, 'Растяжка');
+  assert.equal(x.sets, null);
+  assert.equal(x.weight, null);
 });

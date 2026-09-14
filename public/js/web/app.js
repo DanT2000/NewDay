@@ -98,6 +98,7 @@ let SCHEDULE = [];
 let TASKS = [];
 let MEALS = [];
 let HABITS = [];
+let SPORT = [];
 let NOTES = [];
 
 /**
@@ -403,7 +404,8 @@ function toggle(r, kind) {
   const next = !isDone(r);
   const send = kind === 'task' ? data.toggleTask
     : kind === 'meal' ? data.toggleMeal
-      : kind === 'habit' ? data.toggleHabit
+      : kind === 'sport' ? data.toggleSport
+        : kind === 'habit' ? data.toggleHabit
           : data.toggleScheduleRow;
   r.done = next;
   if (kind === 'habit') r.status = next ? 'done' : null;
@@ -667,6 +669,7 @@ function fill() {
   TASKS = adapt.tasks(store.day);
   MEALS = adapt.meals(store.day);
   HABITS = adapt.habits(store.day);
+  SPORT = adapt.sport(store.day);
   NOTES = adapt.notes(store.notes, todayKey(), state.date);
 }
 const ico = (name, size = '17px', cls = '') => icon(name, { size, cls });
@@ -945,7 +948,7 @@ function scheduleList() {
 }
 
 function progress() {
-  const scored = [...TASKS, ...MEALS, ...HABITS.filter(x => x.active)];
+  const scored = [...TASKS, ...MEALS, ...SPORT, ...HABITS.filter(x => x.active)];
   const done = scored.filter(isDone).length;
   // Пустой день — это не ноль процентов и уж точно не NaN: считать нечего
   const percent = scored.length ? Math.round((done / scored.length) * 100) : 0;
@@ -1078,6 +1081,39 @@ function tasksBlock() {
   return h('div.wtasks',
     sectHd('задачи', h('span.wcount', { text: `${TASKS.filter(isDone).length}/${TASKS.length}` }), shades[0]),
     chips, list);
+}
+
+/**
+ * Тренировка дня: упражнение, подходы, повторы, вес.
+ *
+ * Отдельный раздел, а не задачи. Задача — это галочка с текстом, а у
+ * упражнения три числа, которые человек меняет от недели к неделе и по
+ * которым видно рост. Сущность на сервере была с самого начала — со своей
+ * таблицей, своими полями и местом в выгрузке, — но в интерфейсе её не
+ * рисовал никто: план тренировки записать было некуда.
+ */
+function sportBlock() {
+  const shades = shadeSet();
+  const list = h('div.wlist');
+  add(list, ...SPORT.map(x => {
+    const d = isDone(x);
+    const row = h('button.wlist-row', { type: 'button', onclick: () => openSport(x) });
+    const mark = box(d);
+    mark.onclick = e => { e.stopPropagation(); toggle(x, 'sport'); };
+    add(row, mark,
+      h('span.wstrike', { text: x.title, class: d ? 'done' : '' }),
+      x.meta ? h('span.wlist-meta', { text: x.meta }) : null);
+    return row;
+  }));
+  const addBtn = h('button.wadd', { type: 'button', onclick: () => openSport(null) });
+  add(addBtn, ico('plus', '15px'), h('span', { text: 'Добавить упражнение' }));
+  add(list, addBtn);
+
+  return h('div.wsport',
+    sectHd('тренировка',
+      SPORT.length ? h('span.wcount', { text: `${SPORT.filter(isDone).length}/${SPORT.length}` }) : null,
+      shades[3]),
+    list);
 }
 
 function foodBlock() {
@@ -1252,7 +1288,7 @@ function todayScreen() {
       })()),
       scheduleList()));
 
-  const mid = h('div.wcol', statCards(), tasksBlock(), foodBlock());
+  const mid = h('div.wcol', statCards(), tasksBlock(), foodBlock(), sportBlock());
 
   const right = h('div.wcol',
     h('div', sectHd('привычки сегодня'),
@@ -1429,6 +1465,7 @@ function phoneTasks() {
       ring),
     tasksBlock(),
     foodBlock(),
+    sportBlock(),
     h('div', sectHd('заметки дня', notesLink), dayNotes()));
 }
 
@@ -1783,11 +1820,20 @@ function planColumn(dateKey, axis) {
     add(col, block);
   }
 
-  if (dateKey === todayKey()) {
-    const minutes = minutesNow();
-    if (minutes >= axis.from && minutes <= axis.to) {
-      add(col, h('div.wnowline', { style: { top: `${Math.round(axis.y(minutes))}px` } }, h('i')));
-    }
+  /*
+   * Прошедшее время просто серое.
+   *
+   * Здесь была полоска «сейчас» поверх сетки и фиолетовая заливка всей
+   * выбранной колонки — в виде «День» это красило день целиком, и понять по
+   * нему, сколько уже прошло, было нельзя. Теперь граница между серым и
+   * обычным и есть текущий момент: линию рисовать незачем, а прошедший день
+   * весь серый — в нём уже ничего не начнётся.
+   */
+  const прошло = dateKey < todayKey()
+    ? axis.total
+    : (dateKey === todayKey() ? axis.y(minutesNow()) : 0);
+  if (прошло > 0) {
+    add(col, h('div.wplan-past', { style: { height: `${Math.round(прошло)}px` } }));
   }
 
   return col;
@@ -3723,6 +3769,29 @@ function saveHabit() {
   busy(state.habitId === 'new' ? data.createHabit(body) : data.updateHabit(state.habitId, body));
 }
 
+// ── Упражнение ───────────────────────────────────────────────
+
+/** Пустые числа значат «не задано»: у планки нет веса, у растяжки повторов. */
+const openSport = x => set({
+  modal: 'sport',
+  sportId: x?.id ?? 'new',
+  sportTitle: x ? x.raw.exercise ?? '' : '',
+  sportSets: x?.sets ?? '',
+  sportReps: x?.reps ?? '',
+  sportWeight: x?.weight ?? '',
+});
+
+function saveSport() {
+  const body = adapt.sportToServer({
+    title: state.sportTitle, sets: state.sportSets,
+    reps: state.sportReps, weight: state.sportWeight,
+  });
+  if (!body.exercise) { needField('sportTitle', 'Впишите упражнение'); return; }
+  busy(state.sportId === 'new'
+    ? data.createSport(state.date, body)
+    : data.updateSport(state.date, state.sportId, body));
+}
+
 // ── Приём пищи ───────────────────────────────────────────────
 
 /**
@@ -4177,6 +4246,7 @@ const TITLES = {
   habit: () => (state.habitId === 'new' ? 'Новая привычка' : 'Привычка'),
   note: () => 'Заметка',
   task: () => 'Задача',
+  sport: () => (state.sportId === 'new' ? 'Новое упражнение' : 'Упражнение'),
   food: () => 'Питание на день',
   meal: () => 'Приём пищи',
   calendar: () => 'Выбор дня',
@@ -5140,6 +5210,43 @@ const BODIES = {
         h('button.wbtn-wide', { type: 'button', text: state.busy ? 'Сохраняю…' : 'Готово', disabled: state.busy, onclick: save })));
   },
 
+  // ── Упражнение ──
+  sport() {
+    const num = (name, label, hint) => h('label',
+      h('span.wfield-label', { text: label }),
+      h('input.wnum', {
+        name, value: state[name], placeholder: hint, inputMode: 'decimal',
+        style: { width: '100%' },
+        oninput: e => { state[name] = e.target.value; },
+      }));
+
+    return h('div.wstack',
+      h('label', h('span.wfield-label', { text: 'упражнение' }),
+        h('input.winput', {
+          name: 'sportTitle', value: state.sportTitle, placeholder: 'Например, жим лёжа',
+          oninput: e => { state.sportTitle = e.target.value; },
+        })),
+      h('div.wrow3',
+        num('sportSets', 'подходы', '4'),
+        num('sportReps', 'повторы', '8'),
+        num('sportWeight', 'вес, кг', '60')),
+      h('div.wclock-cap', {
+        text: 'Пустое поле значит «не задано»: у планки нет веса, у растяжки — повторов.',
+      }),
+      h('div.wrow-end',
+        h('button.wbtn-quiet', {
+          type: 'button', text: state.sportId === 'new' ? 'Отмена' : 'Удалить',
+          disabled: state.busy,
+          onclick: () => (state.sportId === 'new'
+            ? closeModal()
+            : busy(data.removeSport(state.date, state.sportId))),
+        }),
+        h('button.wbtn-wide', {
+          type: 'button', text: state.busy ? 'Сохраняю…' : 'Готово',
+          disabled: state.busy, onclick: saveSport,
+        })));
+  },
+
   // ── Питание на день ──
   food() {
     return h('div.wstack',
@@ -6027,6 +6134,11 @@ const AI_TEMPLATE = `День: {дата}
 Обед 14:30–15:00 — гречка/рис 70–80 г сухого; мясо 200–250 г; овощи 200–300 г ~800 ккал
 Ужин 19:00–19:30 — гречка/рис 60–80 г сухого; мясо 200–250 г; овощи 200–300 г ~750 ккал
 
+Тренировка:
+- Жим лёжа 4×8 60 кг
+- Тяга верхнего блока 3×12
+- Планка 3×60 сек
+
 Задачи:
 - работа: разобрать почту
 - дом: купить хлеб и молоко
@@ -6043,7 +6155,7 @@ const aiTemplateFor = date => AI_TEMPLATE.replace('{дата}', date);
 
 const AI_TAG = {
   schedule: 'расписание', reminder: 'напоминание', task: 'дело',
-  meal: 'питание', habit: 'привычка', note: 'заметка',
+  meal: 'питание', habit: 'привычка', note: 'заметка', sport: 'тренировка',
 };
 /** Куда кладём приём пищи, если модель назвала слот своими словами. */
 const MEAL_SLOTS = ['breakfast', 'lunch', 'dinner', 'snack', 'other'];
@@ -6153,6 +6265,10 @@ async function aiApply(items) {
           calories: Number.isFinite(Number(it.kcal)) ? Number(it.kcal) : null,
           remindBefore: start === null ? [] : [0],
         });
+      } else if (it.kind === 'sport') {
+        await data.createSport(date, adapt.sportToServer({
+          title: it.title, sets: it.sets, reps: it.reps, weight: it.weight,
+        }));
       } else if (it.kind === 'habit') {
         await data.createHabit({
           title: it.title,

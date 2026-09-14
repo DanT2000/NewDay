@@ -30,6 +30,7 @@ const SECTIONS = [
   { key: 'meals', re: /^питани\w*|^еда/i },
   { key: 'tasks', re: /^задач\w*|^дела/i },
   { key: 'habits', re: /^привыч\w*/i },
+  { key: 'sport', re: /^тренировк[а-яё]*|^спорт|^зал$/i },
   { key: 'notes', re: /^заметк\w*/i },
 ];
 
@@ -161,6 +162,37 @@ function mealLine(raw, date) {
   };
 }
 
+/**
+ * Упражнение: «Жим лёжа 4×8 60 кг».
+ *
+ * Подходы, повторы и вес — три числа, и человек пишет их так, как привык:
+ * «4х8», «4*8», «3 по 12». Вес с килограммами, а иногда без. Всё, что
+ * числами не оказалось, — название упражнения.
+ */
+function sportLine(raw, date) {
+  const nxm = /(\d{1,3})\s*(?:[x×хХ*]|по)\s*(\d{1,3})/.exec(raw);
+  const kg = /(\d{1,3}(?:[.,]\d{1,2})?)\s*кг/i.exec(raw);
+  let title = raw;
+  if (nxm) title = title.replace(nxm[0], ' ');
+  if (kg) title = title.replace(kg[0], ' ');
+  /*
+   * Единица без своего числа — мусор: от «Планка 3 по 60 сек» после выемки
+   * чисел оставалось «Планка сек». Срезаем только если числа действительно
+   * нашлись: у «Бег 30 мин» ничего не выняли, и «мин» там при деле.
+   */
+  if (nxm || kg) title = title.replace(/\s*(?:сек|секунд|мин|минут|раз|повт)[а-яё]*\.?\s*$/i, '');
+  title = title.replace(/\s{2,}/g, ' ').replace(/[,;–—-]\s*$/, '').trim();
+  if (!title) return null;
+  return {
+    kind: 'sport',
+    title,
+    sets: nxm ? Number(nxm[1]) : null,
+    reps: nxm ? Number(nxm[2]) : null,
+    weight: kg ? Number(kg[1].replace(',', '.')) : null,
+    date,
+  };
+}
+
 function taskLine(raw, date) {
   const m = /^(?:([^:]{1,20}):\s*)?(.+)$/.exec(raw);
   if (!m) return null;
@@ -224,6 +256,7 @@ function parseDayTemplate(text, { date }) {
     if (section === 'schedule') item = scheduleLine(body, day);
     else if (section === 'meals') item = mealLine(body, day);
     else if (section === 'tasks') item = taskLine(body, day);
+    else if (section === 'sport') item = sportLine(body, day);
     else if (section === 'habits') item = habitLine(body, day);
     else if (section === 'notes') {
       item = { kind: 'note', title: body.slice(0, 60), details: body, date: day };
