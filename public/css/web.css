@@ -823,6 +823,26 @@ select.winput { appearance: auto; cursor: pointer; }
 
 /* ── Экран «Расписание» ────────────────────────────────────── */
 
+/*
+ * Шапка расписания прилипает к верху при прокрутке.
+ *
+ * Отрицательные поля с такими же отступами — чтобы подложка закрывала всю
+ * ширину области прокрутки: без них содержимое проезжало бы в просвете по
+ * бокам, там, где у `.wbody` внутренний отступ.
+ */
+.wplan-top {
+  /*
+   * `top: -22px`, а не ноль: прилипание считается от содержимого области
+   * прокрутки, а у неё свой отступ сверху в 22 пикселя — при нуле шапка
+   * замирала на эти 22 пикселя ниже края, и в просвете над ней ехала сетка.
+   * Минус двадцать два ставит подложку вровень с краем, а отступ остаётся
+   * внутренним, поэтому заголовок не дёргается в момент прилипания.
+   * Отрицательные поля по бокам — чтобы подложка закрывала и их тоже.
+   */
+  position: sticky; top: -22px; z-index: 6;
+  margin: -22px -28px 0; padding: 22px 28px 0;
+  background: var(--bg);
+}
 .wplan-head, .wplan-grid { display: grid; }
 .wplan-head { padding: 0 2px 10px; }
 .wplan-grid { border-radius: 16px; background: var(--surface); overflow: hidden; }
@@ -970,10 +990,16 @@ select.winput { appearance: auto; cursor: pointer; }
 /* Прошедшее время приглушено — так же, как в списке на «Сейчас» */
 .wblock.past { opacity: .55; }
 .wblock.past .wblock-time { color: var(--faint); }
+/*
+ * Напоминание в сетке — полый блок цвета дня, а не красный.
+ *
+ * Красным помечено то, что пошло не так; «Отбой в 22:30» ничего плохого не
+ * значит, а красная рамка с красной точкой читались как ошибка. Момент от
+ * блока отличает пустая заливка и точка, а не тревожный цвет.
+ */
 .wblock.moment {
-  --pin: var(--warn);
   background: transparent;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pin) 45%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pin) 55%, transparent);
 }
 .wblock.moment .wblock-time { color: var(--pin); }
 .wblock-dot {
