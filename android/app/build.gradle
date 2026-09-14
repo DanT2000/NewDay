@@ -46,7 +46,7 @@ android {
          * как в CI. «1» по умолчанию было ловушкой: собранный руками релиз
          * уезжал в консоль с кодом 1 и навсегда занимал самый младший номер.
          */
-        versionName System.getenv("NEWDAY_VERSION_NAME") ?: "1.0.13"
+        versionName System.getenv("NEWDAY_VERSION_NAME") ?: "1.0.14"
         versionCode Integer.parseInt(System.getenv("NEWDAY_VERSION_CODE")
                 ?: versionNameToCode(versionName))
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"

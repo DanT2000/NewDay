@@ -22,6 +22,14 @@
 | `klaxon.ogg` | Клаксон | будильник | злой | Wikimedia Commons [«Car Horn.wav»](https://commons.wikimedia.org/wiki/File:Car_Horn.wav), автор 15HPanska_Ruttner_Jan (изначально freesound [#461679](https://freesound.org/s/461679/)) | CC0 |
 | `siren.ogg` | Сирена | будильник | злой | Wikimedia Commons [«Civil-defense-siren-waver.ogg»](https://commons.wikimedia.org/wiki/File:Civil-defense-siren-waver.ogg), автор Techtonic | public domain |
 | `reveille.ogg` | Подъём | будильник | злой | Wikimedia Commons [«Reveille on bugle.ogg»](https://commons.wikimedia.org/wiki/File:Reveille_on_bugle.ogg), исполнение United States Army Band | public domain |
+| `gymnopedie.ogg` | Гимнопедия | будильник | мягкий | Wikimedia Commons [«Erik Satie - gymnopedies - la 1 ere. lent et douloureux.ogg»](https://commons.wikimedia.org/wiki/File:Erik_Satie_-_gymnopedies_-_la_1_ere._lent_et_douloureux.ogg), исполнение Robin Alciatore | public domain |
+| `clairdelune.ogg` | Лунный свет | будильник | мягкий | Wikimedia Commons [«Clair de Lune by Claude Debussy (1905, piano solo).opus»](https://commons.wikimedia.org/wiki/File:Clair_de_Lune_by_Claude_Debussy_(1905,_piano_solo).opus) | public domain |
+| `lullaby.ogg` | Колыбельная | будильник | мягкий | Wikimedia Commons [«Lullaby wound up clock.ogg»](https://commons.wikimedia.org/wiki/File:Lullaby_wound_up_clock.ogg), автор stephan | public domain |
+| `windchimes.ogg` | Колокольчики | будильник | мягкий | Wikimedia Commons [«Windglockenspiel.Koshi.ogg»](https://commons.wikimedia.org/wiki/File:Windglockenspiel.Koshi.ogg), автор Membeth | CC0 |
+| `bowl.ogg` | Поющая чаша | будильник | мягкий | Wikimedia Commons [«SingingBowl1.ogg»](https://commons.wikimedia.org/wiki/File:SingingBowl1.ogg), автор BambooBeast | public domain |
+| `platinum.ogg` | Платина | будильник | мягкий | AOSP `frameworks/base/data/sounds/alarms/ogg/Platinum.ogg` | Apache-2.0 |
+| `krypton.ogg` | Криптон | будильник | злой | AOSP `frameworks/base/data/sounds/alarms/ogg/Krypton.ogg` | Apache-2.0 |
+| `helium.ogg` | Гелий | будильник | злой | AOSP `frameworks/base/data/sounds/alarms/ogg/Helium.ogg` | Apache-2.0 |
 | `drop.ogg` | Капля | уведомление | мягкий | AOSP `frameworks/base/data/sounds/notifications/Drip.ogg` | Apache-2.0 |
 | `chime.ogg` | Колокольчик | уведомление | мягкий | AOSP `frameworks/base/data/sounds/notifications/Tinkerbell.ogg` | Apache-2.0 |
 | `bubble.ogg` | Пузырёк | уведомление | мягкий | AOSP `frameworks/base/data/sounds/notifications/Plastic_Pipe.ogg` | Apache-2.0 |
@@ -73,6 +81,20 @@ CC BY-SA не брали: они требуют указания автора у
   заканчивается паузой.
 * **Собраны повтором.** `alert.ogg` (4 повтора), `rooster.ogg` (5),
   `klaxon.ogg` (4) — короткие исходники доведены до 8–9,5 с.
+
+* **Вторая партия (сентябрь 2026).** Просили больше мягких. Из AOSP взяли
+  только то, что прямо перечислено в `srcs` модуля `frameworks_alarm_sounds`
+  (там 12 файлов из 23 лежащих в каталоге), и выбирали не на слух, а по
+  замерам: мягкие — с низким спектральным центроидом и небольшим
+  крест-фактором (Platinum: 913 Гц и 4,5 — рядом с Argon, 873 Гц и 3,6),
+  злые — наоборот (Krypton: 4580 Гц и 10,4; Helium: 2010 Гц и 10,8).
+  Promethium побайтно повторяет Platinum, Neptunium — Carbon, их не брали.
+  С Commons — только public domain и CC0 по `extmetadata`. Пьесы Сати и
+  Дебюсси — отрывок в 26 с от первой ноты (после вступительной тишины 2,2 и
+  5,7 с), колокольчики и колыбельная — 20 с от начала, поющая чаша целиком.
+  У отрывков мягкий вход 0,4 с и уход 2,5 с: повтор по кругу начинается с
+  тишины и не щёлкает. Громкость — тем же `volume` по замеру, мягкие к
+  −24 LUFS, злые к −18; у «Гелия» потолок пика не дал подняться выше −19,2.
 
 ### Громкость
 

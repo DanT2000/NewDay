@@ -39,7 +39,7 @@ class AlarmService : Service() {
     companion object {
         /** Условное значение настройки: играть злые звуки вперемешку. */
         const val RANDOM = "random"
-        /** Самые злые из набора — то, чем невозможно не проснуться. */
+        /** Запасной список злых, если манифест в ассетах не прочитался. */
         private val HARSH = listOf("rooster.ogg", "siren.ogg", "klaxon.ogg", "reveille.ogg", "alert.ogg")
         /** Чем начинается тихая фаза, когда включено мягкое начало. */
         private const val SOFT_FIRST = "dawn.ogg"
@@ -384,8 +384,28 @@ class AlarmService : Service() {
 
     /** Следующий злой звук: очередь перетасовывается, когда кончилась. */
     private fun nextHarsh(): String {
-        if (randomQueue.isEmpty()) randomQueue.addAll(HARSH.shuffled())
+        if (randomQueue.isEmpty()) randomQueue.addAll(harshSounds().shuffled())
         return randomQueue.removeAt(0)
+    }
+
+    /**
+     * Злые звуки — из манифеста в ассетах, а не списком в коде.
+     *
+     * Набор растёт: новый злой звук, положенный в public/sounds с пометкой
+     * «злой», сам попадает в «Случайный», и никто не должен помнить, что его
+     * надо дописать ещё и сюда. Манифест не прочитался — берём запасной
+     * список: будильник обязан зазвонить при любой поломке вокруг него.
+     */
+    private fun harshSounds(): List<String> = try {
+        val text = assets.open("public/sounds/manifest.json").bufferedReader().use { it.readText() }
+        val arr = org.json.JSONArray(text)
+        val files = (0 until arr.length()).map { arr.getJSONObject(it) }
+            .filter { it.optString("kind") == "alarm" && it.optString("mood") == "злой" }
+            .map { it.getString("file") }
+        if (files.isEmpty()) HARSH else files
+    } catch (e: Exception) {
+        Log.w("NewDayAlarm", "Манифест звуков не прочитался: " + e.message + " — беру запасной список")
+        HARSH
     }
 
     /**

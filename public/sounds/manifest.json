@@ -21,6 +21,48 @@
     "license": "Wikimedia Commons «Reggelirigók.ogg», Ödönke — public domain"
   },
   {
+    "file": "gymnopedie.ogg",
+    "name": "Гимнопедия",
+    "kind": "alarm",
+    "mood": "мягкий",
+    "license": "Wikimedia Commons «Erik Satie - gymnopedies - la 1 ere. lent et douloureux.ogg», Robin Alciatore — public domain"
+  },
+  {
+    "file": "clairdelune.ogg",
+    "name": "Лунный свет",
+    "kind": "alarm",
+    "mood": "мягкий",
+    "license": "Wikimedia Commons «Clair de Lune by Claude Debussy (1905, piano solo).opus» — public domain"
+  },
+  {
+    "file": "lullaby.ogg",
+    "name": "Колыбельная",
+    "kind": "alarm",
+    "mood": "мягкий",
+    "license": "Wikimedia Commons «Lullaby wound up clock.ogg», stephan — public domain"
+  },
+  {
+    "file": "windchimes.ogg",
+    "name": "Колокольчики",
+    "kind": "alarm",
+    "mood": "мягкий",
+    "license": "Wikimedia Commons «Windglockenspiel.Koshi.ogg», Membeth — CC0"
+  },
+  {
+    "file": "bowl.ogg",
+    "name": "Поющая чаша",
+    "kind": "alarm",
+    "mood": "мягкий",
+    "license": "Wikimedia Commons «SingingBowl1.ogg», BambooBeast — public domain"
+  },
+  {
+    "file": "platinum.ogg",
+    "name": "Платина",
+    "kind": "alarm",
+    "mood": "мягкий",
+    "license": "AOSP frameworks/base data/sounds/alarms/ogg/Platinum.ogg — Apache-2.0"
+  },
+  {
     "file": "alert.ogg",
     "name": "Резкий сигнал",
     "kind": "alarm",
@@ -54,6 +96,20 @@
     "kind": "alarm",
     "mood": "злой",
     "license": "Wikimedia Commons «Reveille on bugle.ogg», United States Army Band — public domain"
+  },
+  {
+    "file": "krypton.ogg",
+    "name": "Криптон",
+    "kind": "alarm",
+    "mood": "злой",
+    "license": "AOSP frameworks/base data/sounds/alarms/ogg/Krypton.ogg — Apache-2.0"
+  },
+  {
+    "file": "helium.ogg",
+    "name": "Гелий",
+    "kind": "alarm",
+    "mood": "злой",
+    "license": "AOSP frameworks/base data/sounds/alarms/ogg/Helium.ogg — Apache-2.0"
   },
   {
     "file": "drop.ogg",
