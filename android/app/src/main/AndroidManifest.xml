@@ -32,8 +32,16 @@
         <!--
             Экран отключения будильника.
             showWhenLocked и turnScreenOn поднимают его поверх локскрина,
-            excludeFromRecents не даёт смахнуть его из «недавних»,
-            singleInstance — открыть вторую копию поверх первой.
+            singleInstance не даёт открыть вторую копию поверх первой.
+
+            excludeFromRecents здесь больше нет — он и был причиной утренней
+            беды 15 сентября. Скрытую из «недавних» задачу система считает
+            лишней и вычищает, как только человек открывает что-то другое:
+            экран будильника смахнули жестом «домой», через минуту открыли
+            NewDay — и экран отключения был уничтожен, а звук из службы играл
+            дальше, выключить было негде. Теперь задача видна в «недавних»,
+            пока будильник звонит, а autoRemoveFromRecents убирает её оттуда
+            сама, когда экран закрылся после решённой задачи.
             configChanges обязателен: без него автопереключение тёмной темы
             «по рассвету» — ровно утреннее время — пересоздаёт экран, и
             человек, прошедший 28 шагов из 30, начинает считать с нуля.
@@ -56,7 +64,7 @@
             android:launchMode="singleInstance"
             android:directBootAware="true"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|fontScale|density"
-            android:excludeFromRecents="true"
+            android:autoRemoveFromRecents="true"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:screenOrientation="portrait"

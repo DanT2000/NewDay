@@ -85,7 +85,12 @@ class AlarmActivity : Activity() {
         canScan = CodeScanner.hasCamera(this) && CodeScanner.hasPermission(this)
         canWalk = steps.available
         tasks = TaskFactory.makeSet(config, canScan, canWalk)
-        Log.i("NewDayAlarm", "Экран отключения: будильник=" + id + ", задач=" + tasks.size)
+        Log.i(
+            "NewDayAlarm",
+            "Экран отключения: будильник=" + id + ", задач=" + tasks.size +
+                ", выбраны в настройках=" + config.types.joinToString(",") +
+                ", выпали=" + tasks.joinToString(",") { it.javaClass.simpleName },
+        )
 
         buildUi()
         // Время мягкого начала считает сервис — экран мог открыться с задержкой,
@@ -712,6 +717,7 @@ class AlarmActivity : Activity() {
         )
         timer?.cancel()
         idleTimer?.cancel()
+        AlarmService.screenClosing = true
         startService(Intent(this, AlarmService::class.java).apply { action = AlarmService.ACTION_STOP })
         openApp()
         finish()
@@ -720,6 +726,7 @@ class AlarmActivity : Activity() {
     private fun snooze() {
         timer?.cancel()
         idleTimer?.cancel()
+        AlarmService.screenClosing = true
         startService(Intent(this, AlarmService::class.java).apply { action = AlarmService.ACTION_SNOOZE })
         finish()
     }
@@ -757,6 +764,28 @@ class AlarmActivity : Activity() {
     @Suppress("GestureBackNavigation")
     @Deprecated("Намеренно: экран нельзя покинуть, не решив задачу")
     override fun onBackPressed() { /* игнорируем */ }
+
+    override fun onStart() {
+        super.onStart()
+        AlarmService.screenVisible = true
+    }
+
+    /*
+     * Экран ушёл из виду — а будильник всё ещё звонит.
+     *
+     * «Назад» перехвачен, но жест «домой» перехватить нельзя никому: это
+     * система. Поэтому не держим, а возвращаем — просим службу поднять экран
+     * снова. isFinishing — наш собственный уход после решённой задачи или
+     * «Отложить», его возвращать не надо.
+     */
+    override fun onStop() {
+        super.onStop()
+        AlarmService.screenVisible = false
+        if (!isFinishing && AlarmService.currentAlarmId >= 0) {
+            Log.i("NewDayAlarm", "Экран отключения ушёл в фон, будильник звонит")
+            startService(Intent(this, AlarmService::class.java).apply { action = AlarmService.ACTION_SCREEN_LEFT })
+        }
+    }
 
     override fun onNewIntent(intent: Intent?) {
         // singleInstance: второй старт приходит сюда, а не создаёт копию —

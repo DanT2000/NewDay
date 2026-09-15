@@ -23,6 +23,7 @@ import android.os.VibratorManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.ServiceCompat
 
 /**
  * Сервис, который держит будильник живым.
@@ -48,6 +49,8 @@ class AlarmService : Service() {
         const val ACTION_SNOOZE = "ru.appswire.newday.ALARM_SNOOZE"
         /** Тишина на время решения задачи и её конец — команды с экрана отключения. */
         const val ACTION_SOUND_PAUSE = "ru.appswire.newday.ALARM_SOUND_PAUSE"
+        /** Экран отключения ушёл из виду, а будильник звонит: вернуть его. */
+        const val ACTION_SCREEN_LEFT = "ru.appswire.newday.ALARM_SCREEN_LEFT"
         const val ACTION_SOUND_RESUME = "ru.appswire.newday.ALARM_SOUND_RESUME"
 
         const val CHANNEL_ALARM = "newday_alarm"
@@ -80,6 +83,26 @@ class AlarmService : Service() {
         @Volatile
         var graceUntilMs: Long = 0L
             private set
+
+        /**
+         * Виден ли сейчас экран отключения. Ставит сам экран в onStart/onStop;
+         * по нему служба понимает, что экран надо вернуть, а главный экран —
+         * что человека надо перекинуть на будильник.
+         */
+        @Volatile
+        var screenVisible: Boolean = false
+
+        /**
+         * Экран отключения уходит сам — задача решена или нажато «Отложить».
+         *
+         * Экран ставит отметку до того, как команда STOP/SNOOZE дойдёт до
+         * службы. Между этими моментами уже открывается главный экран, а
+         * будильник по службе ещё «звонит» — и без отметки главный экран
+         * вернул бы человека на только что выключенный будильник. Снимается,
+         * когда начинает звонить следующий.
+         */
+        @Volatile
+        var screenClosing: Boolean = false
 
         fun createChannels(ctx: Context) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -129,6 +152,7 @@ class AlarmService : Service() {
             ACTION_SNOOZE -> { snooze(); return START_NOT_STICKY }
             ACTION_SOUND_PAUSE -> { pauseSound(); return START_NOT_STICKY }
             ACTION_SOUND_RESUME -> { resumeSound("экран: бездействие кончилось тишину"); return START_NOT_STICKY }
+            ACTION_SCREEN_LEFT -> { bringScreenBack(); keepRinging()?.let { return it }; return START_NOT_STICKY }
         }
 
         val id = intent?.getLongExtra("alarmId", -1) ?: -1
@@ -162,6 +186,7 @@ class AlarmService : Service() {
 
         alarm = found
         currentAlarmId = id
+        screenClosing = false
         startAlarmForeground(buildNotification(found))
 
         val cfg = AlarmStore.config(this)
@@ -196,8 +221,28 @@ class AlarmService : Service() {
      * своим `stopSelf()` глушило сам будильник.
      */
     private fun showReminder(a: Alarm): Int {
-        NotificationManagerCompat.from(this).notify(a.id.toInt(), buildNotification(a))
+        val reminder = buildNotification(a)
+        NotificationManagerCompat.from(this).notify(a.id.toInt(), reminder)
         keepRinging()?.let { return it }
+        /*
+         * Обязательство перед startForegroundService закрываем и здесь.
+         *
+         * Приёмник поднимает службу через startForegroundService — и для
+         * будильника, и для обычного напоминания. Будильник объявлял себя
+         * службой переднего плана, а напоминание показывало уведомление и
+         * сразу останавливалось, так ни разу и не вызвав startForeground.
+         * Android такое не прощает: через несколько секунд он бросает
+         * ForegroundServiceDidNotStartInTimeException и роняет приложение
+         * целиком. По логам телефона это случилось трижды за полсуток — в
+         * 23:10, 23:59 и 9:10, ровно в минуты напоминаний. А упавший процесс
+         * уносит с собой и звонящий в этот момент будильник.
+         *
+         * Объявляем себя на мгновение тем же уведомлением и тут же снимаем
+         * его: напоминание уже показано под своим номером, и человек видит
+         * только его.
+         */
+        startAlarmForeground(reminder)
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
         return START_NOT_STICKY
     }
@@ -642,6 +687,49 @@ class AlarmService : Service() {
             PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
             "NewDay:alarm",
         ).apply { acquire(10 * 60 * 1000L) }
+    }
+
+    /**
+     * Экран отключения ушёл, а будильник звонит — возвращаем экран.
+     *
+     * Утром 15 сентября человек опустил шторку, провёл снизу вверх «домой», и
+     * экран будильника ушёл в фон. Вернуть его было нечему: звук играл из
+     * службы, а выключить его было негде. Через минуту человек открыл само
+     * приложение, и система вычистила задачу будильника из недавних как
+     * скрытую — экран отключения был уничтожен, звук продолжал играть.
+     *
+     * Здесь три попытки, от самой прямой к самой надёжной:
+     *  - поднять экран сразу — это получится, если выдано «поверх других
+     *    окон», и на части прошивок без него;
+     *  - повторить через пару секунд — после анимации жеста «домой» система
+     *    охотнее пускает запуск;
+     *  - освежить уведомление будильника со своим полноэкранным переходом:
+     *    на заблокированном экране оно само откроет будильник, на открытом —
+     *    встанет плашкой сверху, и одно нажатие вернёт экран.
+     * Плюс главный экран приложения сам перекидывает на будильник, пока тот
+     * звонит (MainActivity.onResume) — тот самый случай «открыл приложение».
+     */
+    private fun bringScreenBack() {
+        val a = alarm ?: AlarmStore.find(this, currentAlarmId) ?: return
+        if (currentAlarmId < 0 || screenVisible || screenClosing) return
+        Log.i("NewDayAlarm", "SCREEN_LEFT экран отключения ушёл, будильник звонит — возвращаю")
+        tryLaunch(a)
+        val handler = Handler(Looper.getMainLooper())
+        handler.postDelayed({
+            if (currentAlarmId == a.id && !screenVisible && !screenClosing) {
+                Log.i("NewDayAlarm", "SCREEN_RETRY экран всё ещё не виден — поднимаю ещё раз")
+                tryLaunch(a)
+                NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification(a))
+            }
+        }, 2500L)
+    }
+
+    private fun tryLaunch(a: Alarm) {
+        try {
+            launchDismissScreen(a)
+        } catch (e: Exception) {
+            Log.w("NewDayAlarm", "Экран отключения не поднялся: " + e.message)
+        }
     }
 
     private fun launchDismissScreen(a: Alarm) {

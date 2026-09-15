@@ -13,6 +13,32 @@ import ru.appswire.newday.alarm.AlarmService;
 import ru.appswire.newday.update.UpdatePlugin;
 
 public class MainActivity extends BridgeActivity {
+    /*
+     * Пока будильник звонит, приложение открывается на нём.
+     *
+     * Утром 15 сентября человек смахнул экран будильника жестом «домой», а
+     * через минуту открыл NewDay — и попал на главный экран под звук
+     * будильника, который было не выключить: экран отключения к тому времени
+     * система уже вычистила. Отсюда запуск разрешён всегда — главный экран на
+     * переднем плане, — поэтому это самый надёжный путь назад.
+     *
+     * screenClosing — будильник только что выключили или отложили, и экран
+     * отключения сам открыл приложение: служба ещё не успела отметить
+     * тишину, но возвращать туда нельзя.
+     */
+    @Override
+    public void onResume() {
+        super.onResume();
+        if (AlarmService.Companion.getCurrentAlarmId() >= 0
+                && !AlarmService.Companion.getScreenVisible()
+                && !AlarmService.Companion.getScreenClosing()) {
+            android.content.Intent back = new android.content.Intent(this, ru.appswire.newday.alarm.AlarmActivity.class);
+            back.putExtra("alarmId", AlarmService.Companion.getCurrentAlarmId());
+            back.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(back);
+        }
+    }
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         // Плагины регистрируются до super: иначе мост их не увидит
