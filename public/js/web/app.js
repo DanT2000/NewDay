@@ -4942,15 +4942,46 @@ const BODIES = {
         return row;
       }));
       const chosen = (state.aiItems ?? []).filter((_, i) => !state.aiOff[i]);
+      /*
+       * День уже расписан, а пришёл шаблон на него же: по умолчанию приводим
+       * день к шаблону, а не ставим строки рядом. Галочка — на случай, когда
+       * человек и правда хочет добавить к тому, что есть.
+       */
+      const rep = state.aiReplace;
+      const replacing = Boolean(rep && state.aiReplaceOn);
+      let replaceRow = null;
+      if (rep) {
+        const [, rm, rd] = rep.date.split('-').map(Number);
+        replaceRow = h('button.wrow-sw', {
+          type: 'button', onclick: () => setIn(x => ({ aiReplaceOn: !x.aiReplaceOn })),
+        });
+        add(replaceRow,
+          h('div.wrow-sw-body',
+            h('div.wrow-sw-title', { text: `Заменить расписание ${rd} ${MONTHS[rm - 1]}` }),
+            h('div.wrow-sw-hint', {
+              text: replacing
+                ? `Там уже ${rep.rows} ${adapt.plural(rep.rows, 'строка', 'строки', 'строк')}. `
+                  + 'Совпавшие по названию сдвину — отметки и будильники останутся, лишние уберу. '
+                  + 'Приёмы пищи встанут в новые окна, задачи не задвоятся'
+                : 'Новые строки встанут рядом с прежними',
+            })),
+          sw(replacing));
+      }
       return h('div.wstack',
         h('div.wbubble',
           h('span.wbubble-ava', ico('sparkle-fill', '16px')),
-          h('div.wbubble-text', { text: 'Вот что добавлю. Снимите галочку, если что-то лишнее.' })),
+          h('div.wbubble-text', {
+            text: replacing
+              ? 'Вот каким станет день. Снимите галочку, если что-то лишнее.'
+              : 'Вот что добавлю. Снимите галочку, если что-то лишнее.',
+          })),
+        replaceRow,
         grid,
         h('div.wrow-end',
           h('button.wbtn-quiet', { type: 'button', text: 'Исправить', onclick: () => setIn({ aiStep: 'input' }) }),
           h('button.wbtn-wide', {
-            type: 'button', text: state.busy ? 'Добавляю…' : `Добавить ${chosen.length}`,
+            type: 'button',
+            text: state.busy ? 'Записываю…' : `${replacing ? 'Записать' : 'Добавить'} ${chosen.length}`,
             disabled: state.busy || !chosen.length,
             onclick: () => aiApply(chosen),
           })));
@@ -6258,7 +6289,10 @@ async function aiSend(answer) {
       render();
       return;
     }
-    Object.assign(state, { aiStep: 'plan', aiItems: r.items, aiOff: {} });
+    Object.assign(state, {
+      aiStep: 'plan', aiItems: r.items, aiOff: {},
+      aiReplace: r.model === 'шаблон' ? await templateTarget(r.items) : null, aiReplaceOn: true,
+    });
     render();
   } catch (e) {
     state.busy = false;
@@ -6280,7 +6314,62 @@ async function appendDayNote(date, title, text) {
   if (!свежее) return;
   const day = await api.getDay(date);
   const было = String(day.notes ?? '').trim();
+  // тот же шаблон, присланный второй раз, не должен дописать заметку дважды
+  if (было.includes(свежее)) return;
   await api.patchDay(date, { notes: было ? `${было}\n\n${свежее}` : свежее }, day.rev);
+}
+
+/*
+ * Шаблон на день, где расписание уже есть.
+ *
+ * Шаблон описывает день целиком, и человек присылает его заново, когда день
+ * поменялся: «завтра с семи до десяти молодёжка — переделай». Раньше
+ * помощник только добавлял, и на дне с расписанием рядом вставали все
+ * восемнадцать строк ещё раз. Теперь такой день приводится к присланному:
+ * строка с тем же названием сдвигается на новое время (её отметка «сделано»
+ * и будильник остаются при ней), новые добавляются, а тех, что в тексте
+ * больше нет, не остаётся. Приёмы пищи встают в окна «Завтрака», «Обеда» и
+ * «Ужина» из расписания, задачи и упражнения не задваиваются.
+ *
+ * Спрашиваем галочкой на экране плана — по умолчанию она стоит.
+ */
+async function templateTarget(items) {
+  const rowsIn = items.filter(isTemplateRow);
+  if (!rowsIn.length) return null;
+  const date = itemDate(rowsIn[0]);
+  const day = await api.getDay(date).catch(() => null);
+  const rows = day?.schedule?.length ?? 0;
+  return rows ? { date, rows } : null;
+}
+
+const itemDate = it => (/^\d{4}-\d{2}-\d{2}$/.test(it.date || '') ? it.date : state.date);
+const isTemplateRow = it => it.kind === 'schedule' || (it.kind === 'reminder' && toMin(it.start) !== null);
+const sameTitle = t => String(t ?? '').toLowerCase().replace(/ё/g, 'е')
+  .replace(/[\s–—−,.;:!/()-]+/g, ' ').trim();
+const MEAL_OF_TITLE = [
+  [/^завтрак/i, 'breakfast'], [/^обед/i, 'lunch'], [/^ужин/i, 'dinner'], [/^(перекус|полдник)/i, 'snack'],
+];
+
+/** Что на этом дне уже есть — чтобы сдвигать, а не добавлять второй раз. */
+async function templateDay(date) {
+  const day = await api.getDay(date);
+  const rows = [...(day.schedule ?? [])].sort((a, b) => a.start_min - b.start_min);
+  const taken = new Set();
+  return {
+    // строки с одинаковым названием («Основной рабочий блок» дважды) берутся по порядку
+    row: title => {
+      const r = rows.find(x => !taken.has(x.id) && sameTitle(x.title) === sameTitle(title));
+      if (r) taken.add(r.id);
+      return r ?? null;
+    },
+    leftovers: () => rows.filter(r => !taken.has(r.id)),
+    meal: slot => (slot && slot !== 'other' ? (day.meals ?? []).find(m => m.slot === slot) ?? null : null),
+    meals: day.meals ?? [],
+    sport: title => (day.sport ?? []).find(s => sameTitle(s.exercise ?? s.title) === sameTitle(title)) ?? null,
+    // задачи приходят по корзинам — { work: [...], home: [...] }, текст в `text`
+    hasTask: title => Object.values(day.tasks ?? {}).flat()
+      .some(t => sameTitle(t.text ?? t.title) === sameTitle(title)),
+  };
 }
 
 /**
@@ -6316,9 +6405,16 @@ async function habitExists(title) {
 async function aiApply(items) {
   state.busy = true; render();
   let ok = 0;
+  // замена расписания — только если в выбранном осталась хоть одна строка:
+  // иначе «привести к шаблону» значило бы стереть весь день
+  const replaceDate = state.aiReplace && state.aiReplaceOn
+    && items.some(it => isTemplateRow(it) && itemDate(it) === state.aiReplace.date)
+    ? state.aiReplace.date : null;
   try {
+    const was = replaceDate ? await templateDay(replaceDate) : null;
+    const on = it => (was && itemDate(it) === replaceDate ? was : null);
     for (const it of items) {
-      const date = /^\d{4}-\d{2}-\d{2}$/.test(it.date || '') ? it.date : state.date;
+      const date = itemDate(it);
       const start = toMin(it.start);
       if (it.kind === 'meal') {
         /*
@@ -6327,19 +6423,24 @@ async function aiApply(items) {
          * своими словами значит потерять то единственное, ради чего человек
          * питание и записывает.
          */
-        await data.createMeal(date, {
+        const body = {
           title: it.title || 'Приём пищи',
           slot: MEAL_SLOTS.includes(it.slot) ? it.slot : 'other',
           timeMin: start,
           endMin: toMin(it.end),
           note: String(it.details ?? '').slice(0, 1000),
           calories: Number.isFinite(Number(it.kcal)) ? Number(it.kcal) : null,
-          remindBefore: start === null ? [] : [0],
-        });
+        };
+        const meal = on(it)?.meal(body.slot);
+        if (meal) await data.updateMeal(date, meal.id, body);
+        else await data.createMeal(date, { ...body, remindBefore: start === null ? [] : [0] });
       } else if (it.kind === 'sport') {
-        await data.createSport(date, adapt.sportToServer({
+        const body = adapt.sportToServer({
           title: it.title, sets: it.sets, reps: it.reps, repsMax: it.repsMax, weight: it.weight,
-        }));
+        });
+        const set = on(it)?.sport(it.title);
+        if (set) await data.updateSport(date, set.id, body);
+        else await data.createSport(date, body);
       } else if (it.kind === 'foodPlan') {
         await appendFoodPlan(date, it.details);
       } else if (it.kind === 'habit') {
@@ -6361,6 +6462,7 @@ async function aiApply(items) {
       } else if (it.kind === 'note') {
         await appendDayNote(date, it.title, it.details);
       } else if (it.kind === 'task' || (it.kind === 'reminder' && start === null)) {
+        if (on(it)?.hasTask(it.title)) { ok += 1; continue; }
         await data.createTask(date, adapt.taskToServer({ title: it.title, cat: it.category === 'work' ? 'work' : 'home' }));
       } else {
         /*
@@ -6369,7 +6471,7 @@ async function aiApply(items) {
          * списке и в редакторе считалось блоком — и первая же правка молча
          * приделывала ему конец «плюс полчаса».
          */
-        await data.createRow(date, adapt.rowToServer({
+        const body = adapt.rowToServer({
           title: it.title, start: start ?? 0,
           end: it.kind === 'reminder' ? null : toMin(it.end),
           kind: it.kind === 'reminder'
@@ -6377,9 +6479,16 @@ async function aiApply(items) {
             : (AI_BLOCKS.includes(it.block) ? it.block : 'normal'),
           alarm: it.alarm ?? 'notify', leads: ['at'],
           note: String(it.details ?? ''),
-        }));
+        });
+        const row = on(it)?.row(it.title);
+        if (row) await data.updateRow(date, row.id, rowShift(row, it, body));
+        else await data.createRow(date, body);
       }
       ok += 1;
+    }
+    if (was) {
+      for (const r of was.leftovers()) await data.removeRow(replaceDate, r.id);
+      await mealsIntoWindows(replaceDate, was, items);
     }
     state.busy = false;
     state.modal = null;
@@ -6388,11 +6497,51 @@ async function aiApply(items) {
      * должна открыться пустой. Иначе человек видел бы предложение записать то,
      * что уже записано, и делал это дважды.
      */
-    Object.assign(state, { aiText: '', aiItems: null, aiOff: {}, aiStep: 'input' });
+    Object.assign(state, { aiText: '', aiItems: null, aiOff: {}, aiStep: 'input', aiReplace: null });
     await reload();
   } catch (e) {
     state.busy = false;
     fail(ok ? `Добавлено ${ok} из ${items.length}: ${e.message}` : e.message);
+  }
+}
+
+/*
+ * Сдвинуть прежнюю строку под шаблон: время, вид блока, конец.
+ *
+ * Будильник трогаем, только если шаблон говорит о нём что-то своё: метка
+ * [будильник] появилась или пропала, или стоит «без сигнала». Строка без
+ * метки приходит из разбора с «напомнить», и без этой оговорки каждый
+ * вечерний шаблон включал бы обратно напоминания, выключенные руками.
+ */
+function rowShift(row, it, body) {
+  const patch = { startMin: body.startMin, endMin: body.endMin, kind: body.kind };
+  if (body.note) patch.note = body.note;
+  const wantAlarm = it.alarm === 'alarm';
+  if (wantAlarm !== (row.alarm_mode === 'alarm') || it.alarm === 'off') {
+    patch.alarmMode = body.alarmMode;
+    patch.alarmProfile = body.alarmProfile;
+  }
+  return patch;
+}
+
+/*
+ * Приёмы пищи — в окна из расписания. «Ужин 18:15–18:45» в расписании, а
+ * запись ужина осталась на 19:00 — и напоминание поесть пришло бы посреди
+ * дороги. Двигаем только те, о которых шаблон сам ничего не сказал в
+ * «Питании»: присланное там важнее окна в расписании.
+ */
+async function mealsIntoWindows(date, was, items) {
+  const told = new Set(items.filter(it => it.kind === 'meal' && itemDate(it) === date).map(it => it.slot));
+  for (const it of items) {
+    if (it.kind !== 'schedule' || itemDate(it) !== date) continue;
+    const slot = MEAL_OF_TITLE.find(([re]) => re.test(String(it.title ?? '').trim()))?.[1];
+    if (!slot || told.has(slot)) continue;
+    const meal = was.meals.find(m => m.slot === slot);
+    const start = toMin(it.start);
+    const end = toMin(it.end);
+    if (!meal || start === null || (meal.time_min === start && meal.end_min === end)) continue;
+    await data.updateMeal(date, meal.id, { timeMin: start, endMin: end });
+    told.add(slot);
   }
 }
 

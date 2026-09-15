@@ -1673,6 +1673,89 @@ await js(`fetch('/api/v1/admin/ai', { method: 'PATCH', headers: { 'Content-Type'
     model: ${JSON.stringify(былоAi?.model ?? '')}, apiKey: ${былоAi?.hasKey ? '""' : 'null'} }) }).then(r => r.status)`, true);
 await wait(400);
 
+// ── Шаблон поверх расписанного дня ───────────────────────────
+
+/*
+ * 15 сентября вечерний план на завтра — «День:» и одно «Расписание:» — ушёл
+ * к модели (раздел один, шаблоном не считался) и упал с «Не удалось
+ * соединиться с моделью». А узнайся он шаблоном — помощник поставил бы все
+ * строки рядом с уже стоящими: день был расписан тем же шаблоном накануне.
+ * Проверяем оба места: разбор без модели и приведение дня к присланному.
+ */
+const ДЕНЬ_Ш = new Date(Date.now() + 10 * 864e5).toISOString().slice(0, 10);
+const апиШ = (method, path, body) => js(`fetch('/api/v1${path}', { method: '${method}',
+  headers: { 'Content-Type': 'application/json' }, ${body ? `body: ${JSON.stringify(JSON.stringify(body))}` : ''} })
+  .then(r => r.text()).then(t => (t ? JSON.parse(t) : {}))`, true);   // DELETE отвечает пустым телом
+const деньШ = () => апиШ('GET', `/days/${ДЕНЬ_Ш}/full`);
+for (const r of (await деньШ()).schedule ?? []) await апиШ('DELETE', `/days/${ДЕНЬ_Ш}/schedule/${r.id}`);
+const заготовка = [
+  { title: 'Подъём', startMin: 540, endMin: 550, kind: 'normal', alarmMode: 'alarm', alarmProfile: 'wakeup' },
+  { title: 'Основной рабочий блок', startMin: 1020, endMin: 1140, kind: 'work', alarmMode: 'notify' },
+  { title: 'Ужин', startMin: 1140, endMin: 1170, kind: 'meal', alarmMode: 'notify' },
+  { title: 'Свободное время', startMin: 1170, endMin: 1260, kind: 'normal', alarmMode: 'notify' },
+  { title: 'Чтение книги', startMin: 1320, endMin: 1380, kind: 'normal', alarmMode: 'notify' },
+];
+const idПодъёма = (await апиШ('POST', `/days/${ДЕНЬ_Ш}/schedule`, заготовка[0])).id;
+for (const r of заготовка.slice(1)) await апиШ('POST', `/days/${ДЕНЬ_Ш}/schedule`, r);
+await апиШ('POST', `/days/${ДЕНЬ_Ш}/meals`, { title: 'Ужин', slot: 'dinner', timeMin: 1140, endMin: 1170 });
+await апиШ('POST', `/days/${ДЕНЬ_Ш}/tasks`, { text: 'купить хлеб', bucket: 'home' });
+const задачВ = d => Object.values(d.tasks ?? {}).flat().length;
+const задачДо = задачВ(await деньШ());
+
+const ШАБЛОН_Ш = `День: ${ДЕНЬ_Ш}
+
+Расписание:
+09:00–09:10 — Подъём [будильник]
+17:00–18:15 — Основной рабочий блок [работа]
+18:15–18:45 — Ужин [еда]
+19:00–22:00 — Молодёжка
+23:00–23:30 — Чтение книги`;
+
+const прислатьШаблон = async () => {
+  await js(`window.__wopen('ai')`);
+  await waitFor(`Boolean(document.querySelector('.wai-input'))`, 40);
+  await js(`(() => { const a = document.querySelector('.wai-input'); a.focus();
+    a.value = ${JSON.stringify(ШАБЛОН_Ш)}; a.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await wait(300);
+  await js(`document.querySelector('.wmodal .wai-go')?.click()`);
+  return waitFor(`document.querySelectorAll('.wmodal .wplan-item').length > 0`, 40);
+};
+const планШ = await прислатьШаблон();
+const заменаШ = () => js(`(() => { const r = [...document.querySelectorAll('.wmodal .wrow-sw')]
+  .find(x => x.textContent.includes('Заменить расписание'));
+  return r ? { on: Boolean(r.querySelector('.wsw.on')), hint: r.querySelector('.wrow-sw-hint')?.textContent ?? '' } : null; })()`);
+const зам = await заменаШ();
+проба('день из одного расписания разобран без модели', Boolean(планШ),
+  await js(`document.querySelectorAll('.wmodal .wplan-item').length + ' пунктов'`));
+проба('на расписанном дне предложено заменить расписание, галочка стоит',
+  Boolean(зам?.on) && /уже 5 строк/.test(зам?.hint ?? ''), JSON.stringify(зам)?.slice(0, 120));
+await js(`[...document.querySelectorAll('.wmodal button')].find(b => /^Записать \\d+$/.test(b.textContent.trim()))?.click()`);
+await waitFor(`!document.querySelector('.wmodal .wplan-item')`, 40);
+await wait(800);
+
+const послеШ = await деньШ();
+const названия = (послеШ.schedule ?? []).map(r => r.title).sort().join(', ');
+проба('расписание стало ровно как в шаблоне, без дублей',
+  названия === 'Молодёжка, Основной рабочий блок, Подъём, Ужин, Чтение книги', названия);
+const подъём = (послеШ.schedule ?? []).find(r => r.title === 'Подъём');
+проба('совпавшая строка сдвинута на месте — та же запись, будильник при ней',
+  подъём?.id === idПодъёма && подъём?.alarm_mode === 'alarm', `id ${подъём?.id} (было ${idПодъёма}), ${подъём?.alarm_mode}`);
+const ужинШ = (послеШ.meals ?? []).find(m => m.slot === 'dinner');
+проба('ужин встал в новое окно 18:15–18:45',
+  ужинШ?.time_min === 1095 && ужинШ?.end_min === 1125, `${ужинШ?.time_min}–${ужинШ?.end_min}`);
+проба('задачи не тронуты', задачДо === 1 && задачВ(послеШ) === задачДо, `${задачДо} → ${задачВ(послеШ)}`);
+
+// тот же шаблон второй раз — день не меняется
+await прислатьШаблон();
+await js(`[...document.querySelectorAll('.wmodal button')].find(b => /^Записать \\d+$/.test(b.textContent.trim()))?.click()`);
+await waitFor(`!document.querySelector('.wmodal .wplan-item')`, 40);
+await wait(800);
+const второйШ = await деньШ();
+проба('повторный шаблон ничего не задваивает',
+  (второйШ.schedule?.length ?? 0) === 5 && (второйШ.meals?.length ?? 0) === (послеШ.meals?.length ?? 0),
+  `строк ${второйШ.schedule?.length}, приёмов пищи ${второйШ.meals?.length}`);
+for (const r of второйШ.schedule ?? []) await апиШ('DELETE', `/days/${ДЕНЬ_Ш}/schedule/${r.id}`);
+
 // ── «Сейчас» — это всегда сегодня ────────────────────────────
 
 /*

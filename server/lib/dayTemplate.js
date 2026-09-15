@@ -70,15 +70,33 @@ const TIME = '(\\d{1,2})[:.](\\d{2})';
 const pad2 = n => String(n).padStart(2, '0');
 const hhmm = (h, m) => `${pad2(Number(h))}:${pad2(Number(m))}`;
 
-/** Похоже ли это на заполненный шаблон, а не на живую речь. */
+/**
+ * Похоже ли это на заполненный шаблон, а не на живую речь.
+ *
+ * Два заголовка раздела — шаблон. Один — тоже, если рядом есть строка
+ * «День: …» или хотя бы три строки по формату «09:00–09:10 — …».
+ *
+ * Раньше требовались два раздела, и день из одного расписания — «День:
+ * 2026-09-16» и восемнадцать строк под «Расписание:» — считался живой речью.
+ * Он уходил к модели, та полминуты не отвечала, и человек получал «Не
+ * удалось соединиться с моделью» на тексте, который разбирается кодом за
+ * миллисекунду. Один заголовок и одна строка («Расписание: 09:00 подъём»)
+ * по-прежнему не шаблон: так человек мог просто начать фразу.
+ */
 function looksLikeTemplate(text) {
   const lines = String(text || '').split('\n').map(l => l.trim());
-  let found = 0;
+  const timed = new RegExp(`^${TIME}(?:\\s*${DASH}\\s*${TIME})?\\s*${DASH}\\s*\\S`);
+  let sections = 0;
+  let dayLine = false;
+  let rows = 0;
   for (const line of lines) {
     const head = line.replace(/:\s*$/, '');
-    if (line.endsWith(':') && SECTIONS.some(s => s.re.test(head))) found += 1;
+    if (line.endsWith(':') && SECTIONS.some(s => s.re.test(head))) sections += 1;
+    else if (/^день\s*:\s*\S/i.test(line)) dayLine = true;
+    else if (timed.test(line)) rows += 1;
   }
-  return found >= 2;
+  if (sections >= 2) return true;
+  return sections === 1 && (dayLine || rows >= 3);
 }
 
 /** Дата из строки «День: …»: и «2026-09-14», и «14 сентября». */
