@@ -1704,6 +1704,22 @@ const перенесённая = await js(`(() => {
   typeof перенесённая === 'string' && /^↩ с /.test(перенесённая), String(перенесённая));
 проба('во вчерашнем дне её больше нет',
   ((await апиП('GET', `/days/${вчераП}/full`)).tasks?.home ?? []).length === 0);
+
+/*
+ * Плитки «Сейчас». Проценты отвечали на вопрос, которого человек не задаёт:
+ * «69 % дел» и «56 % привычек за неделю». Первая плитка теперь считает
+ * сделанное, третья — серию по всем привычкам сразу.
+ */
+const плиткиСейчас = await js(`[...document.querySelectorAll('.wstat')].map(s => ({
+  число: s.querySelector('.wstat-val')?.textContent ?? '',
+  подпись: s.querySelector('.wstat-lab')?.textContent ?? '' }))`);
+проба('первая плитка — число сделанного, а не процент',
+  плиткиСейчас[0]?.подпись === 'завершено сегодня' && /^\d+$/.test(плиткиСейчас[0]?.число ?? ''),
+  JSON.stringify(плиткиСейчас[0]));
+проба('третья плитка — серия по всем привычкам',
+  /^серия привычек$|^серии привычек пока нет$/.test(плиткиСейчас[2]?.подпись ?? '')
+    && /^(—|\d+ (день|дня|дней))$/.test(плиткиСейчас[2]?.число ?? ''),
+  JSON.stringify(плиткиСейчас[2]));
 await апиП('DELETE', `/days/${DAY}/tasks/${вчерашняя.id}`);
 await апиП('PATCH', '/settings', { settings: { carryOver: false } });
 
@@ -1800,6 +1816,35 @@ const второйШ = await деньШ();
   (второйШ.schedule?.length ?? 0) === 5 && (второйШ.meals?.length ?? 0) === (послеШ.meals?.length ?? 0),
   `строк ${второйШ.schedule?.length}, приёмов пищи ${второйШ.meals?.length}`);
 for (const r of второйШ.schedule ?? []) await апиШ('DELETE', `/days/${ДЕНЬ_Ш}/schedule/${r.id}`);
+
+/*
+ * Привычки из шаблона: «по будням» — это понедельник–пятница.
+ *
+ * В приложении маски были записаны по другому счёту (младший бит —
+ * воскресенье), и привычка «по будням» заводилась со вторника по субботу, а
+ * «по выходным» — понедельник и воскресенье. В списке это выглядит обычной
+ * привычкой: в понедельник её молча не спрашивают, в субботу спрашивают зря.
+ */
+const ПРИВЫЧКИ_Ш = `День: ${ДЕНЬ_Ш}\n\nПривычки:\n- Планёрка проб, по будням\n- Долгая прогулка проб, по выходным`;
+await js(`window.__wopen('ai')`);
+await waitFor(`Boolean(document.querySelector('.wai-input'))`, 40);
+await js(`(() => { const a = document.querySelector('.wai-input'); a.focus();
+  a.value = ${JSON.stringify(ПРИВЫЧКИ_Ш)}; a.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+await wait(300);
+await js(`document.querySelector('.wmodal .wai-go')?.click()`);
+await waitFor(`document.querySelectorAll('.wmodal .wplan-item').length > 1`, 40);
+await js(`[...document.querySelectorAll('.wmodal button')].find(b => /^Добавить \\d+$/.test(b.textContent.trim()))?.click()`);
+await waitFor(`!document.querySelector('.wmodal .wplan-item')`, 40);
+await wait(600);
+const привычкиШ = await апиШ('GET', '/habits');
+const списокШ = Array.isArray(привычкиШ) ? привычкиШ : (привычкиШ.habits ?? []);
+const будни = списокШ.find(h => h.title === 'Планёрка проб');
+const выходные = списокШ.find(h => h.title === 'Долгая прогулка проб');
+проба('«по будням» из шаблона — понедельник–пятница', будни?.schedule_mask === 31,
+  `маска ${будни?.schedule_mask}`);
+проба('«по выходным» — суббота и воскресенье', выходные?.schedule_mask === 96,
+  `маска ${выходные?.schedule_mask}`);
+for (const h of [будни, выходные]) if (h) await апиШ('DELETE', `/habits/${h.id}`);
 
 // ── «Сейчас» — это всегда сегодня ────────────────────────────
 

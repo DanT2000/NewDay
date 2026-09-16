@@ -58,6 +58,12 @@ function dayService(db, opts = {}) {
       sport: sport.list(user.id, date),
       habits: stats.habitsForDate(user, date),
       progress: stats.dayProgress(user, date),
+      /*
+       * Серия по всем привычкам — отдельным полем, а не внутри прогресса:
+       * прогресс считается ещё и по каждому дню сводки за месяц, и лишний
+       * проход по году истории на каждую из тридцати клеток там не нужен.
+       */
+      habitsStreak: stats.habitsStreak(user, date),
     };
   }
 

@@ -280,6 +280,61 @@ function statsService(db, opts = {}) {
     });
   }
 
+  /**
+   * Серия по всем привычкам сразу: сколько дней подряд закрыт весь список.
+   *
+   * Плитка на «Сейчас» показывала «привычки за 7 дней, 56 %». Процент за
+   * неделю ничего не говорит о том, держится ли человек: 56 % — это и «через
+   * день», и «три дня подряд, потом бросил». Серия говорит ровно то, ради
+   * чего привычки и ведут.
+   *
+   * Правила те же, что у серии одной привычки:
+   *  - день засчитан, когда выполнены все привычки, обещанные на этот день;
+   *  - «заморожено» не считается ни выполнением, ни срывом;
+   *  - день, на который ничего не обещано (все привычки по будням, а это
+   *    воскресенье), пропускается: он не рвёт серию и не удлиняет её;
+   *  - свободный график («три раза в неделю») в серию не входит вовсе — он
+   *    не про дни подряд; его отметка учитывается, если она есть;
+   *  - сегодняшний незакрытый день серию не рвёт: он ещё не кончился.
+   * Дальше года назад не смотрим — столько подряд не бывает, а запрос по
+   * каждому дню стоит денег.
+   */
+  const STREAK_LIMIT = 366;
+
+  function habitsStreak(user, date) {
+    const today = todayFor(user.timezone, nowOf());
+    const list = habits.list(user.id, { includeArchived: true })
+      .map(h => localized(h, user.timezone))
+      .filter(h => !freeSchedule(h));
+    if (!list.length) return 0;
+
+    const from = addDays(date, -STREAK_LIMIT);
+    const logs = db.prepare(
+      'SELECT habit_id, date, status FROM habit_logs WHERE user_id = ? AND date >= ? AND date <= ?',
+    ).all(user.id, from, date);
+    const byDate = new Map();
+    for (const l of logs) {
+      if (!byDate.has(l.date)) byDate.set(l.date, new Map());
+      byDate.get(l.date).set(l.habit_id, l.status);
+    }
+
+    let streak = 0;
+    for (let cursor = date; cursor >= from; cursor = addDays(cursor, -1)) {
+      const обещано = list.filter(h => habitExistsOn(h, cursor) && habitActiveOn(h, cursor));
+      if (!обещано.length) continue;
+
+      const статусы = byDate.get(cursor) ?? new Map();
+      const считаем = обещано.filter(h => статусы.get(h.id) !== 'skipped');
+      if (!считаем.length) continue;
+
+      if (считаем.every(h => статусы.get(h.id) === 'done')) { streak += 1; continue; }
+      // сегодня ещё идёт: незакрытый день не срыв, но и не звено серии
+      if (cursor >= today) continue;
+      break;
+    }
+    return streak;
+  }
+
   /** Прогресс дня: общий плюс шесть секций, без весов. */
   function dayProgress(user, date) {
     const section = rows => {
@@ -365,7 +420,7 @@ function statsService(db, opts = {}) {
     };
   }
 
-  return { habitStats, habitsForDate, dayProgress, overview, habitActiveOn };
+  return { habitStats, habitsForDate, habitsStreak, dayProgress, overview, habitActiveOn };
 }
 
 module.exports = { statsService, habitActiveOn };
