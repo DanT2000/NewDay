@@ -1673,6 +1673,40 @@ await js(`fetch('/api/v1/admin/ai', { method: 'PATCH', headers: { 'Content-Type'
     model: ${JSON.stringify(былоAi?.model ?? '')}, apiKey: ${былоAi?.hasKey ? '""' : 'null'} }) }).then(r => r.status)`, true);
 await wait(400);
 
+// ── Невыполненное вчерашнее приезжает в сегодня ──────────────
+
+/*
+ * Переключатель «Переносить невыполненное» в настройках был, а переноса не
+ * было — он остался в старых маршрутах. Человек не закрыл во вторник две
+ * задачи, открыл среду, а их там нет. Проверяем весь путь: настройка,
+ * перенос на сервере при открытии дня и пометка «↩ с …» на самой задаче.
+ */
+const апиП = (method, path, body) => js(`fetch('/api/v1${path}', { method: '${method}',
+  headers: { 'Content-Type': 'application/json' }, ${body ? `body: ${JSON.stringify(JSON.stringify(body))}` : ''} })
+  .then(r => r.text()).then(t => (t ? JSON.parse(t) : {}))`, true);
+const вчераП = dayIn(-1);   // «вчера» по поясу стенда, а не по UTC
+await апиП('PATCH', '/settings', { settings: { carryOver: true } });
+const вчерашняя = await апиП('POST', `/days/${вчераП}/tasks`, { text: 'вчерашняя недоделка', bucket: 'home' });
+await rpc(ws, 'Page.navigate', { url: `${BASE}/web.html` });
+await waitFor('Boolean(document.querySelector(".wside"))');
+await wait(1200);
+/*
+ * Дела на широком экране живут на «Сейчас»: раздел «Дела» телефонный, и на
+ * компьютере он подменяется расписанием (SAME_SCREEN). Проба, ходившая в
+ * 'tasks', смотрела на сетку расписания и задач там не находила.
+ */
+await js(`window.__wgo?.('today')`);
+await wait(900);
+const перенесённая = await js(`(() => {
+  const row = [...document.querySelectorAll('.wlist-row')].find(r => r.textContent.includes('вчерашняя недоделка'));
+  return row ? row.querySelector('.wlist-meta')?.textContent ?? '' : null; })()`);
+проба('невыполненная задача из вчера видна сегодня и помечена, откуда приехала',
+  typeof перенесённая === 'string' && /^↩ с /.test(перенесённая), String(перенесённая));
+проба('во вчерашнем дне её больше нет',
+  ((await апиП('GET', `/days/${вчераП}/full`)).tasks?.home ?? []).length === 0);
+await апиП('DELETE', `/days/${DAY}/tasks/${вчерашняя.id}`);
+await апиП('PATCH', '/settings', { settings: { carryOver: false } });
+
 // ── Шаблон поверх расписанного дня ───────────────────────────
 
 /*
@@ -1717,14 +1751,25 @@ const прислатьШаблон = async () => {
   await js(`(() => { const a = document.querySelector('.wai-input'); a.focus();
     a.value = ${JSON.stringify(ШАБЛОН_Ш)}; a.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   await wait(300);
+  живаяКнопка = await js(`!document.querySelector('.wmodal .wai-go')?.disabled`);
   await js(`document.querySelector('.wmodal .wai-go')?.click()`);
   return waitFor(`document.querySelectorAll('.wmodal .wplan-item').length > 0`, 40);
 };
+let живаяКнопка = null;
 const планШ = await прислатьШаблон();
 const заменаШ = () => js(`(() => { const r = [...document.querySelectorAll('.wmodal .wrow-sw')]
   .find(x => x.textContent.includes('Заменить расписание'));
   return r ? { on: Boolean(r.querySelector('.wsw.on')), hint: r.querySelector('.wrow-sw-hint')?.textContent ?? '' } : null; })()`);
 const зам = await заменаШ();
+/*
+ * Помощник на стенде не подключён — и это ровно тот случай, ради которого
+ * шаблон разбирается кодом. Кнопка «Разобрать» гасла всегда, когда модели
+ * нет, и заполненный день было некуда отправить.
+ */
+const помощникГотов = await js(`fetch('/api/v1/settings').then(r => r.json()).then(s => Boolean(s.ai?.ready))`, true);
+проба('без подключённого помощника шаблон всё равно отправляется',
+  живаяКнопка === true && помощникГотов === false,
+  `кнопка жива: ${живаяКнопка}, помощник подключён: ${помощникГотов}`);
 проба('день из одного расписания разобран без модели', Boolean(планШ),
   await js(`document.querySelectorAll('.wmodal .wplan-item').length + ' пунктов'`));
 проба('на расписанном дне предложено заменить расписание, галочка стоит',

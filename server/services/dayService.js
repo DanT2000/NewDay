@@ -9,6 +9,7 @@ const { ApiError, notFound } = require('../lib/errors');
  */
 const { todayFor, addDays, diffDays } = require('../lib/dates');
 const { daysRepo, bumpRev } = require('../repos/days');
+const { usersRepo } = require('../repos/users');
 const { scheduleRepo } = require('../repos/schedule');
 const { tasksRepo } = require('../repos/tasks');
 const { mealsRepo } = require('../repos/meals');
@@ -26,6 +27,7 @@ function dayService(db, opts = {}) {
   const sport = sportRepo(db);
   const stats = statsService(db, opts);
   const series = seriesService(db);
+  const users = usersRepo(db);
 
   /**
    * Читает день. Если записи нет — отдаёт валидный пустой день с rev: 0
@@ -36,6 +38,7 @@ function dayService(db, opts = {}) {
     // Повторы достраиваются при открытии дня: человек, открывший завтра,
     // ожидает увидеть своё расписание, а не пустоту.
     series.materializeDay(user.id, date, { today: todayFor(user.timezone) });
+    carryTasks(user, date);
     const day = days.get(user.id, date);
     const allTasks = tasks.list(user.id, date);
     return {
@@ -56,6 +59,74 @@ function dayService(db, opts = {}) {
       habits: stats.habitsForDate(user, date),
       progress: stats.dayProgress(user, date),
     };
+  }
+
+  /**
+   * Невыполненное из прошлых дней переезжает в сегодня.
+   *
+   * Переключатель «Переносить невыполненное — задачи уезжают на завтра» в
+   * настройках был, а переноса не было: он остался в старом наборе
+   * маршрутов, работавшем с прежним хранилищем дня. Человек видел
+   * включённый переключатель, не закрывал во вторник две задачи, открывал
+   * среду — и там их не было. Тихо не работающая настройка хуже, чем её
+   * отсутствие.
+   *
+   * Задача именно переезжает, а не копируется: так обещает сама подпись
+   * переключателя, и так задача остаётся одной штукой, а не следом в каждом
+   * прошедшем дне. Откуда приехала, видно на самой задаче — «↩ с 15
+   * сентября», это поле `carried_from`, и первая дата в нём сохраняется.
+   *
+   * Только в сегодня и только по открытию дня — там же, где достраиваются
+   * повторы. Открытая среда не должна вытягивать к себе несделанное, пока
+   * на календаре вторник: иначе задача исчезла бы из сегодняшнего дня.
+   *
+   * Глубина — две недели. Человек, вернувшийся из отпуска, не должен
+   * получить в сегодня свалку из полусотни задач месячной давности; то, что
+   * старше, осталось в своих днях и никуда не денется.
+   */
+  const CARRY_DAYS = 14;
+  const sameText = s => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+  function carryTasks(user, date) {
+    const today = todayFor(user.timezone);
+    if (date !== today) return;
+    if (users.getSettings(user.id)?.carryOver !== true) return;
+
+    const since = addDays(today, -CARRY_DAYS);
+    const rows = db.prepare(
+      `SELECT id, date, text FROM tasks
+        WHERE user_id = ? AND done = 0 AND date < ? AND date >= ?
+        ORDER BY date ASC, sort_order ASC, id ASC`,
+    ).all(user.id, today, since);
+    if (!rows.length) return;
+
+    const here = tasks.list(user.id, today);
+    const seen = new Set(here.map(t => sameText(t.text)));
+    let order = here.reduce((max, t) => Math.max(max, t.sort_order ?? 0), -1);
+    /*
+     * `carried_from` и `date` справа считаются по прежним значениям строки —
+     * это свойство UPDATE в SQLite, поэтому COALESCE берёт именно первый
+     * день, где задача появилась, а не сегодняшний.
+     */
+    const move = db.prepare(
+      `UPDATE tasks SET date = ?, sort_order = ?, carried_from = COALESCE(carried_from, date),
+              updated_at = datetime('now')
+        WHERE id = ?`,
+    );
+    const from = new Set();
+    db.transaction(() => {
+      for (const t of rows) {
+        // такая же задача на сегодня уже стоит — пусть остаётся в своём дне
+        if (seen.has(sameText(t.text))) continue;
+        seen.add(sameText(t.text));
+        move.run(today, (order += 1), t.id);
+        from.add(t.date);
+      }
+    })();
+
+    if (!from.size) return;
+    bumpRev(db, user.id, today);
+    for (const d of from) bumpRev(db, user.id, d);
   }
 
   /**

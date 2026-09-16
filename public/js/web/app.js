@@ -5041,7 +5041,8 @@ const BODIES = {
       h('div.whint', {
         text: store.ai.ready
           ? 'Опишите день словами или продиктуйте — разложу по расписанию, делам и напоминаниям.'
-          : 'Помощник не подключён. Владелец задаёт подключение в настройках.',
+          : 'Помощник не подключён — живую речь разобрать нечем. Заполненный шаблон дня '
+            + 'разберётся и так: он раскладывается по правилам, без модели.',
       }),
       h('div.wai-row', area, mic),
       listening
@@ -5068,7 +5069,7 @@ const BODIES = {
       }),
       h('div.wclock-cap.wai-hint', {
         text: 'напишите или продиктуйте — и кнопка оживёт',
-        hidden: !store.ai.ready || Boolean(state.aiText.trim()) || state.busy,
+        hidden: Boolean(state.aiText.trim()) || state.busy,
         style: { margin: '0' },
       }));
   },
@@ -6237,8 +6238,40 @@ const AI_BLOCKS = ['normal', 'work', 'meal', 'sport', 'rest'];
 /** Как часто повторяется привычка: маска дней недели, воскресенье — нулевой бит. */
 const HABIT_MASK = { daily: 127, weekdays: 62, weekend: 65 };
 
-/** Почему «Разобрать» пока нельзя нажать: занято, не подключён или пусто. */
-const aiNotReady = () => state.busy || !store.ai.ready || !state.aiText.trim();
+/*
+ * Похоже ли набранное на заполненный шаблон дня.
+ *
+ * То же правило, что и на сервере (`server/lib/dayTemplate.js`): два
+ * заголовка раздела, или один заголовок вместе со строкой «День: …», или
+ * с тремя строками вида «09:00–09:10 — …». Здесь оно нужно ровно затем,
+ * чтобы не гасить кнопку: шаблон разбирается кодом и модель ему не нужна.
+ */
+const РАЗДЕЛ = /^(распис|питани|еда|задач|дела|привыч|тренировк|спорт|зал|заметк)[а-яё]*:$/i;
+const СТРОКА_ВРЕМЕНИ = /^\d{1,2}[:.]\d{2}(\s*[–—−-]\s*\d{1,2}[:.]\d{2})?\s*[–—−-]\s*\S/;
+function looksLikeTemplate(text) {
+  let разделов = 0;
+  let день = false;
+  let строк = 0;
+  for (const raw of String(text ?? '').split('\n')) {
+    const line = raw.trim();
+    if (РАЗДЕЛ.test(line)) разделов += 1;
+    else if (/^день\s*:\s*\S/i.test(line)) день = true;
+    else if (СТРОКА_ВРЕМЕНИ.test(line)) строк += 1;
+  }
+  return разделов >= 2 || (разделов === 1 && (день || строк >= 3));
+}
+
+/**
+ * Почему «Разобрать» пока нельзя нажать: занято, пусто или помощник не
+ * подключён — и это не шаблон.
+ *
+ * Шаблон дня разбирается кодом на сервере, без модели и без денег, и должен
+ * работать, даже когда помощник не настроен или провайдер лежит. Кнопка же
+ * гасла всегда, и заполненный день было некуда отправить: человек с готовым
+ * текстом упирался в «Помощник не подключён».
+ */
+const aiNotReady = () => state.busy || !state.aiText.trim()
+  || (!store.ai.ready && !looksLikeTemplate(state.aiText));
 
 /**
  * Подкрутить кнопку и подсказку под набранный текст, не перерисовывая шторку.
@@ -6248,7 +6281,7 @@ function paintAiReady() {
   const go = document.querySelector('.wmodal .wai-go');
   if (go) go.disabled = aiNotReady();
   const hint = document.querySelector('.wmodal .wai-hint');
-  if (hint) hint.hidden = !store.ai.ready || Boolean(state.aiText.trim()) || state.busy;
+  if (hint) hint.hidden = Boolean(state.aiText.trim()) || state.busy;
 }
 
 const aiMeta = p => {
