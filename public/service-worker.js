@@ -6,7 +6,7 @@
  * сказать, что связи нет.
  */
 
-const VERSION = 'newday-ab97d05cf4fc';
+const VERSION = 'newday-2eb6eee8a67e';
 const SHELL = [
   // Веб-версия: с неё начинается браузер, и офлайн она должна открываться
   '/web.html', '/css/web.css',
@@ -21,7 +21,7 @@ const SHELL = [
   '/js/now.js', '/js/main.js', '/js/habits.js', '/js/stats.js', '/js/settings.js',
   '/js/api.js', '/js/store.js', '/js/dates.js', '/js/dom.js',
   '/js/theme.js', '/js/toast.js', '/js/emoji.js', '/js/emoji-data.json', '/js/qr.js',
-  '/js/update.js', '/js/install-banner.js', '/js/native.js',
+  '/js/update.js', '/js/install-banner.js', '/js/native.js', '/js/diag.js',
   '/js/vendor/qrcode.js',
   '/js/components/drag.js', '/js/components/sheet.js', '/js/components/calendar.js',
   '/js/components/timepicker.js', '/js/push.js',
@@ -76,24 +76,42 @@ self.addEventListener('fetch', event => {
   const immutable = /^\/(fonts|icons)\//.test(url.pathname)
     || /\.(woff2|png|svg|jpg|webp)$/.test(url.pathname);
 
+  /*
+   * Сеть вперёд, но не дольше порога.
+   *
+   * «Есть Wi-Fi, а интернета нет» — гостиница, метро, поезд — это не отказ
+   * соединения: пакеты идут, просто почти не идут. Сеть-вперёд без порога
+   * означала, что человек смотрит в белый экран столько, сколько браузер
+   * решит ждать, хотя рабочая копия лежит в кеше рядом. Ждём сеть пару
+   * секунд, дальше показываем копию; ответ, который всё-таки придёт,
+   * обновит кеш к следующему открытию.
+   */
+  const СЕТЬ_ЖДЁМ_МС = 2500;
+
   event.respondWith((async () => {
-    if (immutable) {
-      const hit = await caches.match(request, { ignoreSearch: true });
-      if (hit) return hit;
+    const копия = await caches.match(request, { ignoreSearch: true });
+    if (immutable && копия) return копия;
+
+    const изСети = fetch(request).then(response => {
+      if (response.ok) caches.open(VERSION).then(cache => cache.put(request, response.clone()));
+      return response;
+    });
+
+    if (!копия) {
+      try {
+        return await изСети;
+      } catch {
+        return new Response('Нет связи', {
+          status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        });
+      }
     }
 
+    const порог = new Promise(resolve => setTimeout(() => resolve(копия), СЕТЬ_ЖДЁМ_МС));
     try {
-      const response = await fetch(request);
-      if (response.ok) {
-        const cache = await caches.open(VERSION);
-        cache.put(request, response.clone());
-      }
-      return response;
+      return await Promise.race([изСети, порог]);
     } catch {
-      const hit = await caches.match(request, { ignoreSearch: true });
-      return hit || new Response('Нет связи', {
-        status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-      });
+      return копия;
     }
   })());
 });

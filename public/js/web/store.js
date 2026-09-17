@@ -108,7 +108,17 @@ export async function boot() {
     store.user = { email: settings.email, username: settings.username, isAdmin: settings.isAdmin };
     store.offline = false;
     keep('settings', settings);
-    store.ai = await api.GET('/ai/status').catch(() => ({ ready: false, voice: false }));
+    /*
+     * Состояние помощника не задерживает открытие.
+     *
+     * Раньше старт ждал два запроса подряд: настройки и статус помощника. На
+     * плохой связи это удваивало время до первого экрана, хотя статус нужен
+     * ровно одной шторке — и та открывается позже. Спрашиваем его вдогонку.
+     */
+    store.ai = store.ai ?? { ready: false, voice: false };
+    api.GET('/ai/status')
+      .then(ai => { store.ai = ai; })
+      .catch(() => { /* не ответил — шторка помощника скажет, что он не подключён */ });
     return settings;
   } catch (e) {
     // 401 разбирает вызывающий: там нужен переход на страницу входа, а не копия

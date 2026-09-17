@@ -19,6 +19,15 @@ function devicesRepo(db) {
       const code = randomHex(24);
       const short = shortCode();
       const expiresAt = Date.now() + PAIR_TTL_MS;
+      /*
+       * Заодно убираем протухшие и уже использованные.
+       *
+       * Коды одноразовые и живут минуты, а таблица не чистилась никогда: она
+       * росла на каждую привязку устройства, и поиск по ней при следующей
+       * привязке шёл по всей истории.
+       */
+      db.prepare("DELETE FROM pair_codes WHERE expires_at < ? OR claimed_at IS NOT NULL")
+        .run(Date.now() - PAIR_TTL_MS);
       db.prepare(
         'INSERT INTO pair_codes (user_id, code_hash, short_code, expires_at) VALUES (?,?,?,?)'
       ).run(userId, hashToken(code), short, expiresAt);

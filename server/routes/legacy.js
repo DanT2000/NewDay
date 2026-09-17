@@ -60,16 +60,30 @@ module.exports = function legacyRouter({ db, auth, requireWrite }) {
     };
   }
 
+  /*
+   * Пределы те же, что у нового пути.
+   *
+   * Старый путь пишет в те же таблицы, но своей проверки длины у него не
+   * было: через него в базу заезжал текст любого размера, а приезжал он
+   * потом во все списки нового клиента. Вес тоже шёл голым Number() —
+   * «семьдесят» превращалось в NaN и молча стирало значение.
+   */
+  const MAX_NOTES = 20000;
+  const MAX_TITLE = 200;
+  const MAX_TASK = 500;
+
   /** Заменяет только те секции, которые реально пришли в теле. */
   function writeSections(user, date, body) {
     const tx = db.transaction(() => {
       days.ensure(user.id, date);
       const fields = {};
-      for (const k of ['title', 'focus', 'notes']) {
-        if (body[k] !== undefined) fields[k] = String(body[k] ?? '');
+      for (const [k, предел] of [['title', MAX_TITLE], ['focus', MAX_TITLE], ['notes', MAX_NOTES]]) {
+        if (body[k] === undefined) continue;
+        fields[k] = v.str(body[k] ?? '', { max: предел, field: k, trim: false });
       }
       if (body.weight !== undefined) {
-        fields.weight = body.weight === null || body.weight === '' ? null : Number(body.weight);
+        fields.weight = body.weight === null || body.weight === ''
+          ? null : v.num(body.weight, { min: 1, max: 700, field: 'вес' });
       }
       if (Object.keys(fields).length) days.patch(user.id, date, fields);
 
@@ -80,7 +94,7 @@ module.exports = function legacyRouter({ db, auth, requireWrite }) {
           schedule.create(user.id, date, {
             startMin: r ? r.startMin : 0,
             endMin: r ? r.endMin : null,
-            title: String(s.action ?? s.title ?? ''),
+            title: v.str(s.action ?? s.title ?? '', { max: MAX_TITLE, field: 'название' }),
             done: s.done ? 1 : 0,
             sortOrder: i,
           });
@@ -92,7 +106,7 @@ module.exports = function legacyRouter({ db, auth, requireWrite }) {
           tasks.remove(user.id, row.id);
         }
         body[field].forEach((t, i) => tasks.create(user.id, date, {
-          bucket, text: String(t.text ?? ''), done: t.done ? 1 : 0,
+          bucket, text: v.str(t.text ?? '', { max: MAX_TASK, field: 'задача' }), done: t.done ? 1 : 0,
           sortOrder: i, carriedFrom: t.carriedFrom ?? null,
         }));
       }

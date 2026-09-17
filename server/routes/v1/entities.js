@@ -1,5 +1,5 @@
 const { entityRouter, pick } = require('./_entityRouter');
-const { wrap } = require('../../lib/errors');
+const { wrap, badRequest } = require('../../lib/errors');
 const v = require('../../lib/validate');
 
 const { scheduleRepo } = require('../../repos/schedule');
@@ -98,6 +98,21 @@ function sanitizeSchedule(body, { partial }) {
     }
     if (!partial || body.endMin !== undefined) {
       out.endMin = v.int(body.endMin, { min: 0, max: 1439, field: 'конец', nullable: true });
+    }
+    /*
+     * Конец не раньше начала.
+     *
+     * День в этой модели не переходит через полночь: «22:00–06:00»
+     * записывалось как конец 360 при начале 1320 и превращалось в сетке в
+     * обрубок высотой в одну строку с подписью «22:00–06:00». Само
+     * приложение так сделать не даёт (жмёт конец к 23:59), поэтому приходит
+     * такое только снаружи — из интеграции или чужого клиента, и молча
+     * портит день. Честный отказ лучше невидимой записи; ночную смену
+     * записывают двумя блоками.
+     */
+    if (out.startMin !== undefined && out.endMin !== undefined
+        && out.endMin !== null && out.endMin < out.startMin) {
+      throw badRequest('Конец раньше начала: через полночь блок не переносится, разбейте его на два');
     }
   }
   return out;

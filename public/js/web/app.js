@@ -684,11 +684,21 @@ function closeAnnounce() {
 /** Разложить ответы сервера по спискам, которыми рисует разметка. */
 function fill() {
   const minutes = minutesNow();
-  SCHEDULE = adapt.schedule(store.day, { minutes, todayKey: todayKey() });
-  TASKS = adapt.tasks(store.day);
-  MEALS = adapt.meals(store.day);
-  HABITS = adapt.habits(store.day);
-  SPORT = adapt.sport(store.day);
+  /*
+   * Рисуем только тот день, который открыт.
+   *
+   * `store.day` — это последний УСПЕШНО загруженный день. Если загрузка
+   * нового дня не удалась (нет связи, отказ сервера), в нём оставался
+   * прежний, и человек видел под новой датой вчерашние дела: добавленная
+   * задача уходила в правильный день, но на экране не появлялась. Пустой
+   * день честнее: он хотя бы не врёт о содержимом.
+   */
+  const день = store.day?.date === state.date ? store.day : null;
+  SCHEDULE = adapt.schedule(день, { minutes, todayKey: todayKey() });
+  TASKS = adapt.tasks(день);
+  MEALS = adapt.meals(день);
+  HABITS = adapt.habits(день);
+  SPORT = adapt.sport(день);
   NOTES = adapt.notes(store.notes, todayKey(), state.date);
 }
 const ico = (name, size = '17px', cls = '') => icon(name, { size, cls });
@@ -2335,9 +2345,14 @@ async function repRecord() {
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
     note('Это устройство не умеет записывать звук — напишите текстом', true); return;
   }
+  // та же защита, что и у диктовки: пока открывается микрофон, второе
+  // нажатие не должно открыть второй поток и потерять первый
+  if (state.repOpening) return;
+  state.repOpening = true;
   let stream;
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
   catch (e) {
+    state.repOpening = false;
     const name = e?.name ?? '';
     const сообщение = name === 'NotAllowedError' || name === 'SecurityError'
       ? 'Микрофон запрещён. Разрешите доступ к микрофону в настройках приложения'
@@ -2349,6 +2364,7 @@ async function repRecord() {
     return;
   }
 
+  state.repOpening = false;
   const chunks = [];
   const rec = new MediaRecorder(stream);
   const t0 = Date.now();
@@ -5285,8 +5301,14 @@ const BODIES = {
         })),
       h('div', h('div.wfield-label', { text: 'категория' }), cats),
       h('div.wrow-end',
+        /*
+          * Гаснет вместе с «Готово»: пока идёт сохранение, нажатие на
+          * «Удалить» отправляло второй запрос на ту же запись — и исход
+          * выходил непредсказуемым: то сохранено и тут же удалено, то
+          * «Запись не найдена» поверх удачного сохранения.
+          */
         h('button.wbtn-quiet', {
-          type: 'button', text: 'Удалить',
+          type: 'button', text: 'Удалить', disabled: state.busy,
           onclick: () => (state.taskId === 'new' ? closeModal() : busy(data.removeTask(state.date, state.taskId))),
         }),
         h('button.wbtn-wide', { type: 'button', text: state.busy ? 'Сохраняю…' : 'Готово', disabled: state.busy, onclick: save })));
@@ -6478,6 +6500,18 @@ async function aiApply(items) {
   const replaceDate = state.aiReplace && state.aiReplaceOn
     && items.some(it => isTemplateRow(it) && itemDate(it) === state.aiReplace.date)
     ? state.aiReplace.date : null;
+  /*
+   * Записанное вычёркиваем по ходу.
+   *
+   * Запись идёт по одному пункту, и связь может оборваться посередине:
+   * человек видит «Добавлено 5 из 12» и нажимает «Добавить» ещё раз.
+   * Раньше цикл начинался сначала, и первые пять строк расписания,
+   * приёмов пищи и упражнений появлялись в дне по второму разу. Теперь
+   * записанное убирается из списка сразу, поэтому повторное нажатие
+   * дописывает ровно то, что не доехало.
+   */
+  const осталось = [...items];
+
   try {
     const was = replaceDate ? await templateDay(replaceDate) : null;
     const on = it => (was && itemDate(it) === replaceDate ? was : null);
@@ -6553,6 +6587,7 @@ async function aiApply(items) {
         else await data.createRow(date, body);
       }
       ok += 1;
+      осталось.splice(осталось.indexOf(it), 1);
     }
     if (was) {
       for (const r of was.leftovers()) await data.removeRow(replaceDate, r.id);
@@ -6569,7 +6604,12 @@ async function aiApply(items) {
     await reload();
   } catch (e) {
     state.busy = false;
-    fail(ok ? `Добавлено ${ok} из ${items.length}: ${e.message}` : e.message);
+    /*
+     * То, что уже записано, из списка убрано, и повторное нажатие
+     * «Добавить» допишет только оставшееся.
+     */
+    if (ok) state.aiItems = осталось;
+    fail(ok ? `Добавлено ${ok} из ${items.length}, остальное осталось в списке: ${e.message}` : e.message);
   }
 }
 
@@ -6708,6 +6748,17 @@ async function dictate() {
     state.notice = 'Этот браузер не умеет записывать звук'; render(); return;
   }
   if (state.recorder) { state.recorder.stop(); return; }
+  /*
+   * Отметку «открываю микрофон» ставим до ожидания разрешения.
+   *
+   * Проверка `state.recorder` стоит до `await getUserMedia`, а диалог
+   * разрешения думает секунду-две — на телефоне за это время нажимают
+   * второй раз. Тогда открывался второй поток, он затирал первый в
+   * состоянии, и первый оставался включённым навсегда: индикатор записи
+   * горит, человек видит слежку.
+   */
+  if (state.micOpening) return;
+  state.micOpening = true;
 
   /*
    * Причину отказа называем настоящую.
@@ -6720,6 +6771,7 @@ async function dictate() {
   let stream;
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
   catch (e) {
+    state.micOpening = false;
     const name = e?.name ?? '';
     state.notice = !window.isSecureContext
       ? 'Микрофон работает только по https. Откройте сайт по защищённому адресу'
@@ -6734,6 +6786,7 @@ async function dictate() {
     return;
   }
 
+  state.micOpening = false;
   const chunks = [];
   const rec = new MediaRecorder(stream);
   state.recorder = rec;
@@ -7256,7 +7309,15 @@ async function bootstrap() {
     const settings = await data.boot();
     // Из уведомления приходят с датой в хвосте адреса: «/web.html#2026-08-12».
     // Открыть при этом сегодняшний день значит показать не то, о чём звали
-    state.date = askedDate() ?? settings.today;
+    /*
+     * Своё «сегодня», а не серверное.
+     *
+     * Без связи `boot()` отдаёт снимок настроек из локальной копии, а в нём
+     * `today` — дата того дня, когда снимок сняли. Приложение, открытое без
+     * сети через неделю, показывало прошлую неделю, и кнопка «Сегодня» не
+     * была подсвечена. Дату считаем по часам устройства и поясу аккаунта.
+     */
+    state.date = askedDate() ?? todayKey();
     state.theme = settings.theme ?? 'dark';
     const цвет = settings.settings?.accent;
     state.color = Object.hasOwn(PALETTE, цвет ?? '') ? цвет : ЦВЕТ_ПО_УМОЛЧАНИЮ;

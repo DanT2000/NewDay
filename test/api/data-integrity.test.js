@@ -173,3 +173,25 @@ test('кривой файл выгрузки отклоняется, а не р�
     assert.strictEqual(плохие.length, 0, 'в базе не осталось дней с невозможной датой');
   } finally { await s.close(); }
 });
+
+test('блок через полночь не создаётся молча обрубком', async () => {
+  const s = await loggedIn();
+  try {
+    /*
+     * День в этой модели не переходит через полночь. «22:00–06:00»
+     * записывалось концом 360 при начале 1320 и рисовалось в сетке полоской
+     * в одну строку: запись есть, показать её нечем.
+     */
+    const ночная = await api(s.url, s.cookie, 'POST', `/api/v1/days/${today()}/schedule`,
+      { title: 'ночная смена', startMin: 1320, endMin: 360 }, {}, true);
+    assert.strictEqual(ночная.status, 400, 'конец раньше начала — отказ');
+
+    const обычная = await api(s.url, s.cookie, 'POST', `/api/v1/days/${today()}/schedule`,
+      { title: 'вечер', startMin: 1320, endMin: 1439 }, {}, true);
+    assert.strictEqual(обычная.status, 201, 'блок до конца суток по-прежнему можно');
+
+    const момент = await api(s.url, s.cookie, 'POST', `/api/v1/days/${today()}/schedule`,
+      { title: 'отбой', startMin: 1380, kind: 'reminder' }, {}, true);
+    assert.strictEqual(момент.status, 201, 'напоминание без конца по-прежнему можно');
+  } finally { await s.close(); }
+});

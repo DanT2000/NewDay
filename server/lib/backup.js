@@ -35,10 +35,32 @@ function rotate(dir, keep = KEEP) {
  * Возвращает функцию остановки таймера.
  */
 function scheduleDailyBackup(db, dbPath) {
-  const timer = setInterval(() => {
+  const снять = () => {
     try { runBackup(db, dbPath); }
     catch (e) { console.error('[newday] бэкап не удался:', e.message); }
-  }, 24 * 60 * 60 * 1000);
+  };
+
+  /*
+   * Сначала проверяем, когда снимали в прошлый раз.
+   *
+   * Таймер отсчитывает сутки от запуска процесса. Контейнер, который
+   * перезапускается чаще раза в сутки — выкладка, перезагрузка хоста,
+   * падение, — не снимал ежедневную копию НИ РАЗУ, и заметить это было
+   * нельзя: каталог не пуст, в нём лежат старые файлы.
+   */
+  try {
+    const свежая = fs.existsSync(backupDir(dbPath))
+      ? fs.readdirSync(backupDir(dbPath))
+        .filter(f => f.startsWith('newday-') && f.endsWith('.db'))
+        .map(f => fs.statSync(path.join(backupDir(dbPath), f)).mtimeMs)
+        .sort((a, b) => b - a)[0] ?? 0
+      : 0;
+    if (Date.now() - свежая > 24 * 60 * 60 * 1000) снять();
+  } catch (e) {
+    console.error('[newday] не удалось проверить прошлые бэкапы:', e.message);
+  }
+
+  const timer = setInterval(снять, 24 * 60 * 60 * 1000);
   if (timer.unref) timer.unref();
   return () => clearInterval(timer);
 }
