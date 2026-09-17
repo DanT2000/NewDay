@@ -882,17 +882,22 @@ select.winput { appearance: auto; cursor: pointer; }
   cursor: crosshair;
 }
 /*
- * Выбранный день больше не залит фиолетовым целиком.
+ * Линия «сейчас» — как в Google Календаре: тонкая красная черта через
+ * колонку сегодняшнего дня и точка у её левого края.
  *
- * В виде «День» колонка одна, и заливка красила весь день сверху донизу —
- * сказать по ней, сколько уже прошло, было нельзя, а «выбранность» и так
- * видна по подписи дня сверху. Вместо неё серым закрашено прошедшее время:
- * граница серого и есть «сейчас», поэтому отдельная полоска больше не
- * нужна. Прошедший день серый весь — в нём уже ничего не начнётся.
+ * Выбранный день не заливается цветом (заливка красила весь день и ничего
+ * не говорила о времени), прошедшее время не закрашивается серым (серый
+ * просвечивал сквозь полупрозрачные блоки и резал идущий блок пополам).
+ * Точка стоит внутри колонки, а не на её краю: колонка обрезает всё, что
+ * выходит за неё, и половина точки пропадала бы.
  */
-.wplan-past {
-  position: absolute; left: 0; right: 0; top: 0; z-index: 0; pointer-events: none;
-  background: color-mix(in srgb, var(--faint) 14%, transparent);
+.wplan-now {
+  position: absolute; left: 0; right: 0; height: 2px; margin-top: -1px;
+  background: var(--warn); z-index: 30; pointer-events: none;
+}
+.wplan-now::before {
+  content: ''; position: absolute; left: 0; top: -4px;
+  width: 10px; height: 10px; border-radius: 50%; background: var(--warn);
 }
 /*
  * Линии часов — отдельными узлами, а не фоном.
@@ -987,9 +992,30 @@ select.winput { appearance: auto; cursor: pointer; }
  * по точке видно, что это напоминание, а не короткий блок. Выбранный цвет
  * приходит строчным стилем и эту подстановку перебивает.
  */
-/* Прошедшее время приглушено — так же, как в списке на «Сейчас» */
-.wblock.past { opacity: .55; }
-.wblock.past .wblock-time { color: var(--faint); }
+/*
+ * Закончившееся событие бледнеет целиком — как в Google Календаре.
+ *
+ * Не прозрачностью: у полупрозрачного блока сквозь него видны линии часов и
+ * соседний блок под ним, и прошлое выглядело грязным, а не спокойным. Блок
+ * остаётся непрозрачным, а цвет у него разбавлен фоном: видно, какого он
+ * вида, и видно, что он уже прошёл.
+ */
+/*
+ * Разбавляем цветом сетки (`--surface`), а не страницы: в светлой теме фон
+ * страницы сам лиловый, и прошедший блок на нём почти не отличался от
+ * идущего.
+ */
+.wblock.past {
+  background: color-mix(in srgb, var(--pin) 10%, var(--surface));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--pin) 35%, var(--surface));
+  color: var(--dim);
+}
+.wblock.inner.past {
+  background: color-mix(in srgb, var(--pin) 8%, var(--raise));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--pin) 35%, var(--surface)), 0 4px 12px rgba(0, 0, 0, .15);
+}
+.wblock.past .wblock-time { color: color-mix(in srgb, var(--pin) 45%, var(--faint)); }
+.wblock.past .wblock-note { color: var(--faint); }
 /*
  * Напоминание в сетке — полый блок цвета дня, а не красный.
  *
@@ -1009,12 +1035,16 @@ select.winput { appearance: auto; cursor: pointer; }
 /* точка стоит слева, поэтому содержимое сдвинуто — иначе они наезжают */
 .wblock.moment { padding-left: 19px; }
 .wblock.moment.compact { padding-left: 20px; }
+/* прошедшее напоминание — тот же полый блок, только бледнее, как и обычные */
+.wblock.moment.past { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pin) 25%, transparent); }
+.wblock.moment.past .wblock-time { color: color-mix(in srgb, var(--pin) 45%, var(--faint)); }
 
 /* Точка в углу: комментарий есть, а места под него нет */
 .wblock-mark {
   position: absolute; top: 6px; right: 6px; width: 5px; height: 5px;
   border-radius: 50%; background: var(--pin);
 }
+.wblock.past .wblock-dot, .wblock.past .wblock-mark { background: color-mix(in srgb, var(--pin) 40%, var(--surface)); }
 .wblock.compact .wblock-title {
   margin-top: 0; flex: 1; min-width: 0; line-height: 1;
   white-space: nowrap; text-overflow: ellipsis; display: block;

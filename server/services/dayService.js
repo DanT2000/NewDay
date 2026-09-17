@@ -86,19 +86,33 @@ function dayService(db, opts = {}) {
    * повторы. Открытая среда не должна вытягивать к себе несделанное, пока
    * на календаре вторник: иначе задача исчезла бы из сегодняшнего дня.
    *
-   * Глубина — две недели. Человек, вернувшийся из отпуска, не должен
-   * получить в сегодня свалку из полусотни задач месячной давности; то, что
-   * старше, осталось в своих днях и никуда не денется.
+   * Глубина — три дня и не раньше дня, когда перенос включили. Первая версия
+   * брала две недели назад, и при первом же открытии дня человеку приехали
+   * восемь задач, пять из них — двухнедельной давности, давно сделанные и
+   * просто не отмеченные («Подготовить план на 3 сентября»). Перенос — про
+   * вчерашнее и позавчерашнее, которое реально доделывают, а не про свалку.
    */
-  const CARRY_DAYS = 14;
+  const CARRY_DAYS = 3;
   const sameText = s => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 
   function carryTasks(user, date) {
     const today = todayFor(user.timezone);
     if (date !== today) return;
-    if (users.getSettings(user.id)?.carryOver !== true) return;
+    const settings = users.getSettings(user.id) ?? {};
+    if (settings.carryOver !== true) return;
 
-    const since = addDays(today, -CARRY_DAYS);
+    /*
+     * Перенос, включённый до того, как появилась дата включения, считаем
+     * включённым сегодня: так и у давних пользователей переносится только
+     * то, что осталось несделанным с этого момента.
+     */
+    let enabled = /^\d{4}-\d{2}-\d{2}$/.test(settings.carryOverSince ?? '') ? settings.carryOverSince : null;
+    if (!enabled) {
+      enabled = today;
+      users.setSettings(user.id, { carryOverSince: today });
+    }
+    const window = addDays(today, -CARRY_DAYS);
+    const since = enabled > window ? enabled : window;
     const rows = db.prepare(
       `SELECT id, date, text FROM tasks
         WHERE user_id = ? AND done = 0 AND date < ? AND date >= ?

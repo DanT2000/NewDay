@@ -1759,6 +1759,12 @@ function planColumn(dateKey, axis) {
     paint(dragging.sel, dragging.from, to);
   });
 
+  /*
+   * Прошедший день — весь в прошлом. Признак `past` у строки считается только
+   * для сегодняшнего дня (в списке «Сейчас» он про «уже было сегодня»), и
+   * блоки вчерашних дней рисовались как будущие — ярко-фиолетовыми.
+   */
+  const dayPast = dateKey < todayKey();
   for (const r of items) {
     const { lane: i, of } = place[r.id];
     const top = axis.y(r.start);
@@ -1768,7 +1774,7 @@ function planColumn(dateKey, axis) {
     const block = h('button.wblock', {
       type: 'button',
       class: [compact ? 'compact' : '', i > 0 ? 'inner' : '', r.moment ? 'moment' : '',
-        r.past ? 'past' : ''].filter(Boolean).join(' '),
+        dayPast || r.past ? 'past' : ''].filter(Boolean).join(' '),
       style: {
         top: `${Math.round(top)}px`,
         height: `${Math.round(height)}px`,
@@ -1836,19 +1842,17 @@ function planColumn(dateKey, axis) {
   }
 
   /*
-   * Прошедшее время просто серое.
+   * «Сейчас» — тонкая красная линия с точкой, как в Google Календаре.
    *
-   * Здесь была полоска «сейчас» поверх сетки и фиолетовая заливка всей
-   * выбранной колонки — в виде «День» это красило день целиком, и понять по
-   * нему, сколько уже прошло, было нельзя. Теперь граница между серым и
-   * обычным и есть текущий момент: линию рисовать незачем, а прошедший день
-   * весь серый — в нём уже ничего не начнётся.
+   * До этого прошедшее время закрашивалось серым слоем. Блоки полупрозрачные,
+   * и серый просвечивал сквозь них: у идущего сейчас блока верх, уже
+   * прошедший, был серым, а низ фиолетовым — блок выглядел разрезанным.
+   * Теперь время не закрашивается вовсе: закончившиеся события бледнеют
+   * целиком (см. `.wblock.past`), идущее остаётся ярким, а где «сейчас»,
+   * показывает линия — только в колонке сегодняшнего дня.
    */
-  const прошло = dateKey < todayKey()
-    ? axis.total
-    : (dateKey === todayKey() ? axis.y(minutesNow()) : 0);
-  if (прошло > 0) {
-    add(col, h('div.wplan-past', { style: { height: `${Math.round(прошло)}px` } }));
+  if (dateKey === todayKey()) {
+    add(col, h('div.wplan-now', { style: { top: `${Math.round(axis.y(minutesNow()))}px` } }));
   }
 
   return col;
@@ -2572,7 +2576,7 @@ function zoneLabel(tz) {
 function dayPanel() {
   const flags = store.settings?.settings ?? {};
   const switches = [
-    { k: 'carryOver', label: 'Переносить невыполненное', hint: 'задачи уезжают на завтра' },
+    { k: 'carryOver', label: 'Переносить невыполненное', hint: 'что не сделали сегодня, перейдёт на завтра' },
     { k: 'mealSlots', label: 'Делить питание на приёмы', hint: 'завтрак, обед, ужин, перекус' },
     { k: 'showKcal', label: 'Показывать калории', hint: 'счётчик и дневная цель' },
     { k: 'mealsToSchedule', label: 'Питание со временем — в расписание', hint: 'только по подтверждению' },

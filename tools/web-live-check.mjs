@@ -20,6 +20,7 @@ import fsSync from 'node:fs';
 import path from 'node:path';
 import tmp from './lib/tmp.js';
 import { killTree } from './lib/proc.js';
+import { createRequire } from 'node:module';
 
 const PORT = 9337;
 const BASE = 'http://127.0.0.1:4010';
@@ -1685,8 +1686,22 @@ const апиП = (method, path, body) => js(`fetch('/api/v1${path}', { method: '
   headers: { 'Content-Type': 'application/json' }, ${body ? `body: ${JSON.stringify(JSON.stringify(body))}` : ''} })
   .then(r => r.text()).then(t => (t ? JSON.parse(t) : {}))`, true);
 const вчераП = dayIn(-1);   // «вчера» по поясу стенда, а не по UTC
-await апиП('PATCH', '/settings', { settings: { carryOver: true } });
 const вчерашняя = await апиП('POST', `/days/${вчераП}/tasks`, { text: 'вчерашняя недоделка', bucket: 'home' });
+/*
+ * Перенос включили только сейчас — вчерашнее к нему не относится: человек
+ * мог всё сделать и просто не отметить. Первая версия переноса брала две
+ * недели назад и привезла в сегодня пять давно закрытых дел.
+ */
+await апиП('PATCH', '/settings', { settings: { carryOver: true } });
+const сегодняСразу = await апиП('GET', `/days/${DAY}/full`);
+проба('включили перенос сегодня — вчерашнее остаётся во вчера',
+  !Object.values(сегодняСразу.tasks ?? {}).flat().some(t => t.text === 'вчерашняя недоделка'));
+// а у того, кто включил перенос неделю назад, вчерашнее переезжает
+{
+  const базаСтенда = new (createRequire(import.meta.url)('better-sqlite3'))(path.join(tmp.root(), 'preview.db'));
+  базаСтенда.prepare("UPDATE user_settings SET value = ? WHERE key = 'carryOverSince'").run(JSON.stringify(dayIn(-7)));
+  базаСтенда.close();
+}
 await rpc(ws, 'Page.navigate', { url: `${BASE}/web.html` });
 await waitFor('Boolean(document.querySelector(".wside"))');
 await wait(1200);
@@ -1722,6 +1737,36 @@ const плиткиСейчас = await js(`[...document.querySelectorAll('.wstat
   JSON.stringify(плиткиСейчас[2]));
 await апиП('DELETE', `/days/${DAY}/tasks/${вчерашняя.id}`);
 await апиП('PATCH', '/settings', { settings: { carryOver: false } });
+
+// ── Прошедшее в сетке — как в Google Календаре ───────────────
+
+/*
+ * Прошедшее время закрашивалось серым слоем, а блоки полупрозрачные: у
+ * идущего сейчас блока верх просвечивал серым, низ оставался фиолетовым.
+ * А блоки прошедших дней не бледнели вовсе — признак «прошло» считался
+ * только для сегодня. Теперь: слоя нет, закончившиеся блоки бледные
+ * целиком, «сейчас» — одна красная линия в колонке сегодняшнего дня.
+ */
+const вчерашнийБлок = await апиП('POST', `/days/${вчераП}/schedule`,
+  { title: 'Вчерашний блок проб', startMin: 600, endMin: 660, kind: 'normal', alarmMode: 'none' });
+await js(`window.__wgo('plan'); window.__wsetview('day')`);
+await wait(1500);
+const сеткаСегодня = await js(`({ слой: document.querySelectorAll('.wplan-past').length,
+  линий: document.querySelectorAll('.wplan-now').length })`);
+проба('прошедшее время не закрашено серым слоем', сеткаСегодня.слой === 0, JSON.stringify(сеткаСегодня));
+проба('«сейчас» в сегодняшнем дне — одна линия', сеткаСегодня.линий === 1);
+await js(`[...document.querySelectorAll('button')].find(b => b.title === 'Предыдущий день')?.click()`);
+await wait(1500);
+const сеткаВчера = await js(`(() => {
+  const b = [...document.querySelectorAll('.wblock')].find(x => x.textContent.includes('Вчерашний блок проб'));
+  return { найден: Boolean(b), бледный: Boolean(b?.classList.contains('past')),
+    линий: document.querySelectorAll('.wplan-now').length }; })()`);
+проба('блок вчерашнего дня бледный, а не яркий', сеткаВчера.найден && сеткаВчера.бледный, JSON.stringify(сеткаВчера));
+проба('во вчерашнем дне линии «сейчас» нет', сеткаВчера.линий === 0);
+await js(`[...document.querySelectorAll('button')].find(b => b.title === 'Следующий день')?.click()`);
+await wait(600);
+await js(`window.__wsetview('week')`);
+await апиП('DELETE', `/days/${вчераП}/schedule/${вчерашнийБлок.id}`);
 
 // ── Шаблон поверх расписанного дня ───────────────────────────
 

@@ -47,7 +47,23 @@ module.exports = function settingsRouter({ db, config }) {
     const user = users.patchProfile(req.user.id, profile);
 
     if (body.settings && typeof body.settings === 'object') {
-      users.setSettings(req.user.id, body.settings);
+      const settings = { ...body.settings };
+      /*
+       * С какого дня включён перенос невыполненного.
+       *
+       * Человек месяц не пользовался переносом, потом включил — и получил в
+       * сегодня всё, что не отметил за прошлые недели, хотя давно сделал это
+       * и просто не ставил галочку. Переносим только то, что осталось
+       * несделанным с момента включения. Дату ставит сервер, а не клиент:
+       * «когда включил» — это факт, а не настройка.
+       */
+      delete settings.carryOverSince;
+      if (settings.carryOver !== undefined) {
+        const was = users.getSettings(req.user.id).carryOver === true;
+        if (settings.carryOver === true && !was) settings.carryOverSince = todayFor(user.timezone);
+        if (settings.carryOver !== true) settings.carryOverSince = null;
+      }
+      users.setSettings(req.user.id, settings);
     }
 
     res.json({

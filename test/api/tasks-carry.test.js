@@ -5,8 +5,8 @@
  * было: он остался в старых маршрутах со старым хранилищем дня. Человек не
  * закрыл во вторник две задачи, открыл среду — и там пусто. Проверяем то, из
  * чего эта механика состоит: переезжает только невыполненное, только в
- * сегодня, только при включённом переключателе, дважды не задваивается и не
- * тянет из глубины месяца.
+ * сегодня, только при включённом переключателе, дважды не задваивается, не
+ * глубже трёх дней и не из дней до того, как перенос включили.
  */
 
 const test = require('node:test');
@@ -16,9 +16,17 @@ const { loggedIn, api, getJson, today, dayFromToday } = require('../helpers/clie
 const задачи = day => [...day.tasks.work, ...day.tasks.home];
 const текст = day => задачи(day).map(t => t.text).sort();
 
-/** Включает перенос и кладёт задачу в прошлый день. */
-async function стенд(s, { carryOver = true } = {}) {
+/**
+ * Включает перенос. Сервер ставит датой включения сегодня — а проверкам
+ * нужны задачи из прошлых дней, поэтому дату включения сдвигаем назад, как у
+ * человека, который пользуется переносом давно.
+ */
+async function стенд(s, { carryOver = true, включёнДнейНазад = 30 } = {}) {
   await api(s.url, s.cookie, 'PATCH', '/api/v1/settings', { settings: { carryOver } });
+  if (carryOver && включёнДнейНазад) {
+    s.db.prepare("UPDATE user_settings SET value = ? WHERE key = 'carryOverSince'")
+      .run(JSON.stringify(dayFromToday(-включёнДнейНазад)));
+  }
 }
 
 test('невыполненное вчерашнее оказывается в сегодня, с пометкой откуда', async () => {
@@ -95,16 +103,16 @@ test('выключенный переключатель ничего не пер
   } finally { await s.close(); }
 });
 
-test('завтрашний день не вытягивает несделанное, и глубже двух недель не тянем', async () => {
+test('завтрашний день не вытягивает несделанное, и глубже трёх дней не тянем', async () => {
   const s = await loggedIn();
   try {
     await стенд(s);
     const вчера = dayFromToday(-1);
-    const давно = dayFromToday(-20);
+    const давно = dayFromToday(-5);
     await api(s.url, s.cookie, 'POST', `/api/v1/days/${вчера}/tasks`,
       { text: 'вчерашняя', bucket: 'work' });
     await api(s.url, s.cookie, 'POST', `/api/v1/days/${давно}/tasks`,
-      { text: 'месячной давности', bucket: 'work' });
+      { text: 'пятидневной давности', bucket: 'work' });
 
     // открытая завтрашняя страница не должна забирать задачу из вчера себе
     const завтра = await getJson(s.url, s.cookie, `/api/v1/days/${dayFromToday(1)}/full`);
@@ -113,6 +121,44 @@ test('завтрашний день не вытягивает несделанн
     const сегодня = await getJson(s.url, s.cookie, `/api/v1/days/${today()}/full`);
     assert.deepStrictEqual(текст(сегодня), ['вчерашняя'], 'приехало только недавнее');
     const старое = await getJson(s.url, s.cookie, `/api/v1/days/${давно}/full`);
-    assert.deepStrictEqual(текст(старое), ['месячной давности'], 'давнее осталось в своём дне');
+    assert.deepStrictEqual(текст(старое), ['пятидневной давности'], 'давнее осталось в своём дне');
+  } finally { await s.close(); }
+});
+
+test('задачи из дней до включения переноса остаются на месте', async () => {
+  const s = await loggedIn();
+  try {
+    const вчера = dayFromToday(-1);
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${вчера}/tasks`,
+      { text: 'сделал, но не отметил', bucket: 'home' });
+    // включил сегодня — вчерашнее к переносу не относится
+    await стенд(s, { включёнДнейНазад: 0 });
+
+    const сегодня = await getJson(s.url, s.cookie, `/api/v1/days/${today()}/full`);
+    assert.strictEqual(задачи(сегодня).length, 0, 'ничего не приехало');
+    const было = await getJson(s.url, s.cookie, `/api/v1/days/${вчера}/full`);
+    assert.deepStrictEqual(текст(было), ['сделал, но не отметил']);
+  } finally { await s.close(); }
+});
+
+test('включение ставит дату, выключение снимает, а подделать её клиент не может', async () => {
+  const s = await loggedIn();
+  try {
+    const настройки = () => getJson(s.url, s.cookie, '/api/v1/settings').then(r => r.settings);
+    await api(s.url, s.cookie, 'PATCH', '/api/v1/settings', { settings: { carryOver: true } });
+    assert.strictEqual((await настройки()).carryOverSince, today());
+
+    // клиент не может сам выставить дату включения
+    await api(s.url, s.cookie, 'PATCH', '/api/v1/settings', { settings: { carryOverSince: '2020-01-01' } });
+    assert.strictEqual((await настройки()).carryOverSince, today());
+
+    // повторное «включить», когда уже включено, дату не сдвигает
+    s.db.prepare("UPDATE user_settings SET value = ? WHERE key = 'carryOverSince'")
+      .run(JSON.stringify(dayFromToday(-2)));
+    await api(s.url, s.cookie, 'PATCH', '/api/v1/settings', { settings: { carryOver: true } });
+    assert.strictEqual((await настройки()).carryOverSince, dayFromToday(-2));
+
+    await api(s.url, s.cookie, 'PATCH', '/api/v1/settings', { settings: { carryOver: false } });
+    assert.strictEqual((await настройки()).carryOverSince, null);
   } finally { await s.close(); }
 });
