@@ -104,14 +104,23 @@ function createApp({ db, config, fetchImpl, env = process.env }) {
 
   // Окончательное удаление аккаунтов: руками из админки и автоочисткой
   // (ежедневный тик живёт в index.js рядом с остальной периодикой)
-  const cleanup = userCleanup(db, { soundsDir: config.soundsDir });
+  const cleanup = userCleanup(db, { soundsDir: config.soundsDir, reportsDir: config.reportsDir });
   app.locals.userCleanup = cleanup;
 
   app.use('/api/health', healthRouter(db, { ai, push, mailer }));
   // Спецификация и документация доступны без входа
   app.use('/api/v1', openapiRouter({ config }));
   app.get('/api/docs', (_req, res) => res.sendFile(path.join(__dirname, '../public/api-docs.html')));
-  app.use('/api/v1/auth', authRouter({ db, config, mailer, auth }));
+  /*
+   * Роутер входа один на оба адреса.
+   *
+   * Он смонтирован дважды — /api/v1/auth и старый /api/auth, — и раньше
+   * каждый вызов создавал свой счётчик попыток. «Десять попыток за
+   * пятнадцать минут» превращалось в двадцать: достаточно было чередовать
+   * адреса. Общий экземпляр считает попытки в одном месте.
+   */
+  const auths = authRouter({ db, config, mailer, auth });
+  app.use('/api/v1/auth', auths);
 
   /**
    * Версия и раздача приложения — до требования входа: приложение узнаёт
@@ -141,7 +150,7 @@ function createApp({ db, config, fetchImpl, env = process.env }) {
       : auth.requireScope('write')(req, res, next);
 
   // Старые пути — до конца этапа 2, пока фронтенд не переписан.
-  app.use('/api/auth', authRouter({ db, config, mailer, auth }));
+  app.use('/api/auth', auths);
   app.use('/api', legacyRouter({ db, auth, requireWrite }));
   // /api/export/all — алиас внутри роутера
   app.use('/api', auth.requireAuth, requireWrite, exportRouter({ db }));
@@ -204,7 +213,7 @@ function createApp({ db, config, fetchImpl, env = process.env }) {
   app.use('/api/v1/ai', aiRouter({ ai, access }));
   app.use('/api/v1/notes', notesRouter({ db }));
   app.use('/api/v1/sounds', soundsRouter({ db, config }));
-  app.use('/api/v1/reports', reportsRouter({ db, config, ai }));
+  app.use('/api/v1/reports', reportsRouter({ db, config, ai, access }));
   app.use('/api/v1/admin', adminRouter({ db, config, ai }));
   app.use('/api/v1/settings', settingsRouter({ db, config }));
   /**

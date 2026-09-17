@@ -6,6 +6,9 @@ const { usersRepo, publicUser } = require('../../repos/users');
 const { appSettingsRepo } = require('../../repos/appSettings');
 const { isAdmin } = require('../../lib/admin');
 
+const MAX_SETTING_KEYS = 100;
+const MAX_SETTING_BYTES = 20000;
+
 const THEMES = ['system', 'light', 'dark'];
 const VIEWS = ['list', 'timeline'];
 const FOOD_MODES = ['checklist', 'timed'];
@@ -48,6 +51,25 @@ module.exports = function settingsRouter({ db, config }) {
 
     if (body.settings && typeof body.settings === 'object') {
       const settings = { ...body.settings };
+      /*
+       * Мешок настроек не резиновый.
+       *
+       * Ключи и значения здесь свободные — так удобно добавлять
+       * переключатели, не трогая сервер. Но без предела один аккаунт
+       * раздувает и базу, и собственные ответы: настройки целиком приезжают
+       * в каждый GET настроек, в «кто я» и в ответ на вход.
+       */
+      const ключей = Object.keys(settings);
+      if (ключей.length > MAX_SETTING_KEYS) {
+        throw badRequest(`Слишком много настроек за раз: максимум ${MAX_SETTING_KEYS}`);
+      }
+      for (const key of ключей) {
+        if (key.length > 64) throw badRequest(`Имя настройки длиннее 64 символов: «${key.slice(0, 40)}…»`);
+        const размер = JSON.stringify(settings[key] ?? null).length;
+        if (размер > MAX_SETTING_BYTES) {
+          throw badRequest(`Настройка «${key}» больше ${MAX_SETTING_BYTES} символов`);
+        }
+      }
       /*
        * С какого дня включён перенос невыполненного.
        *

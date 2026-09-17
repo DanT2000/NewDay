@@ -73,7 +73,17 @@ function apkStore({ dir }) {
 
     ensureDir();
     const fileName = `NewDay-${versionName}.apk`;
-    fs.writeFileSync(path.join(dir, fileName), buffer);
+    /*
+     * Пишем во временный файл и переименовываем.
+     *
+     * Прямая запись оставляла при обрыве (нехватка места, перезапуск
+     * контейнера, OOM) обрезанный APK под правильным именем: телефон
+     * скачивал его и не мог установить. Переименование в пределах одного
+     * каталога атомарно — либо целый файл, либо прежний.
+     */
+    const времФайл = path.join(dir, `.${fileName}.part`);
+    fs.writeFileSync(времФайл, buffer);
+    fs.renameSync(времФайл, path.join(dir, fileName));
 
     const meta = {
       versionName,
@@ -84,7 +94,9 @@ function apkStore({ dir }) {
       notes,
       publishedAt: new Date().toISOString(),
     };
-    fs.writeFileSync(metaPath(), JSON.stringify(meta, null, 2));
+    const времМета = `${metaPath()}.part`;
+    fs.writeFileSync(времМета, JSON.stringify(meta, null, 2));
+    fs.renameSync(времМета, metaPath());
     prune();
     return meta;
   }

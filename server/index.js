@@ -45,8 +45,21 @@ const app = createApp({ db, config });
  */
 const notify = app.locals.notify;
 if (app.locals.push.enabled) {
+  /*
+   * Следующий тик не начинается, пока идёт предыдущий.
+   *
+   * Отправка ждёт ответа push-сервиса, а тик — каждые тридцать секунд.
+   * Медленный сервис (или просто длинная очередь) означал, что второй тик
+   * брал те же записи: человек получал одно и то же уведомление дважды, а
+   * при зависании — лавиной.
+   */
+  let идёт = false;
   const deliver = setInterval(() => {
-    notify.deliverDue().catch(e => console.error('[newday] отправка уведомлений:', e.message));
+    if (идёт) return;
+    идёт = true;
+    notify.deliverDue()
+      .catch(e => console.error('[newday] отправка уведомлений:', e.message))
+      .finally(() => { идёт = false; });
   }, 30 * 1000);
   const replan = setInterval(() => {
     try { notify.planAll(); } catch (e) { console.error('[newday] планирование:', e.message); }
@@ -57,6 +70,18 @@ if (app.locals.push.enabled) {
   console.log('NewDay push enabled');
 } else {
   console.log('NewDay push disabled: не заданы VAPID_PUBLIC_KEY и VAPID_PRIVATE_KEY');
+  /*
+   * Уборка очереди нужна и без push.
+   *
+   * Очередь наполняется при каждой правке дня, а чистилась только внутри
+   * отправки — то есть на сервере без ключей push таблица росла вечно и
+   * замедляла собственные запросы. Раз в час достаточно.
+   */
+  const убрать = setInterval(() => {
+    try { notify.purgeOld(); }
+    catch (e) { console.error('[newday] уборка очереди уведомлений:', e.message); }
+  }, 60 * 60 * 1000);
+  убрать.unref?.();
 }
 
 /**
@@ -82,3 +107,46 @@ purgeTimer.unref?.();
 const server = app.listen(config.port, '0.0.0.0', () => {
   console.log(`NewDay listening on port ${server.address().port}`);
 });
+
+/*
+ * Понятная смерть вместо непонятной.
+ *
+ * Обработчиков не было вовсе: любое событие `error` у потока или промах с
+ * промисом вне запроса убивали процесс без объяснений, а занятый порт
+ * печатал стек вместо строки «порт занят». Необработанный промис больше не
+ * повод умирать — сервер продолжает работать; настоящее исключение
+ * записываем и выходим по-честному, чтобы надзор перезапустил чистый
+ * процесс, а не работал с полуживым.
+ */
+server.on('error', e => {
+  if (e.code === 'EADDRINUSE') {
+    console.error(`[newday] порт ${config.port} уже занят — сервер не запущен`);
+    process.exit(1);
+  }
+  console.error('[newday] ошибка сетевого сокета:', e.message);
+});
+
+process.on('unhandledRejection', e => {
+  console.error('[newday] необработанный промис:', e?.stack || e);
+});
+
+process.on('uncaughtException', e => {
+  console.error('[newday] необработанное исключение:', e?.stack || e);
+  try { server.close(); } catch { /* уже закрыт */ }
+  setTimeout(() => process.exit(1), 100).unref();
+});
+
+/*
+ * Остановка по сигналу: `docker stop` присылает SIGTERM. Без обработки
+ * соединения рвались на полуслове, а база закрывалась как придётся.
+ */
+for (const сигнал of ['SIGTERM', 'SIGINT']) {
+  process.on(сигнал, () => {
+    console.log(`NewDay: получен ${сигнал}, останавливаюсь`);
+    server.close(() => {
+      try { db.close(); } catch { /* уже закрыта */ }
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(0), 5000).unref();
+  });
+}

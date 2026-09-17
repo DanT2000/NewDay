@@ -25,11 +25,21 @@ function createMailer(config) {
   }
 
   const nodemailer = require('nodemailer');
+  /*
+   * Таймауты заданы явно. По умолчанию nodemailer ждёт ответа сокета десять
+   * минут, а письмо с подтверждением отправляется прямо в запросе
+   * регистрации: недоступный SMTP означал, что человек десять минут смотрит
+   * в крутящийся индикатор, а потом получает «внутреннюю ошибку» — при том
+   * что аккаунт уже создан.
+   */
   const transport = nodemailer.createTransport({
     host: config.smtp.host,
     port: config.smtp.port,
     secure: config.smtp.secure,
     auth: config.smtp.user ? { user: config.smtp.user, pass: config.smtp.pass } : undefined,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 20000,
   });
 
   return {

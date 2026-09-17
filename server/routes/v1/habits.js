@@ -84,8 +84,10 @@ module.exports = function habitsRouter({ db }) {
   }));
 
   router.post('/reorder', wrap((req, res) => {
-    const ids = (Array.isArray(req.body.ids) ? req.body.ids : [])
-      .map(id => v.int(id, { min: 1, field: 'id' }));
+    const raw = Array.isArray(req.body.ids) ? req.body.ids : [];
+    // предел тот же, что у строк дня: длинный список блокирует базу
+    if (raw.length > 2000) throw badRequest('Слишком длинный список порядка: максимум 2000');
+    const ids = raw.map(id => v.int(id, { min: 1, field: 'id' }));
     res.json(habits.reorder(req.user.id, ids));
   }));
 

@@ -1,5 +1,5 @@
 const express = require('express');
-const { wrap } = require('../../lib/errors');
+const { wrap, badRequest } = require('../../lib/errors');
 const v = require('../../lib/validate');
 
 /**
@@ -25,9 +25,19 @@ function entityRouter({ db, repoFor, sanitize, extra }) {
     res.status(201).json(row);
   }));
 
+  /*
+   * Список порядка ограничен по длине.
+   *
+   * `reorder` делает по одному UPDATE на номер в одной транзакции. Двести
+   * тысяч номеров — это четыре с половиной секунды, на которые встаёт и
+   * база, и весь сервер; в дне столько строк не бывает и близко.
+   */
+  const MAX_IDS = 2000;
+
   router.post('/reorder', wrap((req, res) => {
-    const ids = (Array.isArray(req.body.ids) ? req.body.ids : [])
-      .map(id => v.int(id, { min: 1, field: 'id' }));
+    const raw = Array.isArray(req.body.ids) ? req.body.ids : [];
+    if (raw.length > MAX_IDS) throw badRequest(`Слишком длинный список порядка: максимум ${MAX_IDS}`);
+    const ids = raw.map(id => v.int(id, { min: 1, field: 'id' }));
     res.json(repo.reorder(req.user.id, dateOf(req), ids));
   }));
 

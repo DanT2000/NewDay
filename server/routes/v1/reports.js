@@ -91,7 +91,7 @@ const safeJson = (raw, fallback) => {
  * Пишет любой вошедший — на то и кнопка «одно нажатие». Читает только
  * владелец: в чужом сообщении лежат и текст, и снимок чужого экрана.
  */
-module.exports = function reportsRouter({ db, config, ai }) {
+module.exports = function reportsRouter({ db, config, ai, access }) {
   const router = express.Router();
   const repo = reportsRepo(db);
 
@@ -137,14 +137,31 @@ module.exports = function reportsRouter({ db, config, ai }) {
     let voiceError = null;
     let voiceText = '';
     if (audio) {
-      if (!ai?.status?.().voice) {
+      /*
+       * Расшифровка стоит денег владельцу, поэтому она закрыта тем же
+       * тарифом, что и помощник. Раньше проверки здесь не было вовсе:
+       * человек с выключенным помощником отправлял записи одну за другой,
+       * и каждая уходила платному провайдеру.
+       *
+       * Отказ тарифа не отменяет само сообщение: человеку важно, чтобы
+       * жалоба дошла. Запись сохраняется, а вместо текста он видит, почему
+       * расшифровки нет.
+       */
+      let можно = true;
+      if (access) {
+        try { access.gate(req.user, res); }
+        catch (e) { можно = false; voiceError = e?.publicMessage || 'Расшифровка сейчас недоступна'; }
+      }
+      if (можно && !ai?.status?.().voice) {
+        можно = false;
         voiceError = 'Распознавание речи не подключено — запись сохранена';
-      } else {
+      }
+      if (можно) {
         const r = await ai.transcribe({
           userId: req.user.id, audio: audio.buf,
           filename: audio.filename || `zapis.${audioExt}`, language: 'ru',
         }).catch(e => ({ ok: false, error: e?.message || 'Распознавание не ответило' }));
-        if (r.ok) voiceText = String(r.text || '').trim();
+        if (r.ok) { voiceText = String(r.text || '').trim(); access?.note(req.user); }
         else voiceError = r.error || 'Не удалось распознать запись';
       }
     }

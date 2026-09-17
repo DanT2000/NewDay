@@ -56,8 +56,14 @@ function updateService(config, { store, fetchImpl, now = () => Date.now() } = {}
   }
 
   async function fromGithub() {
+    /*
+     * Таймаут обязателен: маршрут `/app/version` публичный, и при недоступном
+     * GitHub каждый запрос висел до таймаута операционной системы, копя
+     * открытые сокеты.
+     */
     const res = await doFetch(`https://api.github.com/repos/${cfg.repo}/releases/latest`, {
       headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'NewDay' },
+      signal: AbortSignal.timeout(7000),
     });
     if (!res.ok) throw new Error(`GitHub ${res.status}`);
     const body = await res.json();

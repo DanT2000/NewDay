@@ -295,7 +295,15 @@ function notificationService(db, { push, now = () => Date.now() } = {}) {
     return { sent, failed, considered: rows.length };
   }
 
-  return { planDay, planUpcoming, planAll, deliverDue, settingsOf: u => settingsOf(users, u), inQuietHours };
+  /** Убрать давно отправленное. Нужна и без push: очередь наполняется правками дня. */
+  function purgeOld() {
+    return queue.purgeOld(now() - 24 * 3600 * 1000);
+  }
+
+  return {
+    planDay, planUpcoming, planAll, deliverDue, purgeOld,
+    settingsOf: u => settingsOf(users, u), inQuietHours,
+  };
 }
 
 module.exports = { notificationService, inQuietHours, NOTIFICATION_DEFAULTS: DEFAULTS };
