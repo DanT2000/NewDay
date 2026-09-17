@@ -87,6 +87,24 @@ function scheduleRepo(db) {
       return row;
     },
 
+    /*
+     * Очистка дня целиком — тоже удаление повторов именно в этот день.
+     *
+     * `removeAllForDate` стирал строки сырым DELETE, не оставляя пометки
+     * «в этот день повтора нет». Поэтому «очистить день» возвращал в ответе
+     * то, что человек только что удалил: тот же запрос в конце достраивал
+     * повтор заново. Пометка — то же самое, что делает удаление одной
+     * строки, только для всех сразу.
+     */
+    removeAllForDate(userId, date) {
+      const были = db.prepare(
+        'SELECT DISTINCT series_id FROM schedule_items WHERE user_id = ? AND date = ? AND series_id IS NOT NULL',
+      ).all(userId, date);
+      base.removeAllForDate(userId, date);
+      db.prepare('UPDATE meals SET schedule_item_id = NULL WHERE user_id = ? AND date = ?').run(userId, date);
+      for (const r of были) markOverride(userId, r.series_id, date, 'deleted');
+    },
+
     /**
      * Привязать строку к повтору или отвязать (`seriesId: null`).
      *

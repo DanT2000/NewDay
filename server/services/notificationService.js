@@ -241,10 +241,22 @@ function notificationService(db, { push, now = () => Date.now() } = {}) {
     return { planned: keep.length, skipped };
   }
 
-  /** Пересчёт на сегодня и завтра — этого хватает при ежеминутном тике. */
+  /**
+   * Пересчёт на ближайшие дни.
+   *
+   * Считали только сегодня и завтра, а попросить напомнить можно «за день»
+   * и «за неделю». К тому моменту, когда событие попадало в это окно, срок
+   * «за два дня» был уже в прошлом, и напоминание молча пропускалось:
+   * в приложении обещание есть, уведомления нет. Горизонт равен самому
+   * дальнему сроку (неделя) плюс день, чтобы дальнее событие успело
+   * попасть в очередь заранее.
+   */
+  const PLAN_DAYS = Math.ceil(LEAD_MAX / DAY_MINUTES) + 1;
+
   function planUpcoming(user) {
     const today = todayFor(user.timezone, new Date(now()));
-    return [today, addDays(today, 1)].map(date => planDay(user, date));
+    const дни = Array.from({ length: PLAN_DAYS }, (_, i) => addDays(today, i));
+    return дни.map(date => planDay(user, date));
   }
 
   function planAll() {

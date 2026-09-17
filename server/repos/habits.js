@@ -1,5 +1,6 @@
 const { notFound } = require('../lib/errors');
 const { tombstonesRepo } = require('../repos/tombstones');
+const { bumpRev } = require('./days');
 
 const FIELD_MAP = {
   title: 'title', description: 'description', emoji: 'emoji', color: 'color',
@@ -130,6 +131,14 @@ function habitsRepo(db) {
       ).all(userId, date);
     },
 
+    /*
+     * Отметка привычки поднимает версию дня.
+     *
+     * День отдаёт привычки и прогресс, а его ETag — это `rev`. Пока отметка
+     *версию не трогала, телефон ставил галочку, а браузер продолжал считать свою
+     * копию дня свежей: тот же ETag, тот же `If-Match` — и следующая правка
+     * из браузера затирала отметку, не заметив чужого изменения.
+     */
     setLog(userId, habitId, date, { status, value = null }) {
       own(userId, habitId);
       db.prepare(`
@@ -138,6 +147,7 @@ function habitsRepo(db) {
         ON CONFLICT(user_id, habit_id, date)
         DO UPDATE SET status = excluded.status, value = excluded.value, updated_at = datetime('now')
       `).run(userId, habitId, date, status, value);
+      bumpRev(db, userId, date);
       return db.prepare(
         'SELECT date, status, value FROM habit_logs WHERE user_id = ? AND habit_id = ? AND date = ?'
       ).get(userId, habitId, date);
@@ -147,6 +157,7 @@ function habitsRepo(db) {
       own(userId, habitId);
       db.prepare('DELETE FROM habit_logs WHERE user_id = ? AND habit_id = ? AND date = ?')
         .run(userId, habitId, date);
+      bumpRev(db, userId, date);
     },
   };
   return self;

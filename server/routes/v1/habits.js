@@ -1,7 +1,7 @@
 const express = require('express');
 const { wrap, badRequest } = require('../../lib/errors');
 const v = require('../../lib/validate');
-const { todayFor } = require('../../lib/dates');
+const { diffDays, todayFor } = require('../../lib/dates');
 const { habitsRepo } = require('../../repos/habits');
 const { statsService } = require('../../services/statsService');
 
@@ -96,9 +96,19 @@ module.exports = function habitsRouter({ db }) {
     res.json(habits.logsInRange(req.user.id, idOf(req), from, to));
   }));
 
+  /*
+   * Ширина периода ограничена так же, как у общей статистики: `habitStats`
+   * трижды проходит по каждому дню периода, и «с 1900 по 2100» — это
+   * десятки секунд, на которые встаёт весь сервер.
+   */
+  const MAX_STATS_DAYS = 400;
+
   router.get('/:id/stats', wrap((req, res) => {
     const from = req.query.from ? v.date(req.query.from, { field: 'from' }) : null;
     const to = req.query.to ? v.date(req.query.to, { field: 'to' }) : null;
+    if (from && to && diffDays(from, to) + 1 > MAX_STATS_DAYS) {
+      throw badRequest(`Период длиннее ${MAX_STATS_DAYS} дней; запросите его частями`);
+    }
     res.json(stats.habitStats(req.user, idOf(req), from, to));
   }));
 

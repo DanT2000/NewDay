@@ -3,11 +3,57 @@ const { wrap, badRequest } = require('../../lib/errors');
 const v = require('../../lib/validate');
 const { publicUser, usersRepo } = require('../../repos/users');
 const { buildIcs } = require('../../lib/ical');
-const { todayFor, addDays } = require('../../lib/dates');
+const { todayFor, addDays, isValidDate } = require('../../lib/dates');
 
 const FORMAT_VERSION = 1;
 
 const DAY_TABLES = ['schedule_items', 'tasks', 'meals', 'sport_sets'];
+
+
+/*
+ * Выгрузку проверяем до записи.
+ *
+ * Файл приходит от человека, а не от нашего же сервера: его правят руками,
+ * склеивают из двух, режут по дороге. Без проверки дата-объект добиралась до
+ * better-sqlite3 и давала «внутреннюю ошибку сервера» на кривом файле, а
+ * строка вроде «не-дата» спокойно ложилась в базу — и потом день с
+ * невозможной датой всплывал в списках, а арифметика дат на нём давала NaN.
+ *
+ * Проверяем до транзакции и целиком: либо файл берём весь, либо не берём
+ * вовсе. Половина восстановленной выгрузки хуже, чем честный отказ.
+ */
+const DATE_FIELDS = {
+  days: ['date'],
+  scheduleItems: ['date'],
+  tasks: ['date', 'carried_from'],
+  meals: ['date'],
+  sportSets: ['date'],
+  seriesOverrides: ['date'],
+  habitLogs: ['date'],
+  series: ['start_date', 'end_date'],
+};
+const MAX_ROWS = 200000;
+
+function проверитьВыгрузку(data) {
+  for (const [ключ, поля] of Object.entries(DATE_FIELDS)) {
+    const list = data[ключ];
+    if (list === undefined || list === null) continue;
+    if (!Array.isArray(list)) throw badRequest(`Раздел «${ключ}» в выгрузке должен быть списком`);
+    if (list.length > MAX_ROWS) throw badRequest(`Слишком много записей в разделе «${ключ}»`);
+    for (const [i, row] of list.entries()) {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        throw badRequest(`${ключ}[${i}]: ожидается запись, а не ${Array.isArray(row) ? 'список' : typeof row}`);
+      }
+      for (const поле of поля) {
+        const value = row[поле];
+        if (value === undefined || value === null || value === '') continue;
+        if (typeof value !== 'string' || !isValidDate(value)) {
+          throw badRequest(`${ключ}[${i}].${поле}: «${String(value).slice(0, 40)}» — не дата в формате ГГГГ-ММ-ДД`);
+        }
+      }
+    }
+  }
+}
 
 module.exports = function exportRouter({ db }) {
   const router = express.Router();
@@ -125,6 +171,7 @@ module.exports = function exportRouter({ db }) {
     }
     const mode = v.oneOf(req.body.mode, ['merge', 'replace'], { field: 'режим', fallback: 'merge' });
     const uid = req.user.id;
+    проверитьВыгрузку(data);
 
     const tx = db.transaction(() => {
       if (mode === 'replace') {

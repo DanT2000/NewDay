@@ -173,10 +173,24 @@ function createApp({ db, config, fetchImpl, env = process.env }) {
    */
   app.use('/api/v1/days/:date', (req, res, next) => {
     if (['GET', 'HEAD'].includes(req.method)) return next();
+    /*
+     * Даты берём до ответа, а не в `finish`.
+     *
+     * `req.params` к моменту `finish` принадлежит последнему сработавшему
+     * слою маршрутизации, а тело запроса может быть уже израсходовано.
+     * Копирование дня меняет ДРУГОЙ день — тот, в который копируют, — и
+     * пересчёт по исходной дате не ставил в очередь ни одного будильника
+     * на скопированный день.
+     */
+    const даты = [req.params.date];
+    const цель = req.body?.targetDate;
+    if (typeof цель === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(цель)) даты.push(цель);
     res.on('finish', () => {
       if (res.statusCode >= 400 || !req.user) return;
-      try { notify.planDay(req.user, req.params.date); }
-      catch (e) { console.error('[newday] пересчёт уведомлений:', e.message); }
+      for (const дата of даты) {
+        try { notify.planDay(req.user, дата); }
+        catch (e) { console.error('[newday] пересчёт уведомлений:', e.message); }
+      }
     });
     next();
   });

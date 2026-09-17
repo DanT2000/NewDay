@@ -180,4 +180,7 @@ const routers = db => ({
   sport:    entityRouter({ db, repoFor: sportRepo,    sanitize: sanitizeSport }),
 });
 
-module.exports = { entityRouters: routers, sanitizeSchedule, sanitizeTask, sanitizeMeal, sanitizeSport };
+module.exports = {
+  entityRouters: routers, normalizeLeads,
+  sanitizeSchedule, sanitizeTask, sanitizeMeal, sanitizeSport,
+};

@@ -4,6 +4,7 @@ const path = require('node:path');
 const busboy = require('busboy');
 
 const { wrap, badRequest, forbidden, ApiError } = require('../../lib/errors');
+const { sendFileSafe } = require('../../lib/sendFile');
 const v = require('../../lib/validate');
 const { isAdmin } = require('../../lib/admin');
 const { reportsRepo } = require('../../repos/reports');
@@ -195,16 +196,20 @@ module.exports = function reportsRouter({ db, config, ai }) {
 
   /** Сам файл: запись или снимок. Кешировать нечего — читают один раз. */
   for (const kind of ['audio', 'shot']) {
-    router.get(`/:id/${kind}`, wrap((req, res) => {
+    router.get(`/:id/${kind}`, wrap((req, res, next) => {
       onlyAdmin(req);
       const row = repo.get(v.int(req.params.id, { min: 1, field: 'id' }));
       const ext = kind === 'audio' ? row.audio_ext : row.shot_ext;
       if (!ext) throw new ApiError(404, 'NOT_FOUND', 'К сообщению это не приложено');
       const file = fileOf(row.id, kind, ext);
       if (!fs.existsSync(file)) throw new ApiError(404, 'NOT_FOUND', 'Файл потерян');
-      res.type(MIME_OF[ext] || 'application/octet-stream');
-      res.setHeader('Cache-Control', 'private, no-store');
-      fs.createReadStream(file).pipe(res);
+      sendFileSafe(res, next, file, {
+        headers: {
+          'Content-Type': MIME_OF[ext] || 'application/octet-stream',
+          'Cache-Control': 'private, no-store',
+        },
+        notFoundMessage: 'Файл потерян',
+      });
     }));
   }
 

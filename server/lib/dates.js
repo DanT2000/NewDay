@@ -67,9 +67,12 @@ function addDays(dateStr, n) {
   const [y, m, d] = dateStr.split('-').map(Number);
   const t = new Date(Date.UTC(y, m - 1, d, 12));
   t.setUTCDate(t.getUTCDate() + n);
+  const yy = String(t.getUTCFullYear()).padStart(4, '0');
   const mm = String(t.getUTCMonth() + 1).padStart(2, '0');
   const dd = String(t.getUTCDate()).padStart(2, '0');
-  return `${t.getUTCFullYear()}-${mm}-${dd}`;
+  // Год добиваем нулями: без этого «999-12-31» ломает сравнение дат строками,
+  // на котором держится половина проверок «раньше/позже» в проекте.
+  return `${yy}-${mm}-${dd}`;
 }
 
 function diffDays(fromStr, toStr) {
@@ -77,12 +80,25 @@ function diffDays(fromStr, toStr) {
   return Math.round((p(toStr) - p(fromStr)) / 86400000);
 }
 
-/** Включительно с обоих концов. Пустой массив, если from > to или дата невалидна. */
+/**
+ * Включительно с обоих концов. Пустой массив, если from > to или дата невалидна.
+ *
+ * Считаем шаги числом, а не сравнением строк.
+ *
+ * Прежний цикл `while (cur <= to)` у края календаря не кончался: `addDays`
+ * от «9999-12-31» даёт «10000-01-01», а строкой это МЕНЬШЕ, чем
+ * «9999-12-31» — первая цифра «1» против «9». `GET /stats?to=9999-12-31`
+ * уходил в тридцать три миллиона итераций и съедал память до падения
+ * процесса. Ограничение сверху — страховка от того же класса ошибок:
+ * период шире десяти лет ни одному экрану не нужен, а память он съедает.
+ */
+const RANGE_MAX_DAYS = 3700;
+
 function rangeDates(from, to) {
   if (!isValidDate(from) || !isValidDate(to) || from > to) return [];
+  const шагов = Math.min(diffDays(from, to), RANGE_MAX_DAYS - 1);
   const out = [];
-  let cur = from;
-  while (cur <= to) { out.push(cur); cur = addDays(cur, 1); }
+  for (let i = 0; i <= шагов; i += 1) out.push(addDays(from, i));
   return out;
 }
 
@@ -194,6 +210,7 @@ function minutesInZone(instantMs, timeZone) {
 module.exports = {
   MASK_ALL,
   isValidDate, isValidTimezone, todayFor, localDateOf, addDays, diffDays, rangeDates,
+  RANGE_MAX_DAYS,
   weekdayOf, weekdayInMask, parseTimeToMinutes, formatMinutes, parseTimeRange,
   zonedTimeToUtc, zoneOffsetMs, minutesInZone,
 };

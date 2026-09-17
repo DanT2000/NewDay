@@ -1,6 +1,7 @@
 const express = require('express');
 const { wrap, badRequest } = require('../../lib/errors');
 const v = require('../../lib/validate');
+const { normalizeLeads } = require('./entities');
 const { seriesRepo } = require('../../repos/series');
 const { seriesService } = require('../../services/seriesService');
 const { parseTimeRange, todayFor } = require('../../lib/dates');
@@ -22,7 +23,14 @@ function normalizeRow(row) {
      * обычной строке: без них ежегодное «за день» превращалось в «вовремя»,
      * а цветное напоминание в дне рождения теряло цвет.
      */
-    remindBefore: Array.isArray(row.remindBefore) ? row.remindBefore : undefined,
+    /*
+     * Сроки проверяем теми же правилами, что и у обычной строки. Раньше
+     * список уходил в шаблон как есть: срок «минус сто миллиардов минут»
+     * уводил момент отправки за предел представимых дат, планировщик падал
+     * на каждом запуске, и человек молча переставал получать любые
+     * уведомления и будильники.
+     */
+    remindBefore: row.remindBefore === undefined ? undefined : normalizeLeads(row.remindBefore, { allowEnd: true }),
     color: row.color === undefined || row.color === null || row.color === ''
       ? null : v.oneOf(row.color, ['violet', 'orange', 'green', 'red'], { field: 'цвет' }),
   };

@@ -1,4 +1,5 @@
-const { ApiError, notFound } = require('../lib/errors');
+const { ApiError, notFound, badRequest } = require('../lib/errors');
+const v = require('../lib/validate');
 /*
  * Сдвиг и разность дат берём из lib/dates, а не считаем здесь своей копией.
  *
@@ -113,9 +114,20 @@ function dayService(db, opts = {}) {
     }
     const window = addDays(today, -CARRY_DAYS);
     const since = enabled > window ? enabled : window;
+    /*
+     * Записи интеграций не переносим.
+     *
+     * У задачи из внешнего списка ключ — источник, внешний номер и дата, и
+     * на эту тройку стоит уникальный индекс. Перенос двигал такие задачи
+     * вместе со своими, и если та же задача уже стояла на сегодня, UPDATE
+     * упирался в индекс: сегодняшний день переставал открываться совсем —
+     * «внутренняя ошибка» на каждый запрос, починить из приложения нечем.
+     * Да и по смыслу такой задачей владеет внешний список: сдвинь её дату,
+     * и следующая синхронизация просто создаст её заново на прежнем месте.
+     */
     const rows = db.prepare(
       `SELECT id, date, text FROM tasks
-        WHERE user_id = ? AND done = 0 AND date < ? AND date >= ?
+        WHERE user_id = ? AND done = 0 AND date < ? AND date >= ? AND source IS NULL
         ORDER BY date ASC, sort_order ASC, id ASC`,
     ).all(user.id, today, since);
     if (!rows.length) return;
@@ -221,6 +233,41 @@ function dayService(db, opts = {}) {
     return currentRev;
   }
 
+  /**
+   * Поля самого дня, приведённые и проверенные.
+   *
+   * Вес раньше шёл через голый `Number()`: «семьдесят» превращалось в NaN,
+   * а better-sqlite3 пишет NaN как NULL — человек вводил вес, получал в
+   * ответ 200 и пустую графу, без единого слова о том, что не так. «1e400»
+   * уезжало в базу бесконечностью. Тексты дня не были ограничены вовсе,
+   * хотя тот же текст через `POST /notes` ограничен двадцатью тысячами
+   * знаков: полтора мегабайта в заметке дня потом приезжали в каждый
+   * список заметок.
+   */
+  const MAX_NOTES = 20000;
+  const MAX_TITLE = 200;
+
+  function dayText(value, max, field) {
+    const text = String(value);
+    if (text.length > max) throw badRequest(`Поле «${field}» длиннее ${max} символов`);
+    return text;
+  }
+
+  function dayWeight(value) {
+    if (value === null || value === undefined || value === '') return null;
+    return v.num(value, { min: 1, max: 700, field: 'вес' });
+  }
+
+  function dayFields(body) {
+    const fields = {};
+    if (body.title !== undefined) fields.title = dayText(body.title, MAX_TITLE, 'заголовок');
+    if (body.focus !== undefined) fields.focus = dayText(body.focus, MAX_TITLE, 'главное на день');
+    if (body.notes !== undefined) fields.notes = dayText(body.notes, MAX_NOTES, 'заметка');
+    if (body.foodPlan !== undefined) fields.foodPlan = String(body.foodPlan).slice(0, 500);
+    if (body.weight !== undefined) fields.weight = dayWeight(body.weight);
+    return fields;
+  }
+
   /** Полная замена дня. Единственная операция, переписывающая день целиком. */
   function replaceFull(user, date, body, ifMatch) {
     checkIfMatch(ifMatch, user, date);
@@ -231,11 +278,11 @@ function dayService(db, opts = {}) {
         repo.removeAllForDate(user.id, date);
       }
       days.patch(user.id, date, {
-        title: String(body.title ?? ''),
-        focus: String(body.focus ?? ''),
-        weight: body.weight === undefined || body.weight === null ? null : Number(body.weight),
-        notes: String(body.notes ?? ''),
-        foodPlan: String(body.foodPlan ?? ''),
+        title: dayText(body.title ?? '', MAX_TITLE, 'заголовок'),
+        focus: dayText(body.focus ?? '', MAX_TITLE, 'главное на день'),
+        weight: dayWeight(body.weight),
+        notes: dayText(body.notes ?? '', MAX_NOTES, 'заметка'),
+        foodPlan: String(body.foodPlan ?? '').slice(0, 500),
       });
 
       /*
@@ -276,16 +323,27 @@ function dayService(db, opts = {}) {
   /** Правит только поля самого дня, вложенные сущности не трогает. */
   function patchDay(user, date, body, ifMatch, { requireIfMatch = true } = {}) {
     if (requireIfMatch) checkIfMatch(ifMatch, user, date);
-    const fields = {};
-    if (body.title !== undefined) fields.title = String(body.title);
-    if (body.focus !== undefined) fields.focus = String(body.focus);
-    if (body.notes !== undefined) fields.notes = String(body.notes);
-    if (body.foodPlan !== undefined) fields.foodPlan = String(body.foodPlan).slice(0, 500);
-    if (body.weight !== undefined) {
-      fields.weight = body.weight === null || body.weight === '' ? null : Number(body.weight);
-    }
+    const fields = dayFields(body);
     days.patch(user.id, date, fields);
     return getFull(user, date);
+  }
+
+  /**
+   * Удаление дня целиком.
+   *
+   * Раньше день стирался четырьмя сырыми DELETE прямо в репозитории дней, в
+   * обход всей логики удаления: не оставалось ни надгробий интеграций
+   * (удалённая строка воскресала первой же синхронизацией), ни пометок «в
+   * этот день повтора нет» (день восстанавливался сам при следующем
+   * открытии — и даже раньше, пересчётом уведомлений сразу после ответа).
+   * Теперь удаление идёт теми же руками, что и удаление по одной записи.
+   */
+  function removeDay(user, date) {
+    const tx = db.transaction(() => {
+      for (const repo of [schedule, tasks, meals, sport]) repo.removeAllForDate(user.id, date);
+      days.remove(user.id, date);
+    });
+    tx();
   }
 
   /** Копирование дня в другую дату. Отметки выполнения не переносятся — это план, а не факт. */
@@ -313,6 +371,13 @@ function dayService(db, opts = {}) {
             // блёкло-сиреневой и с одним напоминанием вместо трёх
             remindBeforeMin: r.remind_before_min, remindBefore: r.remind_before_json,
             color: r.color, done: 0, sortOrder: i,
+            /*
+             * Копия помнит, каким повтором рождена исходная строка. Без
+             * этого день-получатель считал, что повтор в нём ещё не
+             * достроен, и создавал вторую такую же строку: две «Зарядки»,
+             * два уведомления, неверный счётчик в сетке месяца.
+             */
+            seriesId: r.series_id ?? null,
           });
           newIdOf.set(r.id, created.id);
         });
@@ -350,7 +415,7 @@ function dayService(db, opts = {}) {
     return getFull(user, targetDate);
   }
 
-  return { getFull, getRange, replaceFull, patchDay, copyTo, checkIfMatch, SECTIONS };
+  return { getFull, getRange, replaceFull, patchDay, copyTo, removeDay, checkIfMatch, SECTIONS };
 }
 
 module.exports = { dayService, DAY_SECTIONS: SECTIONS };

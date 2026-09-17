@@ -126,7 +126,7 @@ module.exports = function daysRouter({ db }) {
   }));
 
   router.delete('/:date', wrap((req, res) => {
-    days.remove(req.user.id, dateOf(req));
+    svc.removeDay(req.user, dateOf(req));
     res.status(204).end();
   }));
 

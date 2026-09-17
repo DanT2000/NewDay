@@ -13,6 +13,7 @@ const express = require('express');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { wrap, ApiError } = require('../../lib/errors');
+const { sendFileSafe } = require('../../lib/sendFile');
 
 const MAX_APK_BYTES = 80 * 1024 * 1024;
 
@@ -38,17 +39,21 @@ module.exports = function appRouter({ config, store, update }) {
     });
   }));
 
-  router.get('/download', wrap((_req, res) => {
+  router.get('/download', wrap((_req, res, next) => {
     const cur = store.current();
     if (!cur) {
       throw new ApiError(404, 'NO_APK',
         'На этом сервере ещё нет выложенного APK. Соберите приложение и выложите его.');
     }
-    res.set('Content-Type', 'application/vnd.android.package-archive');
-    res.set('Content-Disposition', `attachment; filename="${cur.fileName}"`);
-    res.set('X-App-Version', cur.versionName);
-    res.set('Cache-Control', 'public, max-age=300');
-    fs.createReadStream(cur.filePath).pipe(res);
+    sendFileSafe(res, next, cur.filePath, {
+      headers: {
+        'Content-Type': 'application/vnd.android.package-archive',
+        'Content-Disposition': `attachment; filename="${cur.fileName}"`,
+        'X-App-Version': cur.versionName,
+        'Cache-Control': 'public, max-age=300',
+      },
+      notFoundMessage: 'Файл приложения потерян',
+    });
   }));
 
   /**
@@ -61,16 +66,32 @@ module.exports = function appRouter({ config, store, update }) {
   // type: () => true, а не '*/*': сопоставление по типу требует заголовка
   // Content-Type, а без него тело просто не разбиралось — и выкладка падала
   // с «пустой файл» вместо понятной ошибки.
+  /*
+   * Токен сверяем до чтения тела.
+   *
+   * `express.raw` дочитывает запрос в память целиком — до восьмидесяти
+   * мегабайт, — и только потом управление доходит до обработчика. Маршрут
+   * публичный: пока проверка стояла внутри, любой из интернета клал
+   * контейнер по памяти, отправив несколько таких запросов без всякого
+   * токена. Теперь неверный токен отвергается вместе с телом.
+   */
+  const проверитьТокен = (req, _res, next) => {
+    if (!config.apkUploadToken) {
+      next(new ApiError(503, 'UPLOAD_DISABLED',
+        'Выкладка APK не настроена: задайте APK_UPLOAD_TOKEN в окружении сервера.'));
+      return;
+    }
+    if (!sameSecret(req.get('X-Upload-Token'), config.apkUploadToken)) {
+      next(new ApiError(401, 'BAD_UPLOAD_TOKEN', 'Неверный токен выкладки'));
+      return;
+    }
+    next();
+  };
+
   router.post('/upload',
+    проверитьТокен,
     express.raw({ type: () => true, limit: MAX_APK_BYTES }),
     wrap((req, res) => {
-      if (!config.apkUploadToken) {
-        throw new ApiError(503, 'UPLOAD_DISABLED',
-          'Выкладка APK не настроена: задайте APK_UPLOAD_TOKEN в окружении сервера.');
-      }
-      if (!sameSecret(req.get('X-Upload-Token'), config.apkUploadToken)) {
-        throw new ApiError(401, 'BAD_UPLOAD_TOKEN', 'Неверный токен выкладки');
-      }
 
       const versionName = String(req.query.versionName || '');
       const notes = String(req.query.notes || '').slice(0, 2000);
