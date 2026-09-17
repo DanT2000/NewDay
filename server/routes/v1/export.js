@@ -65,7 +65,13 @@ module.exports = function exportRouter({ db }) {
       formatVersion: FORMAT_VERSION,
       exportedAt: new Date().toISOString(),
       user: publicUser(users.findById(userId), users.getSettings(userId)),
-      days: q('SELECT date, title, focus, weight, notes FROM days WHERE user_id = ? ORDER BY date'),
+      /*
+       * `food_plan` — план питания дня («Итого: примерно 1700–2150 ккал»).
+       * Колонку добавили миграцией, а в выгрузку не внесли: своя же
+       * резервная копия возвращала день без плана питания, молча.
+       */
+      days: q(`SELECT date, title, focus, weight, notes, food_plan
+                 FROM days WHERE user_id = ? ORDER BY date`),
       /*
        * Поля перечислены по одному, а не звёздочкой: так видно, что уходит
        * человеку. Обратная сторона — новую колонку легко забыть, и однажды
@@ -85,7 +91,13 @@ module.exports = function exportRouter({ db }) {
       meals: q(`SELECT date, slot, time_min, end_min, title, note, calories, done, sort_order,
                        remind_before_json, schedule_item_id
                   FROM meals WHERE user_id = ? ORDER BY date`),
-      sportSets: q('SELECT date, exercise, sets, reps, weight, done, sort_order FROM sport_sets WHERE user_id = ? ORDER BY date'),
+      /*
+       * `reps_max` — верх вилки «3×8–12». Колонку добавили миграцией, а в
+       * список выгрузки забыли: своя же резервная копия возвращала «3×8»
+       * вместо «3×8–12», и заметить это можно было только по памяти.
+       */
+      sportSets: q(`SELECT date, exercise, sets, reps, reps_max, weight, done, sort_order
+                      FROM sport_sets WHERE user_id = ? ORDER BY date`),
       habits: q(`SELECT id, title, description, emoji, color, type, target_per_day, unit,
                         schedule_mask, times_per_week, polarity, mode, challenge_target_days,
                         challenge_start_date, break_policy, allowed_skips_per_week, is_active,
@@ -186,9 +198,9 @@ module.exports = function exportRouter({ db }) {
 
       for (const d of data.days || []) {
         if (mode === 'merge' && existingDates.has(d.date)) continue;
-        db.prepare(`INSERT OR REPLACE INTO days (user_id, date, title, focus, weight, notes)
-                    VALUES (?,?,?,?,?,?)`)
-          .run(uid, d.date, d.title ?? '', d.focus ?? '', d.weight ?? null, d.notes ?? '');
+        db.prepare(`INSERT OR REPLACE INTO days (user_id, date, title, focus, weight, notes, food_plan)
+                    VALUES (?,?,?,?,?,?,?)`)
+          .run(uid, d.date, d.title ?? '', d.focus ?? '', d.weight ?? null, d.notes ?? '', d.food_plan ?? '');
       }
 
       const skip = date => mode === 'merge' && existingDates.has(date);
@@ -263,9 +275,10 @@ module.exports = function exportRouter({ db }) {
       }
       for (const r of data.sportSets || []) {
         if (skip(r.date)) continue;
-        db.prepare(`INSERT INTO sport_sets (user_id, date, exercise, sets, reps, weight, done, sort_order)
-                    VALUES (?,?,?,?,?,?,?,?)`)
-          .run(uid, r.date, r.exercise ?? '', r.sets ?? null, r.reps ?? null, r.weight ?? null, r.done ?? 0, r.sort_order ?? 0);
+        db.prepare(`INSERT INTO sport_sets (user_id, date, exercise, sets, reps, reps_max, weight, done, sort_order)
+                    VALUES (?,?,?,?,?,?,?,?,?)`)
+          .run(uid, r.date, r.exercise ?? '', r.sets ?? null, r.reps ?? null, r.reps_max ?? null,
+               r.weight ?? null, r.done ?? 0, r.sort_order ?? 0);
       }
 
       /*
