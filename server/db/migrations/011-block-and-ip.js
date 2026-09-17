@@ -1,4 +1,18 @@
 /**
+ * Добавить колонку, если её ещё нет.
+ *
+ * Тот же помощник, что в ранних миграциях. Сырой `ALTER TABLE ADD COLUMN`
+ * при повторном проходе падает с «duplicate column name», и сервер не
+ * поднимается вовсе — а повторный проход случается ровно тогда, когда он
+ * нужнее всего: при восстановлении из резервной копии, снятой между шагом
+ * миграции и записью её номера.
+ */
+function addColumn(db, table, column, ddl) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+  if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+}
+
+/**
  * Двухступенчатое удаление пользователя и адрес устройства.
  *
  * `users.blocked_at` — отметка «доступ закрыт администратором». Удаление
@@ -17,9 +31,7 @@ module.exports = {
   version: 11,
   name: 'block-and-ip',
   up(db) {
-    db.exec(`
-      ALTER TABLE users   ADD COLUMN blocked_at TEXT;
-      ALTER TABLE devices ADD COLUMN last_ip    TEXT;
-    `);
+    addColumn(db, 'users', 'blocked_at', 'blocked_at TEXT');
+    addColumn(db, 'devices', 'last_ip', 'last_ip TEXT');
   },
 };

@@ -1,4 +1,18 @@
 /**
+ * Добавить колонку, если её ещё нет.
+ *
+ * Тот же помощник, что в ранних миграциях. Сырой `ALTER TABLE ADD COLUMN`
+ * при повторном проходе падает с «duplicate column name», и сервер не
+ * поднимается вовсе — а повторный проход случается ровно тогда, когда он
+ * нужнее всего: при восстановлении из резервной копии, снятой между шагом
+ * миграции и записью её номера.
+ */
+function addColumn(db, table, column, ddl) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+  if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+}
+
+/**
  * Идентичность записей для внешних интеграций.
  *
  * `source` + `external_id` — кто создал запись и как она зовётся на его
@@ -21,39 +35,34 @@ module.exports = {
   version: 12,
   name: 'integrations',
   up(db) {
+    addColumn(db, 'schedule_items', 'source', 'source TEXT');
+    addColumn(db, 'schedule_items', 'external_id', 'external_id TEXT');
+    addColumn(db, 'schedule_items', 'last_modified_by', "last_modified_by TEXT NOT NULL DEFAULT 'user'");
+    addColumn(db, 'tasks', 'source', 'source TEXT');
+    addColumn(db, 'tasks', 'external_id', 'external_id TEXT');
+    addColumn(db, 'tasks', 'last_modified_by', "last_modified_by TEXT NOT NULL DEFAULT 'user'");
+    addColumn(db, 'meals', 'source', 'source TEXT');
+    addColumn(db, 'meals', 'external_id', 'external_id TEXT');
+    addColumn(db, 'meals', 'last_modified_by', "last_modified_by TEXT NOT NULL DEFAULT 'user'");
+    addColumn(db, 'sport_sets', 'source', 'source TEXT');
+    addColumn(db, 'sport_sets', 'external_id', 'external_id TEXT');
+    addColumn(db, 'sport_sets', 'last_modified_by', "last_modified_by TEXT NOT NULL DEFAULT 'user'");
+    addColumn(db, 'habits', 'source', 'source TEXT');
+    addColumn(db, 'habits', 'external_id', 'external_id TEXT');
+    addColumn(db, 'habits', 'last_modified_by', "last_modified_by TEXT NOT NULL DEFAULT 'user'");
+    addColumn(db, 'series', 'source', 'source TEXT');
+    addColumn(db, 'series', 'external_id', 'external_id TEXT');
+    addColumn(db, 'series', 'last_modified_by', "last_modified_by TEXT NOT NULL DEFAULT 'user'");
     db.exec(`
-      ALTER TABLE schedule_items ADD COLUMN source TEXT;
-      ALTER TABLE schedule_items ADD COLUMN external_id TEXT;
-      ALTER TABLE schedule_items ADD COLUMN last_modified_by TEXT NOT NULL DEFAULT 'user';
 
-      ALTER TABLE tasks ADD COLUMN source TEXT;
-      ALTER TABLE tasks ADD COLUMN external_id TEXT;
-      ALTER TABLE tasks ADD COLUMN last_modified_by TEXT NOT NULL DEFAULT 'user';
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_schedule_ext ON schedule_items (user_id, date, source, external_id) WHERE source IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_ext    ON tasks          (user_id, date, source, external_id) WHERE source IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_meals_ext    ON meals          (user_id, date, source, external_id) WHERE source IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_sport_ext    ON sport_sets     (user_id, date, source, external_id) WHERE source IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_habits_ext   ON habits         (user_id, source, external_id) WHERE source IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_series_ext   ON series         (user_id, source, external_id) WHERE source IS NOT NULL;
 
-      ALTER TABLE meals ADD COLUMN source TEXT;
-      ALTER TABLE meals ADD COLUMN external_id TEXT;
-      ALTER TABLE meals ADD COLUMN last_modified_by TEXT NOT NULL DEFAULT 'user';
-
-      ALTER TABLE sport_sets ADD COLUMN source TEXT;
-      ALTER TABLE sport_sets ADD COLUMN external_id TEXT;
-      ALTER TABLE sport_sets ADD COLUMN last_modified_by TEXT NOT NULL DEFAULT 'user';
-
-      ALTER TABLE habits ADD COLUMN source TEXT;
-      ALTER TABLE habits ADD COLUMN external_id TEXT;
-      ALTER TABLE habits ADD COLUMN last_modified_by TEXT NOT NULL DEFAULT 'user';
-
-      ALTER TABLE series ADD COLUMN source TEXT;
-      ALTER TABLE series ADD COLUMN external_id TEXT;
-      ALTER TABLE series ADD COLUMN last_modified_by TEXT NOT NULL DEFAULT 'user';
-
-      CREATE UNIQUE INDEX idx_schedule_ext ON schedule_items (user_id, date, source, external_id) WHERE source IS NOT NULL;
-      CREATE UNIQUE INDEX idx_tasks_ext    ON tasks          (user_id, date, source, external_id) WHERE source IS NOT NULL;
-      CREATE UNIQUE INDEX idx_meals_ext    ON meals          (user_id, date, source, external_id) WHERE source IS NOT NULL;
-      CREATE UNIQUE INDEX idx_sport_ext    ON sport_sets     (user_id, date, source, external_id) WHERE source IS NOT NULL;
-      CREATE UNIQUE INDEX idx_habits_ext   ON habits         (user_id, source, external_id) WHERE source IS NOT NULL;
-      CREATE UNIQUE INDEX idx_series_ext   ON series         (user_id, source, external_id) WHERE source IS NOT NULL;
-
-      CREATE TABLE integration_tombstones (
+      CREATE TABLE IF NOT EXISTS integration_tombstones (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
         entity TEXT NOT NULL,
@@ -63,7 +72,7 @@ module.exports = {
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       );
-      CREATE UNIQUE INDEX idx_tombstones_key
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_tombstones_key
         ON integration_tombstones (user_id, entity, date, source, external_id);
     `);
   },

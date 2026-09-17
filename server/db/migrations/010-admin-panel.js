@@ -1,4 +1,18 @@
 /**
+ * Добавить колонку, если её ещё нет.
+ *
+ * Тот же помощник, что в ранних миграциях. Сырой `ALTER TABLE ADD COLUMN`
+ * при повторном проходе падает с «duplicate column name», и сервер не
+ * поднимается вовсе — а повторный проход случается ровно тогда, когда он
+ * нужнее всего: при восстановлении из резервной копии, снятой между шагом
+ * миграции и записью её номера.
+ */
+function addColumn(db, table, column, ddl) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+  if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+}
+
+/**
  * Панель администратора: приглашения, тарифы помощника, прокси.
  *
  * Приглашения нужны, когда владелец закрывает свободную регистрацию:
@@ -25,8 +39,8 @@ module.exports = {
   version: 10,
   name: 'admin-panel',
   up(db) {
+    addColumn(db, 'users', 'ai_tier', "ai_tier TEXT NOT NULL DEFAULT 'unlimited'");
     db.exec(`
-      ALTER TABLE users ADD COLUMN ai_tier TEXT NOT NULL DEFAULT 'unlimited';
 
       CREATE TABLE IF NOT EXISTS invites (
         id         INTEGER PRIMARY KEY AUTOINCREMENT,

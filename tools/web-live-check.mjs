@@ -1628,6 +1628,47 @@ await wait(1200);
 await js(`document.querySelector('.wmodal-x')?.click()`);
 await wait(500);
 
+// ── Экран собирается даже на неожиданных настройках ──────────
+
+/*
+ * Цвет оформления приходит из настроек, а сервер их не разбирает: значение
+ * может оказаться каким угодно — от старой версии, от интеграции, от
+ * опечатки. Обращение к несуществующему ключу палитры роняло самый первый
+ * render(), и человек получал белый экран без единого слова, а каждый тик
+ * часов падал там же. Одна неверная настройка не должна выключать
+ * приложение целиком.
+ */
+const настройка = (тело) => js(`fetch('/api/v1/settings', { method: 'PATCH',
+  headers: { 'Content-Type': 'application/json' }, body: ${JSON.stringify(JSON.stringify(тело))} }).then(r => r.status)`, true);
+const былЦвет = await js(`fetch('/api/v1/settings').then(r => r.json()).then(s => s.settings?.accent ?? null)`, true);
+await настройка({ settings: { accent: 'такого-цвета-нет' } });
+await rpc(ws, 'Page.navigate', { url: `${BASE}/web.html` });
+const собрался = await waitFor('Boolean(document.querySelector(".wside"))', 40);
+await wait(800);
+проба('неизвестный цвет в настройках не оставляет белый экран',
+  собрался && !(await js(`Boolean(document.querySelector('.wcrash'))`)),
+  собрался ? 'экран собран' : 'экран не собрался');
+await настройка({ settings: { accent: былЦвет ?? 'violet' } });
+await rpc(ws, 'Page.navigate', { url: `${BASE}/web.html` });
+await waitFor('Boolean(document.querySelector(".wside"))', 40);
+await wait(600);
+
+// ── «Сообщить о проблеме» не молчит ──────────────────────────
+
+/*
+ * Панель отчёта писала свои сообщения в state.notice, а он рисуется только
+ * внутри шторки: человек нажимал «Отправить» с пустыми полями и не получал
+ * ровно ничего — ни ошибки, ни подсказки. Кнопка выглядела сломанной.
+ */
+await js(`window.__wgo('settings', 'report')`);
+await waitFor(`document.body.textContent.includes('Сообщить о проблеме')`, 40);
+await wait(600);
+await js(`[...document.querySelectorAll('button')].find(b => /Отправить/.test(b.textContent))?.click()`);
+await wait(700);
+const сказали = await js(`(document.querySelector('.wnotice')?.textContent || '').slice(0, 60)`);
+проба('пустое сообщение о проблеме объясняет, чего не хватает',
+  /Напишите или наговорите/.test(сказали), сказали || 'молчит');
+
 // ── Помощник: кнопка оживает по мере набора ──────────────────
 
 /*

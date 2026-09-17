@@ -25,7 +25,7 @@ module.exports = {
   name: 'reports',
   up(db) {
     db.exec(`
-      CREATE TABLE reports (
+      CREATE TABLE IF NOT EXISTS reports (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         text         TEXT    NOT NULL DEFAULT '',
@@ -40,8 +40,8 @@ module.exports = {
         status       TEXT    NOT NULL DEFAULT 'new',
         created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
       );
-      CREATE INDEX reports_fresh ON reports(created_at DESC);
-      CREATE INDEX reports_status ON reports(status, created_at DESC);
+      CREATE INDEX IF NOT EXISTS reports_fresh ON reports(created_at DESC);
+      CREATE INDEX IF NOT EXISTS reports_status ON reports(status, created_at DESC);
     `);
   },
 };

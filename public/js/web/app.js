@@ -292,7 +292,21 @@ window.__wopen = name => {
 const dark = () => (state.theme === 'system'
   ? !matchMedia('(prefers-color-scheme: light)').matches
   : state.theme !== 'light');
-const accent = () => PALETTE[state.color][dark() ? 'dark' : 'light'];
+/*
+ * Цвет берём через палитру с запасным значением.
+ *
+ * `state.color` приходит из настроек, а сервер их не разбирает: значение
+ * может оказаться каким угодно — от старой версии, от интеграции, от
+ * опечатки. Обращение к несуществующему ключу палитры бросало TypeError в
+ * самом первом `render()`, и человек получал белый экран без единого
+ * слова; следующий тик часов падал там же. Один неверный ключ настройки
+ * не должен выключать приложение целиком.
+ */
+const ЦВЕТ_ПО_УМОЛЧАНИЮ = 'violet';
+const accent = () => {
+  const набор = PALETTE[state.color] ?? PALETTE[ЦВЕТ_ПО_УМОЛЧАНИЮ];
+  return набор[dark() ? 'dark' : 'light'];
+};
 const soft = () => `color-mix(in srgb, ${accent()} 18%, transparent)`;
 
 const pad2 = n => String(n).padStart(2, '0');
@@ -2319,21 +2333,19 @@ function repStop() {
 async function repRecord() {
   if (state.repRec) { repStop(); return; }
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-    state.notice = 'Это устройство не умеет записывать звук — напишите текстом';
-    state.noticeBad = true; render(); return;
+    note('Это устройство не умеет записывать звук — напишите текстом', true); return;
   }
   let stream;
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
   catch (e) {
     const name = e?.name ?? '';
-    state.notice = name === 'NotAllowedError' || name === 'SecurityError'
+    const сообщение = name === 'NotAllowedError' || name === 'SecurityError'
       ? 'Микрофон запрещён. Разрешите доступ к микрофону в настройках приложения'
       : name === 'NotFoundError'
         ? 'Микрофон не найден'
         : `Микрофон не открылся: ${e?.message || name || 'неизвестная причина'}`;
-    state.noticeBad = true;
-    diag.note('микрофон', state.notice);
-    render();
+    diag.note('микрофон', сообщение);
+    note(сообщение, true);
     return;
   }
 
@@ -2368,8 +2380,7 @@ async function repRecord() {
 async function repSend() {
   repStop();
   if (!state.repText.trim() && !state.repAudio && !state.repShot) {
-    state.notice = 'Напишите или наговорите, что случилось';
-    state.noticeBad = true; render(); return;
+    note('Напишите или наговорите, что случилось', true); return;
   }
   state.repSending = true;
   state.repDone = null;
@@ -6776,7 +6787,61 @@ const PHONE_SCREENS = {
 };
 const SAME_SCREEN = { plan: 'tasks', tasks: 'plan' };
 
+/*
+ * Отрисовка под страховкой.
+ *
+ * Внутри — сборка всего экрана, и любая неожиданность в данных (ключ
+ * настройки, которого нет в наборе; поле, которого не ждали) превращалась
+ * в исключение посреди сборки. Дальше было два исхода, и оба плохие: если
+ * экран уже нарисован — он застывает, кнопки не отвечают, и каждое
+ * следующее действие падает там же; если это первая отрисовка — человек
+ * видит белый лист без единого слова.
+ *
+ * Поэтому вокруг стоит страховка. Она не прячет поломку: пишет в дневник
+ * (он уезжает с сообщением о проблеме) и показывает человеку, что делать.
+ */
 function render() {
+  try {
+    отрисовать();
+  } catch (e) {
+    diag.note('беда', `отрисовка: ${e?.message || e}`);
+    аварийныйЭкран(e);
+  }
+}
+
+/**
+ * Что показать, когда отрисовка упала. Пустой экран молчит, а человеку
+ * нужно понимать, что произошло и что он может сделать прямо сейчас.
+ */
+function аварийныйЭкран(e) {
+  const root = $('#wapp');
+  if (!root) return;
+  if (root.querySelector('.wcrash')) return;   // уже показан, второй раз не надо
+  const box = h('div.wcrash', {
+    style: {
+      padding: '28px', margin: '24px auto', maxWidth: '520px', borderRadius: '16px',
+      background: '#2e3040', color: '#e9e9ed', font: '400 15px/1.5 system-ui, sans-serif',
+    },
+  });
+  add(box,
+    h('div', { text: 'Экран не собрался', style: { font: '600 18px/1.3 system-ui, sans-serif', marginBottom: '10px' } }),
+    h('div', { text: 'Данные на сервере целы. Обновите страницу; если повторится — пришлите сообщение о проблеме, в него попадёт эта запись.' }),
+    h('div', {
+      text: String(e?.message || e).slice(0, 200),
+      style: { marginTop: '12px', font: '400 12px/1.4 ui-monospace, monospace', opacity: '.7' },
+    }),
+    h('button', {
+      type: 'button', text: 'Обновить страницу',
+      style: {
+        marginTop: '16px', padding: '10px 16px', borderRadius: '10px', border: '0',
+        background: '#7c6cff', color: '#fff', font: '600 14px system-ui, sans-serif', cursor: 'pointer',
+      },
+      onclick: () => location.reload(),
+    }));
+  root.replaceChildren(box);
+}
+
+function отрисовать() {
   const root = $('#wapp');
   if (!root) return;
 
@@ -7193,7 +7258,8 @@ async function bootstrap() {
     // Открыть при этом сегодняшний день значит показать не то, о чём звали
     state.date = askedDate() ?? settings.today;
     state.theme = settings.theme ?? 'dark';
-    state.color = settings.settings?.accent ?? 'violet';
+    const цвет = settings.settings?.accent;
+    state.color = Object.hasOwn(PALETTE, цвет ?? '') ? цвет : ЦВЕТ_ПО_УМОЛЧАНИЮ;
     /*
      * Размеров теперь два. Кто успел выбрать полуторный, получал экран,
      * увеличенный на 150 %, и ни одной подсвеченной кнопки в настройках:

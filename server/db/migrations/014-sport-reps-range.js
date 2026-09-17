@@ -1,4 +1,18 @@
 /**
+ * Добавить колонку, если её ещё нет.
+ *
+ * Тот же помощник, что в ранних миграциях. Сырой `ALTER TABLE ADD COLUMN`
+ * при повторном проходе падает с «duplicate column name», и сервер не
+ * поднимается вовсе — а повторный проход случается ровно тогда, когда он
+ * нужнее всего: при восстановлении из резервной копии, снятой между шагом
+ * миграции и записью её номера.
+ */
+function addColumn(db, table, column, ddl) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+  if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+}
+
+/**
  * Повторы в упражнении — диапазон, а не одно число.
  *
  * План тренировки почти всегда пишется вилкой: «3×8–12» значит «три подхода,
@@ -16,6 +30,6 @@ module.exports = {
   version: 14,
   name: 'sport-reps-range',
   up(db) {
-    db.exec('ALTER TABLE sport_sets ADD COLUMN reps_max INTEGER');
+    addColumn(db, 'sport_sets', 'reps_max', 'reps_max INTEGER');
   },
 };

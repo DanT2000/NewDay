@@ -30,6 +30,32 @@ const { panelSettings } = require('../repos/panelSettings');
  */
 const QUEUE_STUCK_MS = 10 * 60 * 1000;
 
+
+/*
+ * Проба записи — не чаще раза в тридцать секунд.
+ *
+ * Раньше на КАЖДЫЙ запрос здоровья создавалась и удалялась таблица. Это
+ * блокировка записи в SQLite, сброс кеша подготовленных запросов и рост
+ * журнала — на публичном маршруте без ограничений получалась кнопка
+ * «притормози сервер». Наблюдалка опрашивает здоровье раз в несколько
+ * секунд, и ответ тридцатисекундной давности её устраивает.
+ */
+const ПРОБА_ГОДНА_МС = 30000;
+let пробаЗаписи = { когда: 0, ок: null };
+
+function базаПишется(db) {
+  const сейчас = Date.now();
+  if (пробаЗаписи.ок !== null && сейчас - пробаЗаписи.когда < ПРОБА_ГОДНА_МС) return пробаЗаписи.ок;
+  let ок = false;
+  try {
+    db.prepare('CREATE TABLE IF NOT EXISTS _write_probe (x INTEGER)').run();
+    db.prepare('DROP TABLE IF EXISTS _write_probe').run();
+    ок = true;
+  } catch { ок = false; }
+  пробаЗаписи = { когда: сейчас, ок };
+  return ок;
+}
+
 module.exports = function healthRouter(db, { ai, push, mailer } = {}) {
   const router = express.Router();
   const panel = panelSettings(appSettingsRepo(db));
@@ -63,9 +89,7 @@ module.exports = function healthRouter(db, { ai, push, mailer } = {}) {
     let dbWritable = false;
     try {
       schemaVersion = db.prepare('SELECT MAX(version) AS v FROM schema_version').get()?.v ?? 0;
-      db.prepare('CREATE TABLE IF NOT EXISTS _write_probe (x INTEGER)').run();
-      db.prepare('DROP TABLE IF EXISTS _write_probe').run();
-      dbWritable = true;
+      dbWritable = базаПишется(db);
     } catch (e) {
       dbWritable = false;
       problems.push(`База не пишется: ${e.message}. Проверьте том с базой и место на диске`);
