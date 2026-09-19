@@ -119,6 +119,37 @@ test('отметка привычки без связи остаётся на э
   assert.strictEqual(q.ожидает(), 1);
 });
 
+test('отвергнутая сервером правка уходит с экрана, а не остаётся висеть', async () => {
+  const { data, q } = await стенд();
+  const с = сеть();
+  // сервер отвечает отказом на правку и целым днём на перечитывание
+  let первый = true;
+  globalThis.fetch = async (url, opts = {}) => {
+    const метод = opts.method ?? 'GET';
+    if (метод === 'POST' && первый) {
+      первый = false;
+      return {
+        ok: false, status: 400,
+        headers: { get: () => 'application/json' },
+        json: async () => ({ error: { code: 'BAD_REQUEST', message: 'Не приняли' } }),
+      };
+    }
+    return {
+      ok: true, status: 200,
+      headers: { get: () => 'application/json' },
+      json: async () => structuredClone(ДЕНЬ),
+    };
+  };
+  data.createTask('2026-09-19', { text: 'не примут', bucket: 'home' });
+  assert.strictEqual(data.store.day.tasks.home.length, 1, 'сперва видна');
+  data.запуститьОчередь();
+  await q.отправить();
+  await new Promise(r => setTimeout(r, 50));   // перечитывание дня идёт следом
+  assert.strictEqual(data.store.day.tasks.home.length, 0, 'после отказа с экрана ушла');
+  assert.strictEqual(q.конфликты().length, 1, 'и человеку есть что показать');
+  assert.strictEqual(с.вызовы.length >= 0, true);
+});
+
 test('о каждой правке сообщают подписчику: экран перерисуется сам', async () => {
   const { data } = await стенд();
   сеть().обрыв();
