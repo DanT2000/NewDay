@@ -2207,6 +2207,109 @@ await js(`(async () => {
 проба('стенд убран за собой: сообщений не осталось',
   (await js(`fetch('/api/v1/reports').then(r => r.json()).then(r => r.reports.length)`, true)) === 0);
 
+// ── Офлайн-правки ──
+/*
+ * Главное обещание местной копии: правка видна сразу, переживает
+ * перезагрузку и уезжает сама. Проверяем на одной задаче все три раза —
+ * так видно не только «появилось», но и «доехало именно то».
+ *
+ * Идёт последней: проба отключает сеть, и соседние проверки об этом знать
+ * не должны.
+ */
+await js(`window.__wgo && window.__wgo('today')`);
+await wait(600);
+const МЕТКА = `офлайн-${Date.now().toString(36)}`;
+const задачСМеткой = () => js(
+  `fetch('/api/v1/days/${DAY}/full').then(r => r.json())
+     .then(d => Object.values(d.tasks).flat().filter(t => (t.text || '').includes('${МЕТКА}')).length)`, true);
+
+/** Открыть шторку задачи, вписать название, нажать «Готово». Вернуть мс до отрисовки. */
+const добавитьЗадачу = async название => {
+  await js(`[...document.querySelectorAll('button')].find(x => /Добавить задачу/.test(x.textContent))?.click()`);
+  await waitFor(`Boolean(document.querySelector('.wmodal .winput'))`, 30);
+  return js(`(() => {
+    const i = document.querySelector('.wmodal .winput');
+    if (!i) return -1;
+    i.value = ${JSON.stringify(название)};
+    i.dispatchEvent(new Event('input', { bubbles: true }));
+    const t0 = performance.now();
+    [...document.querySelectorAll('.wmodal button')].find(x => /Готово/.test(x.textContent))?.click();
+    return Math.round(performance.now() - t0);
+  })()`);
+};
+const виднаЛи = текст => js(
+  `[...document.querySelectorAll('.wtasks *, .wlist *')].some(e => e.textContent === ${JSON.stringify(текст)})`);
+
+const мсСоСвязью = await добавитьЗадачу(`быстрая ${МЕТКА}`);
+await wait(200);
+проба('со связью задача появляется без ожидания сети',
+  мсСоСвязью >= 0 && мсСоСвязью < 150 && await виднаЛи(`быстрая ${МЕТКА}`),
+  `отрисовка заняла ${мсСоСвязью} мс`);
+
+/*
+ * Обрыв связи делаем на том слое, которым пользуется приложение.
+ *
+ * Эмуляции сети средствами браузера здесь мало: страницу контролирует
+ * service worker, и запросы к API идут его потоком — эмуляция страницы их
+ * не касается, и «в офлайне» правка преспокойно уезжала на сервер. Поэтому
+ * вдобавок заставляем сам `fetch` отказывать на адресах API, а признак
+ * держим в sessionStorage — он переживает перезагрузку страницы, и после
+ * неё связи по-прежнему нет.
+ */
+const обрывСвязи = `(() => {
+  const было = window.fetch;
+  window.fetch = (...a) => (sessionStorage.getItem('проба-офлайн') && String(a[0]).includes('/api/')
+    ? Promise.reject(new TypeError('Failed to fetch')) : было(...a));
+})()`;
+await rpc(ws, 'Page.addScriptToEvaluateOnNewDocument', { source: обрывСвязи });
+await js(обрывСвязи);
+await js(`sessionStorage.setItem('проба-офлайн', '1')`);
+await rpc(ws, 'Network.emulateNetworkConditions',
+  { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
+await wait(300);
+const мсБезСвязи = await добавитьЗадачу(`из метро ${МЕТКА}`);
+await wait(500);
+проба('без связи задача видна сразу', await виднаЛи(`из метро ${МЕТКА}`), `${мсБезСвязи} мс`);
+/*
+ * Сколько правок ждёт отправки, спрашиваем у хранилища, а не у сервера:
+ * при выключенной сети запрос к серверу не доедет по определению, и такая
+ * проверка проверяла бы саму себя.
+ */
+const вОчереди = await js(
+  `(JSON.parse(localStorage.getItem('newday.outbox.v1') || '{}').ops || []).length`);
+проба('правка лежит в очереди на устройстве', вОчереди === 1, `в очереди: ${вОчереди}`);
+проба('значок показывает состояние связи',
+  await js(`Boolean(document.querySelector('.wsync'))`),
+  await js(`document.querySelector('.wsync')?.textContent ?? 'значка нет'`));
+
+// перезагрузка страницы в офлайне: правка лежит в хранилище, а не в памяти
+await rpc(ws, 'Page.reload');
+await waitFor(`Boolean(document.querySelector('.wside, .wpbody'))`, 80);
+await wait(1200);
+проба('правка пережила перезагрузку страницы', await виднаЛи(`из метро ${МЕТКА}`),
+  await js(`document.querySelector('.wsync')?.textContent ?? 'значка нет'`));
+
+await js(`sessionStorage.removeItem('проба-офлайн')`);
+await rpc(ws, 'Network.emulateNetworkConditions',
+  { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+await js(`window.dispatchEvent(new Event('online'))`);
+await wait(3000);
+проба('связь вернулась — очередь уехала', (await задачСМеткой()) === 2,
+  `на сервере задач с меткой: ${await задачСМеткой()}`);
+проба('значок исчез, когда всё уехало',
+  (await js(`document.querySelector('.wsync') ? 1 : 0`)) === 0,
+  await js(`document.querySelector('.wsync')?.textContent ?? ''`));
+
+// Уборка: задачи прогона не должны копиться в стенде
+await js(`(async () => {
+  const d = await (await fetch('/api/v1/days/${DAY}/full')).json();
+  for (const t of Object.values(d.tasks).flat()) {
+    if ((t.text || '').includes('${МЕТКА}')) await fetch('/api/v1/days/${DAY}/tasks/' + t.id, { method: 'DELETE' });
+  }
+  return true;
+})()`, true);
+проба('стенд убран за собой: задачи прогона удалены', (await задачСМеткой()) === 0);
+
 console.log('\n── Итог ──');
 const плохо = пробы.filter(([, ok]) => !ok).length;
 console.log(`${пробы.length - плохо} из ${пробы.length}`);
