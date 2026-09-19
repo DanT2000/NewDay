@@ -1,0 +1,117 @@
+/**
+ * Наложение ещё не уехавшей правки на день.
+ *
+ * Правило одно: на экране — последний ответ сервера плюс правки из очереди,
+ * наложенные по порядку. Здесь вторая половина этого правила, и только она:
+ * ни сети, ни хранилища, ни DOM. Функция чистая, её зовут заново после
+ * каждой загрузки дня — поэтому накопиться ошибке негде.
+ */
+
+/** Разделы дня со строками. Имя раздела — оно же кусок адреса API. */
+export const РАЗДЕЛЫ = ['schedule', 'tasks', 'meals', 'sport'];
+
+/*
+ * Сервер принимает camelCase, а в строке дня лежат имена колонок. Карта
+ * повторяет FIELD_MAP репозиториев (server/repos/*.js): пока правка не
+ * уехала, строка обязана выглядеть ровно так же, как будущий ответ сервера,
+ * иначе после отправки она на экране дёрнется.
+ */
+const В_КОЛОНКУ = {
+  startMin: 'start_min', endMin: 'end_min', timeMin: 'time_min',
+  alarmMode: 'alarm_mode', alarmProfile: 'alarm_profile',
+  remindBeforeMin: 'remind_before_min', remindBefore: 'remind_before_json',
+  scheduleItemId: 'schedule_item_id', seriesId: 'series_id',
+  sortOrder: 'sort_order', carriedFrom: 'carried_from', repsMax: 'reps_max',
+  externalId: 'external_id', lastModifiedBy: 'last_modified_by',
+};
+
+/** Поля, которые сервер хранит текстом JSON. */
+const ТЕКСТОМ = new Set(['remindBefore']);
+/** Флажки: в API это true/false, в строке — 1/0. */
+const ФЛАЖКИ = new Set(['done']);
+
+/** Тело запроса → поля строки дня. */
+export function вСтроку(поля) {
+  const out = {};
+  for (const [k, знач] of Object.entries(поля ?? {})) {
+    const имя = В_КОЛОНКУ[k] ?? k;
+    if (ТЕКСТОМ.has(k)) {
+      out[имя] = Array.isArray(знач) && знач.length ? JSON.stringify(знач) : null;
+    } else if (ФЛАЖКИ.has(k)) {
+      out[имя] = знач ? 1 : 0;
+    } else {
+      out[имя] = знач;
+    }
+  }
+  return out;
+}
+
+/*
+ * Чего сервер дописывает сам при создании. Без этого новая строка приходит
+ * на экран без `done` и без `kind`, и разметка спотыкается о undefined ещё
+ * до того, как правка уехала.
+ */
+const ЗАГОТОВКА = {
+  schedule: {
+    start_min: 0, end_min: null, title: '', note: '', done: 0, kind: 'normal',
+    alarm_mode: 'none', alarm_profile: 'gentle', remind_before_json: null,
+    remind_before_min: null, series_id: null, color: null,
+  },
+  tasks: { bucket: 'work', text: '', done: 0, carried_from: null },
+  meals: {
+    slot: 'other', time_min: null, end_min: null, title: '', note: '',
+    calories: null, done: 0, schedule_item_id: null, remind_before_json: null,
+  },
+  sport: { exercise: '', sets: null, reps: null, reps_max: null, weight: null, done: 0 },
+};
+
+/** Строки раздела одним списком: задачи лежат по двум корзинам. */
+const строки = (день, раздел) => (раздел === 'tasks'
+  ? [...(день.tasks?.work ?? []), ...(день.tasks?.home ?? [])]
+  : (день[раздел] ?? []));
+
+/** Положить список обратно — задачи разложив по корзинам. */
+function записать(день, раздел, список) {
+  if (раздел !== 'tasks') { день[раздел] = список; return; }
+  день.tasks = {
+    work: список.filter(t => (t.bucket ?? 'work') === 'work'),
+    home: список.filter(t => (t.bucket ?? 'work') !== 'work'),
+  };
+}
+
+/** Сравнение id: временный — строка, настоящий — число. */
+const тот = (a, b) => String(a) === String(b);
+
+export function наложить(день, оп) {
+  if (!день || !оп) return день;
+  const d = structuredClone(день);
+  const раздел = оп.данные?.раздел;
+  switch (оп.вид) {
+    case 'строка.создать':
+      записать(d, раздел, [...строки(d, раздел),
+        { ...ЗАГОТОВКА[раздел], ...вСтроку(оп.данные.поля), id: оп.цель }]);
+      break;
+    case 'строка.изменить':
+      записать(d, раздел, строки(d, раздел)
+        .map(r => (тот(r.id, оп.цель) ? { ...r, ...вСтроку(оп.данные.поля) } : r)));
+      break;
+    case 'строка.удалить':
+      записать(d, раздел, строки(d, раздел).filter(r => !тот(r.id, оп.цель)));
+      break;
+    case 'привычка.отметить':
+      // отметка за другую дату к этому дню отношения не имеет
+      if (оп.данные.дата !== d.date) break;
+      d.habits = (d.habits ?? []).map(h => (тот(h.id, оп.цель)
+        ? { ...h, status: оп.данные.статус } : h));
+      break;
+    case 'день.поля':
+      if (оп.дата === d.date) Object.assign(d, оп.данные.поля);
+      break;
+    default:
+      break;   // настройки и всё незнакомое день не меняют
+  }
+  return d;
+}
+
+export const наложитьВсе = (день, ops) =>
+  (ops ?? []).reduce((d, оп) => наложить(d, оп), день);
