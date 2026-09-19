@@ -1,6 +1,7 @@
 const express = require('express');
 const { wrap, badRequest } = require('../../lib/errors');
 const v = require('../../lib/validate');
+const { opKeys } = require('../../lib/idempotency');
 
 /**
  * Роутер для «строк дня»: расписание, задачи, питание, спорт.
@@ -12,6 +13,7 @@ const v = require('../../lib/validate');
 function entityRouter({ db, repoFor, sanitize, extra }) {
   const router = express.Router({ mergeParams: true });
   const repo = repoFor(db);
+  const ключи = opKeys(db);
 
   const dateOf = req => v.date(req.params.date, { field: 'дата' });
   const idOf = req => v.int(req.params.id, { min: 1, field: 'id' });
@@ -21,7 +23,16 @@ function entityRouter({ db, repoFor, sanitize, extra }) {
   }));
 
   router.post('/', wrap((req, res) => {
+    /*
+     * Повтор создания не должен делать вторую строку: очередь на устройстве
+     * повторяет запрос, когда не дождалась ответа, — а ответ мог потеряться
+     * уже после записи.
+     */
+    const ключ = ключи.ключИз(req.get('idempotency-key'));
+    const был = ключ && ключи.повтор(req.user.id, ключ);
+    if (был) { res.status(был.status).json(был.body); return; }
     const row = repo.create(req.user.id, dateOf(req), sanitize(req.body, { partial: false }));
+    if (ключ) ключи.запомнить(req.user.id, ключ, 201, row);
     res.status(201).json(row);
   }));
 

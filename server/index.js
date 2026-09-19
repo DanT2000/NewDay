@@ -102,6 +102,19 @@ purgeBlocked();   // и сразу при старте: сервер мог пр
 const purgeTimer = setInterval(purgeBlocked, 24 * 60 * 60 * 1000);
 purgeTimer.unref?.();
 
+/**
+ * Ключи повторных запросов живут сутки: дольше повтор не приходит, а
+ * таблица без уборки растёт с каждой созданной строкой.
+ */
+const { opKeys } = require('./lib/idempotency');
+const purgeOpKeys = () => {
+  try { opKeys(app.locals.db).убратьСтарые(); }
+  catch (e) { console.error('[newday] уборка ключей повторов:', e.message); }
+};
+purgeOpKeys();
+const opKeysTimer = setInterval(purgeOpKeys, 60 * 60 * 1000);
+opKeysTimer.unref?.();
+
 // Порт берём из фактически открытого сокета: при PORT=0 система выбирает его
 // сама, и запись «порт 0» в логе бесполезна
 const server = app.listen(config.port, '0.0.0.0', () => {

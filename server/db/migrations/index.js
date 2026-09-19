@@ -13,6 +13,7 @@ const MIGRATIONS = [
   require('./012-integrations'),
   require('./013-reports'),
   require('./014-sport-reps-range'),
+  require('./015-op-keys'),
 ];
 
 function currentVersion(db) {
