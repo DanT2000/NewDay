@@ -91,6 +91,25 @@ test('несколько правок подряд дают тот же резу
   assert.strictEqual(стало.tasks.home[0].done, 1, 'новая задача создана и отмечена');
 });
 
+test('сетка недели тоже показывает неуехавшее', async () => {
+  const { наложитьНаПериод } = await import('../../public/js/web/apply.js');
+  const период = {
+    from: '2026-09-19', to: '2026-09-20',
+    days: [
+      { date: '2026-09-19', schedule: [{ id: 5, title: 'Подъём', done: 0 }], tasks: [{ id: 11, text: 'отчёт', done: 0, bucket: 'work' }], counts: { schedule: 1, done: 0 } },
+      { date: '2026-09-20', schedule: [], tasks: [], counts: { schedule: 0, done: 0 } },
+    ],
+  };
+  const стало = наложитьНаПериод(период, [
+    оп('строка.изменить', { цель: 11, данные: { раздел: 'tasks', поля: { done: true } } }),
+    оп('строка.удалить', { цель: 5, данные: { раздел: 'schedule' } }),
+  ]);
+  assert.strictEqual(стало.days[0].tasks[0].done, 1, 'галочка в клетке не отскакивает');
+  assert.strictEqual(стало.days[0].schedule.length, 0, 'удалённый блок из клетки ушёл');
+  assert.strictEqual(стало.days[0].counts.schedule, 0, 'счётчик клетки пересчитан');
+  assert.deepStrictEqual(стало.days[1], период.days[1], 'соседний день не тронут');
+});
+
 test('день без данных наложение переживает', async () => {
   const { наложить, наложитьВсе } = await import('../../public/js/web/apply.js');
   assert.strictEqual(наложить(null, оп('день.поля', { данные: { поля: { notes: 'а' } } })), null);

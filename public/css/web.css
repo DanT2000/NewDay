@@ -1828,6 +1828,22 @@ select.winput { appearance: auto; cursor: pointer; }
 }
 .wnotice.calm b { color: var(--text); font-weight: 500; }
 
+/*
+ * Значок связи. Маленький и в потоке: это состояние, а не событие.
+ *
+ * Полоса во весь экран занимала место постоянно и читалась тревожнее, чем
+ * есть на деле: «правки не уходят» человек понимал как «правки потеряются».
+ * Теперь они лежат в очереди и уедут сами, а сказать надо только сколько их
+ * и есть ли связь.
+ */
+.wsync {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-bottom: 12px; padding: 5px 10px; border-radius: 999px;
+  border: none; background: var(--raise); color: var(--dim);
+  font: 400 12px/1 var(--ui); cursor: pointer;
+}
+.wsync.bad { color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); }
+
 .wnotice {
   margin-bottom: 16px; padding: 12px 14px; border-radius: 12px;
   background: var(--raise); color: var(--text);
