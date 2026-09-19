@@ -6,12 +6,15 @@
  * в `data.js` примерами. Поэтому подключение и вышло подстановкой, а не
  * переписыванием разметки.
  *
- * Правки уходят на сервер сразу, а на экране применяются не дожидаясь
- * ответа: галочка, которая ставится через полсекунды, ощущается как
- * сломанная. Если сервер отказал — возвращаем как было и говорим об этом.
+ * Правка применяется на экране сразу и ложится в очередь на устройстве;
+ * сеть в этот момент не нужна вовсе. То, что видно, — это последний ответ
+ * сервера плюс ещё не уехавшие правки, наложенные по порядку.
  */
 
 import * as api from '../api.js';
+import * as очередь from '../outbox.js';
+import { наложить, наложитьВсе } from './apply.js';
+import { запрос } from './ops.js';
 
 const pad2 = n => String(n).padStart(2, '0');
 export const keyOf = dt => `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
@@ -93,6 +96,8 @@ export function forgetLocal() {
       if (k.startsWith(LOCAL)) localStorage.removeItem(k);
     }
   } catch { /* нечего забывать */ }
+  // и очередь тоже: чужие правки отправлять некуда и незачем
+  очередь.очистить();
 }
 
 /**
@@ -152,11 +157,21 @@ let rangeGen = 0;
 
 export async function loadDay(date) {
   const gen = ++dayGen;
+  /*
+   * Поверх ответа сервера ложатся неуехавшие правки.
+   *
+   * Без этого ответ, в котором правки ещё нет, стирал бы её с экрана до тех
+   * пор, пока очередь не доедет: человек видел бы, как только что
+   * отмеченное дело отскакивает обратно. В локальную копию кладём именно
+   * ответ сервера — очередь лежит отдельно и накладывается заново при
+   * каждом чтении.
+   */
+  const сОчередью = день => наложитьВсе(день, очередь.список().filter(о => о.дата === date));
   try {
     const day = await api.getDay(date);
     keep(`day.${date}`, day);
     if (gen !== dayGen) return store.day;
-    store.day = day;
+    store.day = сОчередью(day);
     store.offline = false;
     return store.day;
   } catch (e) {
@@ -164,7 +179,7 @@ export async function loadDay(date) {
     const saved = kept(`day.${date}`);
     if (!saved) throw e;
     if (gen !== dayGen) return store.day;
-    store.day = saved.value;
+    store.day = сОчередью(saved.value);
     store.offline = true;
     return store.day;
   }
@@ -317,72 +332,175 @@ export const endSeries = (id, date) => api.series.endFrom(id, date);
 
 // ── Правки ───────────────────────────────────────────────────
 
-/**
- * Применить на экране сразу, отправить на сервер, при отказе вернуть как
- * было. `apply` меняет то, что уже лежит в памяти; `send` возвращает промис.
+/*
+ * Правка применяется на устройстве и ложится в очередь. Сеть в этот момент
+ * никого не интересует: человек нажал — человек увидел. Отправкой занимается
+ * очередь, и она же расскажет, если сервер откажет.
+ *
+ * Так ушли сразу две беды. Первая: на телефоне каждая правка ждала ответа —
+ * отправить, дождаться, перерисовать, — и это полторы секунды на нажатие.
+ * Вторая: без связи правка откатывалась назад, и отмеченное в метро дело
+ * приходилось отмечать заново вечером.
  */
-export async function optimistic(apply, send, onError) {
-  const undo = apply();
-  try {
-    await send();
-  } catch (e) {
-    undo?.();
-    onError?.(e.message || 'Не удалось сохранить');
-    throw e;
-  }
+
+const слушатели = new Set();
+export function подписаться(fn) { слушатели.add(fn); return () => слушатели.delete(fn); }
+function сообщить() {
+  for (const fn of слушатели) { try { fn(); } catch { /* экран не должен ронять правку */ } }
 }
+
+/** Наложить правку на открытый день, сохранить копию и сказать экрану. */
+function местно(оп) {
+  if (store.day && store.day.date === оп.дата) {
+    store.day = наложить(store.day, оп);
+    keep(`day.${store.day.date}`, store.day);
+  }
+  сообщить();
+}
+
+/** Положить правку в очередь. Переполнение — единственная причина отказа. */
+function вОчередь(правка) {
+  const оп = очередь.добавить(правка);
+  местно(оп);
+  return оп;
+}
+
+/*
+ * Отправитель для очереди: превращает правку в запрос и зовёт api.
+ * Заводится один раз при старте, чтобы очередь не знала ни про адреса, ни
+ * про заголовки.
+ */
+export function запуститьОчередь() {
+  очередь.настроить({
+    отправитель: оп => {
+      const r = запрос(оп);
+      if (r.ревизия !== undefined) return api.withRev(r.метод, r.путь, r.тело, r.ревизия);
+      const заголовки = r.ключ ? { 'Idempotency-Key': r.ключ } : undefined;
+      if (r.метод === 'DELETE') return api.DELETE(r.путь, заголовки);
+      if (r.метод === 'POST') return api.POST(r.путь, r.тело, заголовки);
+      if (r.метод === 'PUT') return api.PUT(r.путь, r.тело, заголовки);
+      return api.PATCH(r.путь, r.тело, заголовки);
+    },
+  });
+  /*
+   * Временный номер строки заменяется настоящим и в местной копии: иначе
+   * следующая правка той же строки ушла бы в никуда, а на экране остался бы
+   * «tmp-…», который не переживёт перечитывание дня.
+   */
+  очередь.подписаться(весть => {
+    if (весть.вид === 'подстановка' && store.day) {
+      store.day = подменитьId(store.day, весть.было, весть.стало);
+      keep(`day.${store.day.date}`, store.day);
+    }
+    сообщить();
+  });
+  очередь.отправить();
+}
+
+/** Замена номера строки во всех разделах дня. */
+function подменитьId(день, было, стало) {
+  const d = structuredClone(день);
+  const правь = список => (список ?? []).map(r => (String(r.id) === String(было) ? { ...r, id: стало } : r));
+  d.schedule = правь(d.schedule);
+  d.meals = правь(d.meals);
+  d.sport = правь(d.sport);
+  d.tasks = { work: правь(d.tasks?.work), home: правь(d.tasks?.home) };
+  return d;
+}
+
+export const ожидает = () => очередь.ожидает();
+export const конфликты = () => очередь.конфликты();
+export const забыть = id => очередь.забыть(id);
+export const повторитьПравку = id => очередь.повторить(id);
+export const отправитьОчередь = () => очередь.отправить();
 
 const dateOf = () => store.day?.date;
 
-/** Галочка у строки расписания. */
-export function toggleScheduleRow(row, done) {
-  const before = row.done;
-  return optimistic(
-    () => { row.done = done ? 1 : 0; return () => { row.done = before; }; },
-    () => api.schedule.update(dateOf(), row.id, { done }),
-  );
-}
+/** Строка раздела: общая обвязка для четырёх одинаковых троек. */
+const разделСтрок = раздел => ({
+  создать(дата, поля) {
+    const цель = очередь.новыйId();
+    вОчередь({ вид: 'строка.создать', дата, цель, данные: { раздел, поля } });
+    return { id: цель };
+  },
+  изменить(дата, id, поля) {
+    вОчередь({ вид: 'строка.изменить', дата, цель: id, данные: { раздел, поля } });
+  },
+  удалить(дата, id) {
+    вОчередь({ вид: 'строка.удалить', дата, цель: id, данные: { раздел } });
+  },
+});
 
-export function toggleTask(task, done) {
-  const before = task.done;
-  return optimistic(
-    () => { task.done = done ? 1 : 0; return () => { task.done = before; }; },
-    () => api.tasks.update(dateOf(), task.id, { done }),
-  );
-}
+const строкиРасписания = разделСтрок('schedule');
+const строкиЗадач = разделСтрок('tasks');
+const строкиЕды = разделСтрок('meals');
+const строкиСпорта = разделСтрок('sport');
 
-export function toggleSport(row, done) {
-  const before = row.done;
-  return optimistic(
-    () => { row.done = done ? 1 : 0; return () => { row.done = before; }; },
-    () => api.sport.update(dateOf(), row.id, { done }),
-  );
-}
+export const createRow = (date, body) => строкиРасписания.создать(date, body);
+export const updateRow = (date, id, body) => строкиРасписания.изменить(date, id, body);
+export const removeRow = (date, id) => строкиРасписания.удалить(date, id);
 
-export function toggleMeal(meal, done) {
-  const before = meal.done;
-  return optimistic(
-    () => { meal.done = done ? 1 : 0; return () => { meal.done = before; }; },
-    () => api.meals.update(dateOf(), meal.id, { done }),
-  );
-}
+export const createTask = (date, body) => строкиЗадач.создать(date, body);
+export const updateTask = (date, id, body) => строкиЗадач.изменить(date, id, body);
+export const removeTask = (date, id) => строкиЗадач.удалить(date, id);
+
+export const createMeal = (date, body) => строкиЕды.создать(date, body);
+export const updateMeal = (date, id, body) => строкиЕды.изменить(date, id, body);
+export const removeMeal = (date, id) => строкиЕды.удалить(date, id);
+
+export const createSport = (date, body) => строкиСпорта.создать(date, body);
+export const updateSport = (date, id, body) => строкиСпорта.изменить(date, id, body);
+export const removeSport = (date, id) => строкиСпорта.удалить(date, id);
+
+export const toggleScheduleRow = (row, done) => строкиРасписания.изменить(dateOf(), row.id, { done });
+export const toggleTask = (task, done) => строкиЗадач.изменить(dateOf(), task.id, { done });
+export const toggleMeal = (meal, done) => строкиЕды.изменить(dateOf(), meal.id, { done });
+export const toggleSport = (row, done) => строкиСпорта.изменить(dateOf(), row.id, { done });
 
 /**
  * Привычка отмечается не полем `done`, а записью в журнале за дату:
  * привычки живут отдельно от дня и считают серии по этим записям.
  */
 export function toggleHabit(habit, done) {
-  const date = dateOf();
-  const before = habit.status;
-  return optimistic(
-    () => { habit.status = done ? 'done' : null; return () => { habit.status = before; }; },
-    () => (done ? api.habits.setLog(habit.id, date, 'done') : api.habits.clearLog(habit.id, date)),
-  );
+  const дата = dateOf();
+  вОчередь({
+    вид: 'привычка.отметить', дата, цель: habit.id,
+    данные: { дата, статус: done ? 'done' : null },
+  });
 }
 
-export const createRow = (date, body) => api.schedule.create(date, body);
-export const updateRow = (date, id, body) => api.schedule.update(date, id, body);
-export const removeRow = (date, id) => api.schedule.remove(date, id);
+/*
+ * Заметка с датой — это заметка дня, поэтому пишется в день. Заметка без
+ * даты живёт своим списком. Вид определяется датой, и других правил тут нет.
+ */
+export const saveDayNote = (date, text) => saveDayField(date, { notes: text });
+
+/** Поля самого дня: заметка, вес, план питания. Вложенные строки не трогает. */
+export function saveDayField(date, patch) {
+  вОчередь({
+    вид: 'день.поля', дата: date, цель: null,
+    данные: { поля: patch, rev: store.day?.date === date ? (store.day.rev ?? 0) : 0 },
+  });
+}
+
+/** Настройки приложения: тема, акцент, масштаб, переключатели дня. */
+export function saveSettings(patch) {
+  if (store.settings) {
+    store.settings.settings = { ...store.settings.settings, ...patch };
+    keep('settings', store.settings);
+  }
+  вОчередь({
+    вид: 'настройки', дата: todayFor(store.settings?.timezone), цель: null,
+    данные: { поля: patch },
+  });
+}
+
+/*
+ * Остальное требует связи и уходит на сервер сразу: повторы и шаблоны
+ * достраивает сервер, привычки как сущности человек трогает редко. Класть
+ * это в очередь значило бы повторять серверную логику на клиенте — и
+ * заводить вторую правду.
+ */
 /*
  * «Повторять» и «не повторять» — это и про саму строку, а не только про
  * правило. Привязанная строка говорит серверу, что этот день уже достроен;
@@ -393,25 +511,6 @@ export const detachRow = (date, id) => api.schedule.setSeries(date, id, null);
 /** Сдвиг блока вместе со всем, что начинается позже: способ разойтись при пересечении. */
 export const shiftRows = (date, fromId, minutes) => api.schedule.shift(date, fromId, minutes, true);
 
-export const createTask = (date, body) => api.tasks.create(date, body);
-export const updateTask = (date, id, body) => api.tasks.update(date, id, body);
-export const removeTask = (date, id) => api.tasks.remove(date, id);
-
-export const createSport = (date, body) => api.sport.create(date, body);
-export const updateSport = (date, id, body) => api.sport.update(date, id, body);
-export const removeSport = (date, id) => api.sport.remove(date, id);
-
-export const createMeal = (date, body) => api.meals.create(date, body);
-export const updateMeal = (date, id, body) => api.meals.update(date, id, body);
-export const removeMeal = (date, id) => api.meals.remove(date, id);
-
-/*
- * Заметка с датой — это заметка дня, поэтому пишется в день. Заметка без даты
- * живёт своим списком. Вид определяется датой, и других правил тут нет.
- */
-export const saveDayNote = (date, text) => api.patchDay(date, { notes: text }, store.day?.rev);
-/** Поля самого дня: план питания, вес, заголовок. Вложенные сущности не трогает. */
-export const saveDayField = (date, patch) => api.patchDay(date, patch, store.day?.rev);
 export const createFreeNote = body => api.POST('/notes', body);
 export const updateFreeNote = (id, body) => api.PATCH(`/notes/${id}`, body);
 export const removeFreeNote = id => api.DELETE(`/notes/${id}`);
@@ -424,15 +523,3 @@ export const updateHabit = (id, body) => api.habits.update(id, body);
  * из списка, но дни, в которые она была выполнена, остаются правдой.
  */
 export const removeHabit = id => api.habits.archive(id);
-
-/** Настройки приложения: тема, акцент, масштаб, переключатели дня. */
-export async function saveSettings(patch) {
-  const before = { ...store.settings?.settings };
-  return optimistic(
-    () => {
-      store.settings.settings = { ...store.settings.settings, ...patch };
-      return () => { store.settings.settings = before; };
-    },
-    () => api.saveSettings({ settings: patch }),
-  );
-}

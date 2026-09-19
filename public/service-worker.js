@@ -6,11 +6,13 @@
  * сказать, что связи нет.
  */
 
-const VERSION = 'newday-2eb6eee8a67e';
+const VERSION = 'newday-31a9663a5a8e';
 const SHELL = [
   // Веб-версия: с неё начинается браузер, и офлайн она должна открываться
   '/web.html', '/css/web.css',
   '/js/web/app.js', '/js/web/store.js', '/js/web/adapt.js', '/js/web/data.js', '/js/web/sheet.js',
+  // офлайн-правки: наложение, описание запроса и сама очередь
+  '/js/web/apply.js', '/js/web/ops.js', '/js/outbox.js',
   '/now.html', '/app.html', '/habits.html', '/stats.html', '/settings.html',
   '/login.html', '/register.html', '/index.html', '/install.html',
   '/css/fonts.css', '/css/tokens.css', '/css/base.css', '/css/components.css',
