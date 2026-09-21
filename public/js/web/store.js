@@ -13,7 +13,7 @@
 
 import * as api from '../api.js';
 import * as очередь from '../outbox.js';
-import { наложить, наложитьВсе, наложитьНаПериод } from './apply.js';
+import { наложить, наложитьВсе, наложитьНаПериод, наложитьНаЗаметки } from './apply.js';
 import { запрос } from './ops.js';
 
 const pad2 = n => String(n).padStart(2, '0');
@@ -252,10 +252,16 @@ export const createToken = (name = 'Интеграция') => api.tokens.create(
 export const revokeToken = id => api.tokens.revoke(id);
 
 export async function loadNotes() {
+  /*
+   * Поверх ответа — неуехавшие правки заметок дня, как и у самого дня. В
+   * копию кладём ответ сервера: очередь накладывается заново при чтении.
+   */
+  const сОчередью = список => наложитьНаЗаметки(список, очередь.список());
   try {
     const rows = await api.GET('/notes');
-    store.notes = Array.isArray(rows) ? rows : (rows.days ?? []);
-    keep('notes', store.notes);
+    const список = Array.isArray(rows) ? rows : (rows.days ?? []);
+    keep('notes', список);
+    store.notes = сОчередью(список);
     store.offline = false;
     return store.notes;
   } catch (e) {
@@ -263,7 +269,7 @@ export async function loadNotes() {
     // заметки без сети тоже нужны: в них лежит то, что человек записал для себя
     const saved = kept('notes');
     if (!saved) throw e;
-    store.notes = saved.value;
+    store.notes = сОчередью(saved.value);
     store.offline = true;
     return store.notes;
   }
@@ -359,6 +365,8 @@ function местно(оп) {
   }
   // и на сетку недели/месяца: галочку в клетке ставят с того же экрана
   if (store.range) store.range = наложитьНаПериод(store.range, [оп]);
+  // и на список заметок: заметку дня открывают из него же
+  if (Array.isArray(store.notes)) store.notes = наложитьНаЗаметки(store.notes, [оп]);
   сообщить();
 }
 
