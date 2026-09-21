@@ -2258,8 +2258,15 @@ await wait(200);
  */
 const обрывСвязи = `(() => {
   const было = window.fetch;
-  window.fetch = (...a) => (sessionStorage.getItem('проба-офлайн') && String(a[0]).includes('/api/')
-    ? Promise.reject(new TypeError('Failed to fetch')) : было(...a));
+  window.fetch = async (...a) => {
+    if (String(a[0]).includes('/api/')) {
+      if (sessionStorage.getItem('проба-офлайн')) throw new TypeError('Failed to fetch');
+      // медленная мобильная связь: запрос доезжает, но не сразу
+      const задержка = Number(sessionStorage.getItem('проба-задержка') || 0);
+      if (задержка) await new Promise(r => setTimeout(r, задержка));
+    }
+    return было(...a);
+  };
 })()`;
 await rpc(ws, 'Page.addScriptToEvaluateOnNewDocument', { source: обрывСвязи });
 await js(обрывСвязи);
@@ -2278,16 +2285,17 @@ await wait(500);
 const вОчереди = await js(
   `(JSON.parse(localStorage.getItem('newday.outbox.v1') || '{}').ops || []).length`);
 проба('правка лежит в очереди на устройстве', вОчереди === 1, `в очереди: ${вОчереди}`);
-проба('значок показывает состояние связи',
-  await js(`Boolean(document.querySelector('.wsync'))`),
-  await js(`document.querySelector('.wsync')?.textContent ?? 'значка нет'`));
+// на компьютере о связи говорит подпись в карточке пользователя, значок — только на телефоне
+проба('подпись говорит, что связи нет',
+  /Нет связи · 1/.test(await js(`document.querySelector('.wuser-note')?.textContent ?? ''`)),
+  await js(`document.querySelector('.wuser-note')?.textContent ?? 'подписи нет'`));
 
 // перезагрузка страницы в офлайне: правка лежит в хранилище, а не в памяти
 await rpc(ws, 'Page.reload');
 await waitFor(`Boolean(document.querySelector('.wside, .wpbody'))`, 80);
 await wait(1200);
 проба('правка пережила перезагрузку страницы', await виднаЛи(`из метро ${МЕТКА}`),
-  await js(`document.querySelector('.wsync')?.textContent ?? 'значка нет'`));
+  await js(`document.querySelector('.wuser-note')?.textContent ?? 'подписи нет'`));
 
 await js(`sessionStorage.removeItem('проба-офлайн')`);
 await rpc(ws, 'Network.emulateNetworkConditions',
@@ -2296,9 +2304,47 @@ await js(`window.dispatchEvent(new Event('online'))`);
 await wait(3000);
 проба('связь вернулась — очередь уехала', (await задачСМеткой()) === 2,
   `на сервере задач с меткой: ${await задачСМеткой()}`);
-проба('значок исчез, когда всё уехало',
-  (await js(`document.querySelector('.wsync') ? 1 : 0`)) === 0,
-  await js(`document.querySelector('.wsync')?.textContent ?? ''`));
+проба('подпись вернулась к «синхронизировано», когда всё уехало',
+  (await js(`document.querySelector('.wuser-note')?.textContent ?? ''`)) === 'синхронизировано',
+  await js(`document.querySelector('.wuser-note')?.textContent ?? ''`));
+
+/*
+ * Галочка не сдвигает содержимое.
+ *
+ * Первая версия очереди ставила значок связи в поток над содержимым: на
+ * каждую галочку он появлялся и сдвигал экран на 35 пикселей, пока правка
+ * была в пути, — человек видел, как страница «скачет». Проверяем на
+ * медленной связи, где это было заметнее всего: строка не должна сдвинуться
+ * ни на пиксель, а подпись — отвлекаться на обычную правку.
+ */
+await js(`sessionStorage.setItem('проба-задержка', '600')`);
+const скачок = await js(`(async () => {
+  const box0 = document.querySelector('.wtasks .wbox, .wlist .wbox');
+  if (!box0) return { нет: true };
+  box0.scrollIntoView({ block: 'center' });
+  await new Promise(r => setTimeout(r, 300));
+  const строка = () => document.querySelector('.wtasks .wbox, .wlist .wbox')?.closest('button, .wlist-row');
+  const было = строка()?.getBoundingClientRect().top;
+  let худший = 0;
+  let отвлеклась = false;
+  const t0 = performance.now();
+  box0.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  await new Promise(r => { const шаг = () => {
+    const с = строка();
+    if (с) худший = Math.max(худший, Math.abs(с.getBoundingClientRect().top - было));
+    if (document.querySelector('.wsync') || document.querySelector('.wuser-note:not(.ok)')) отвлеклась = true;
+    // таймер, а не кадры: в фоновом окне браузер кадры не рисует, и выборка замирала бы
+    if (performance.now() - t0 < 2000) setTimeout(шаг, 16); else r();
+  }; setTimeout(шаг, 16); });
+  // вернуть галочку как была: стенд живёт между прогонами
+  document.querySelector('.wtasks .wbox, .wlist .wbox')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  await new Promise(r => setTimeout(r, 1500));
+  return { худший: Math.round(худший), отвлеклась };
+})()`, true);
+await js(`sessionStorage.removeItem('проба-задержка')`);
+проба('галочка на медленной связи не сдвигает содержимое',
+  !скачок?.нет && скачок.худший === 0, скачок?.нет ? 'галочки нет' : `наибольший сдвиг ${скачок.худший} px`);
+проба('обычная правка не мигает значком связи', !скачок?.нет && !скачок.отвлеклась);
 
 // Уборка: задачи прогона не должны копиться в стенде
 await js(`(async () => {

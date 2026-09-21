@@ -1829,20 +1829,32 @@ select.winput { appearance: auto; cursor: pointer; }
 .wnotice.calm b { color: var(--text); font-weight: 500; }
 
 /*
- * Значок связи. Маленький и в потоке: это состояние, а не событие.
+ * Значок связи — поверх, а не в потоке.
  *
- * Полоса во весь экран занимала место постоянно и читалась тревожнее, чем
- * есть на деле: «правки не уходят» человек понимал как «правки потеряются».
- * Теперь они лежат в очереди и уедут сами, а сказать надо только сколько их
- * и есть ли связь.
+ * Первая версия стояла над содержимым и мигала на каждую галочку: появлялась
+ * — экран уезжал на 35 пикселей вниз, правка уезжала — экран прыгал обратно.
+ * Теперь значок висит: на телефоне над нижней панелью, на компьютере над
+ * подвалом боковой колонки. Появится он или исчезнет — ничего не сдвинется.
  */
 .wsync {
-  display: inline-flex; align-items: center; gap: 6px;
-  margin-bottom: 12px; padding: 5px 10px; border-radius: 999px;
+  position: absolute; z-index: 5;
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  padding: 6px 11px; border-radius: 999px;
   border: none; background: var(--raise); color: var(--dim);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.12), 0 0 0 1px var(--line);
   font: 400 12px/1 var(--ui); cursor: pointer;
 }
-.wsync.bad { color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); }
+.wsync.bad { color: var(--warn); box-shadow: 0 4px 14px rgb(0 0 0 / 0.12), inset 0 0 0 1px var(--warn); }
+/* телефон: над нижней панелью, по центру */
+.wpnav { position: relative; }
+.wpnav > .wsync { left: 50%; bottom: calc(100% + 10px); transform: translateX(-50%); }
+/* компьютер: над подвалом боковой колонки */
+.wside-foot { position: relative; }
+.wside-foot > .wsync { left: 0; bottom: calc(100% + 10px); }
+
+/* подпись в карточке пользователя: правда о связи, а не зашитое «синхронизировано» */
+.wuser-note.off, .wuser-note.wait { color: var(--dim); }
+.wuser-note.bad { color: var(--warn); }
 
 .wnotice {
   margin-bottom: 16px; padding: 12px 14px; border-radius: 12px;
