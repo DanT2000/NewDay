@@ -58,7 +58,7 @@ const state = {
   tplRows: null, tplEdit: null, tplStart: 420, tplEnd: 480, tplField: 'start',
   tplTitle: '', tplAlarm: 'off', tplLeads: ['at'],
   quietFrom: '23:00', quietTo: '07:00',
-  habitId: null, habitKind: 'do', habitEmoji: '💧', habitGoal: 30, habitGoalCustom: false,
+  habitId: null, habitKind: 'series', habitEmoji: '💧', habitGoal: 30, habitGoalCustom: false,
   habitTitle: '', habitTimes: 5, habitPlan: 'days', habitGoalDays: 730, habitPicker: false,
   habitDays: { 0: true, 1: true, 2: true, 3: true, 4: true, 5: false, 6: false },
   aiStep: 'input', aiText: '', aiOff: {}, aiItems: null, aiQuestion: '', aiOptions: [],
@@ -3884,7 +3884,8 @@ function openHabit(hb) {
     modal: 'habit', habitId: hb?.id ?? 'new', notice: null,
     habitTitle: hb?.title ?? '',
     habitEmoji: hb?.emoji && hb.emoji !== '•' ? hb.emoji : '💧',
-    habitKind: raw?.polarity === 'avoid' ? 'avoid' : 'do',
+    // вид приходит с сервера готовым: правило одно и живёт там
+    habitKind: raw?.kind === 'goal' ? 'goal' : 'series',
     habitPlan: raw?.timesPerWeek ? 'times' : 'days',
     habitTimes: raw?.timesPerWeek ?? 5,
     habitDays: Object.fromEntries(Array.from({ length: 7 }, (_, i) => [i, Boolean(mask & (1 << i))])),
@@ -3903,17 +3904,24 @@ function saveHabit() {
     .reduce((acc, [i, on]) => (on ? acc | (1 << Number(i)) : acc), 0);
   const target = state.habitGoal === -1 ? state.habitGoalDays : state.habitGoal;
 
+  const цель = state.habitKind === 'goal';
+  /*
+   * «N раз в неделю» — свободный график: конкретные дни не заданы, поэтому
+   * активна привычка каждый день, а норму держит счёт за неделю. У серии
+   * такого графика нет: «подряд» без конкретных дней не считается.
+   */
+  const свободный = цель && state.habitPlan === 'times';
   const body = {
     title, emoji: state.habitEmoji,
-    polarity: state.habitKind === 'avoid' ? 'avoid' : 'do',
     /*
-     * «N раз в неделю» — свободный график: конкретные дни не заданы, поэтому
-     * активна привычка каждый день, а норму держит счёт за неделю.
+     * Вид — это способ считать: серия обнуляется при срыве, цель копит
+     * отметки. В базе за это отвечает break_policy, другого смысла у поля нет.
      */
-    scheduleMask: state.habitPlan === 'times' ? 127 : (mask || 127),
-    timesPerWeek: state.habitPlan === 'times' ? state.habitTimes : null,
+    breakPolicy: цель ? 'keep' : 'reset',
+    scheduleMask: свободный ? 127 : (mask || 127),
+    timesPerWeek: свободный ? state.habitTimes : null,
     mode: target > 0 ? 'challenge' : 'ongoing',
-    ...(target > 0 ? { challengeTargetDays: target } : {}),
+    challengeTargetDays: target > 0 ? target : null,
   };
 
   busy(state.habitId === 'new' ? data.createHabit(body) : data.updateHabit(state.habitId, body));
@@ -5273,7 +5281,7 @@ const BODIES = {
     });
     add(more, ico('plus', '15px'));
     add(emoji, more, h('span', { style: { flex: '1' } }),
-      ...[['do', 'Выполнять'], ['avoid', 'Бросаю']].map(([k, label]) =>
+      ...[['series', 'Серия'], ['goal', 'Цель']].map(([k, label]) =>
         sheetChip(label, state.habitKind === k, () => setIn({ habitKind: k }))));
 
     const picker = h('div.wemoji-box');
@@ -5306,8 +5314,10 @@ const BODIES = {
       }),
       h('span.wsmall', { text: 'раз в неделю — день выбираете сами' }));
 
+    // у цели считают разы, а не дни подряд — и кнопки должны говорить то же
+    const единица = state.habitKind === 'goal' ? 'раз' : 'дней';
     const goals = h('div.wrow');
-    add(goals, ...[[30, '30 дней'], [100, '100 дней'], [0, '∞'], [-1, 'Своё']].map(([v, label]) => {
+    add(goals, ...[[30, `30 ${единица}`], [100, `100 ${единица}`], [0, '∞'], [-1, 'Своё']].map(([v, label]) => {
       const c = sheetChip(label, state.habitGoal === v, () => setIn({ habitGoal: v, habitGoalCustom: v === -1 }), 'wchip-flex');
       if (v === 0) c.style.font = '500 19px/1 var(--ui)';
       return c;
@@ -5321,18 +5331,30 @@ const BODIES = {
         })),
       h('div', h('div.wfield-label', { text: 'значок и тип' }), emoji,
         state.habitPicker ? picker : null,
-        // Человек прямо сказал, что не понимает разницы — значит она должна быть написана
+        /*
+         * Разница между видами должна быть написана словами: от неё зависит
+         * весь счёт, а прежняя пара «выполнять/бросаю» не влияла ни на что и
+         * только сбивала с толку.
+         */
         h('div.wclock-cap', {
           style: { marginTop: '9px' },
-          text: state.habitKind === 'avoid'
-            ? 'бросаю: отмечаете день, в который удержались — серия растёт за каждый такой день'
-            : 'выполнять: отмечаете день, в который сделали',
+          text: state.habitKind === 'goal'
+            ? 'цель: отмечаете, когда сделали. Пропуск не в зачёт, но счёт не обнуляет'
+            : 'серия: отмечаете каждый выбранный день. Пропуск обнуляет счёт',
         })),
+      /*
+       * У серии выбора графика нет — только дни: «подряд» без конкретных
+       * дней не считается, и такое сочетание раньше молча давало ноль.
+       */
       h('div',
-        h('div.wfield-label', { text: 'график' }), plan,
-        h('div', { style: { marginTop: '10px' } }, state.habitPlan === 'times' ? times : days)),
+        h('div.wfield-label', { text: 'график' }),
+        state.habitKind === 'goal' ? plan : null,
+        h('div', { style: { marginTop: '10px' } },
+          (state.habitKind === 'goal' && state.habitPlan === 'times') ? times : days)),
       h('div',
-        h('div.wfield-label', { text: 'челлендж' }), goals,
+        h('div.wfield-label', {
+          text: state.habitKind === 'goal' ? 'сколько раз' : 'сколько дней подряд',
+        }), goals,
         state.habitGoalCustom
           ? h('div.wrow', { style: { marginTop: '10px' } },
             h('input.wnum', {
@@ -5342,7 +5364,7 @@ const BODIES = {
                 if (n >= 1 && n <= 3650) setIn({ habitGoalDays: n });
               },
             }),
-            h('span.wsmall', { text: 'дней подряд' }))
+            h('span.wsmall', { text: state.habitKind === 'goal' ? 'раз' : 'дней подряд' }))
           : null),
       h('div.wrow-end',
         h('button.wbtn-quiet', {
