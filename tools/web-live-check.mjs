@@ -1320,9 +1320,13 @@ const челлендж = await js(`(async () => {
   const r = await fetch('/api/v1/days/${DAY}/full').then(x => x.json());
   const h = (r.habits ?? []).find(x => x.challenge);
   if (!h) return 'челленджа нет в засеве';
+  /*
+   * Слова «челлендж» в подписи больше нет: у серии это «12 из 30 подряд», у
+   * цели «12 из 30». Сверяем сами числа — они и есть счётчик.
+   */
   const подпись = [...document.querySelectorAll('.whabit-meta')]
-    .map(m => m.textContent ?? '').find(t => t.includes('челлендж'));
-  const видно = (подпись ?? '').match(/челлендж (\\d+) из (\\d+)/);
+    .map(m => m.textContent ?? '').find(t => new RegExp('\\\\d+ из ' + h.challenge.target).test(t));
+  const видно = (подпись ?? '').match(/(\\d+) из (\\d+)/);
   return JSON.stringify({ ждём: h.challenge.day, видно: видно ? Number(видно[1]) : null });
 })()`, true);
 {
@@ -1338,14 +1342,65 @@ await js(`document.querySelector('.whabit-more').click()`);
   await js(`document.querySelector('.wmodal-hd b')?.textContent ?? 'шторка не открылась'`));
 проба('в шторке привычки есть плюсик на все смайлики',
   await js(`Boolean(document.querySelector('.wmodal .wemoji-more'))`));
-проба('график — выбор между днями недели и разами в неделю',
+/*
+ * Свободный график живёт у цели: «подряд» без конкретных дней не считается,
+ * поэтому у серии такого выбора нет вовсе. Сперва переключаем вид.
+ */
+проба('у серии выбора «N раз в неделю» нет',
+  !(await js(`[...document.querySelectorAll('.wmodal .wchip-sheet')].some(c => c.textContent === 'Сколько раз в неделю')`)));
+await js(`[...document.querySelectorAll('.wmodal .wchip-sheet')].find(c => c.textContent === 'Цель')?.click()`);
+await wait(300);
+проба('у цели график — выбор между днями недели и разами в неделю',
   await js(`[...document.querySelectorAll('.wmodal .wchip-sheet')].some(c => c.textContent === 'Сколько раз в неделю')`));
-await js(`[...document.querySelectorAll('.wmodal .wchip-sheet')].find(c => c.textContent === 'Сколько раз в неделю').click()`);
+await js(`[...document.querySelectorAll('.wmodal .wchip-sheet')].find(c => c.textContent === 'Сколько раз в неделю')?.click()`);
 проба('свободный график показывает число раз, а не дни недели',
   (await js(`Boolean(document.querySelector('.wmodal input[name=habitTimes]'))`))
   && !(await js(`Boolean(document.querySelector('.wmodal .wdays7'))`)));
 await js(`document.querySelector('.wmodal-x').click()`);
 await waitFor('!document.querySelector(".wveil")', 40);
+
+/*
+ * Цель считается иначе, чем серия, и единственное, по чему человек это
+ * видит, — подпись под привычкой. «Спартанец 0 из 300» при сорока отбеганных
+ * днях читался как поломка: показывалась серия вместо сделанного. Заводим
+ * цель, отмечаем и смотрим на слова.
+ */
+const МЕТКА_Ц = `цель-${Date.now().toString(36)}`;
+await js(`[...document.querySelectorAll('button')].find(x => /Новая привычка/.test(x.textContent))?.click()`);
+await waitFor(`Boolean(document.querySelector('.wmodal .winput'))`, 30);
+await js(`(() => {
+  const i = document.querySelector('.wmodal .winput');
+  i.value = ${JSON.stringify(МЕТКА_Ц)};
+  i.dispatchEvent(new Event('input', { bubbles: true }));
+  [...document.querySelectorAll('.wmodal .wchip-sheet')].find(c => c.textContent === 'Цель')?.click();
+  return true;
+})()`);
+await wait(300);
+await js(`[...document.querySelectorAll('.wmodal .wchip')].find(c => /^30 /.test(c.textContent))?.click()`);
+await wait(200);
+await js(`[...document.querySelectorAll('.wmodal button')].find(x => /Создать привычку/.test(x.textContent))?.click()`);
+await wait(1500);
+await js(`[...document.querySelectorAll('.wcard')]
+  .find(c => c.textContent.includes(${JSON.stringify(МЕТКА_Ц)}))?.querySelector('.wbox')?.click()`);
+await wait(1500);
+const подписьЦели = await js(`[...document.querySelectorAll('.wcard')]
+  .find(c => c.textContent.includes(${JSON.stringify(МЕТКА_Ц)}))?.querySelector('.whabit-meta')?.textContent ?? 'привычки нет'`);
+проба('у цели счёт «1 из 30» и без слова «подряд»',
+  подписьЦели === '1 из 30', подписьЦели);
+
+// уборка: привычки прогона не должны копиться в стенде
+await js(`(async () => {
+  const list = await (await fetch('/api/v1/habits')).json();
+  for (const h of list) {
+    if ((h.title || '').includes(${JSON.stringify(МЕТКА_Ц)})) {
+      await fetch('/api/v1/habits/' + h.id + '?hard=1', { method: 'DELETE' });
+    }
+  }
+  return true;
+})()`, true);
+проба('стенд убран за собой: привычка прогона удалена',
+  (await js(`fetch('/api/v1/habits').then(r => r.json())
+    .then(l => l.filter(h => (h.title || '').includes(${JSON.stringify(МЕТКА_Ц)})).length)`, true)) === 0);
 
 /* Заметка без даты — настоящая: она сохраняется и видна в фильтре «Без даты». */
 await nav('Заметки');
