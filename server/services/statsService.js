@@ -45,6 +45,18 @@ function habitExistsOn(habit, date) {
  */
 const freeSchedule = habit => Number(habit.times_per_week) > 0;
 
+/**
+ * Вид привычки: серия или цель.
+ *
+ * Серия — сколько раз подряд: пропуск обещанного дня обнуляет счёт. Цель —
+ * сколько раз всего: пропуск не в зачёт, но счёт не сбрасывает. Правило одно
+ * и живёт здесь, чтобы клиенту не пришлось повторять его у себя.
+ *
+ * Свободный график («N раз в неделю») — всегда цель: конкретных дней он не
+ * обещает, и «подряд» для него ничего не значит.
+ */
+const kindOf = habit => (habit.break_policy === 'keep' || freeSchedule(habit) ? 'goal' : 'series');
+
 function pct(done, possible) {
   return possible > 0 ? Math.round((done / possible) * 100) : null;
 }
@@ -85,7 +97,8 @@ function statsService(db, opts = {}) {
    * количество отметок. Считаем её норму недели, а серию не считаем.
    */
   function currentStreak(habit, logsMap, to, today) {
-    if (freeSchedule(habit)) return 0;
+    // у цели серии нет вовсе: её счёт — число отметок, а не дни подряд
+    if (kindOf(habit) === 'goal') return 0;
     let streak = 0;
     let cursor = to;
     const floor = habit.challenge_start_date
@@ -108,8 +121,8 @@ function statsService(db, opts = {}) {
   }
 
   function bestStreak(habit, logsMap, from, to) {
-    // у свободного графика серии нет — см. currentStreak
-    if (freeSchedule(habit)) return 0;
+    // у цели серии нет — см. currentStreak
+    if (kindOf(habit) === 'goal') return 0;
     let best = 0, run = 0;
     for (const d of rangeDates(from, to)) {
       if (!habitActiveOn(habit, d)) continue;
@@ -134,6 +147,7 @@ function statsService(db, opts = {}) {
     const logsMap = {};
     for (const l of logs) logsMap[l.date] = l.status;
 
+    const kind = kindOf(habit);
     let done = 0, missed = 0, skipped = 0;
     for (const d of rangeDates(rangeFrom, rangeTo)) {
       if (!habitActiveOn(habit, d)) continue;
@@ -141,51 +155,56 @@ function statsService(db, opts = {}) {
       if (status === 'done') done += 1;
       else if (status === 'skipped') skipped += 1;
       else if (status === 'missed') missed += 1;
-      // прошедший активный день без отметки — пропуск, но только если он был обещан
-      else if (d < today && !freeSchedule(habit)) missed += 1;
+      /*
+       * Прошедший активный день без отметки — пропуск, но только у серии:
+       * цель ничего на конкретный день не обещала, и наказывать за него не
+       * за что.
+       */
+      else if (d < today && kind === 'series') missed += 1;
     }
+    // у цели и явная отметка «не сделал» не срыв: рвать там нечего
+    if (kind === 'goal') missed = 0;
 
     const streak = currentStreak(habit, logsMap, rangeTo, today);
 
+    /** Всего отметок «сделано» за всю жизнь привычки — это и есть счёт цели. */
+    const total = Object.values(logsMap).filter(s => s === 'done').length;
+    const target = habit.challenge_target_days ?? null;
+
+    /*
+     * Цель живёт числом, а не режимом: «сделать 30 раз» — это цель, а
+     * счётчик без числа — та же цель, просто без финиша.
+     */
     let challenge = null;
-    if (habit.mode === 'challenge' && habit.challenge_target_days) {
+    if (target) {
       const start = habit.challenge_start_date || rangeFrom;
-      /*
-       * У свободного графика челлендж всегда накопительный, даже если у
-       * привычки стоит «при срыве обнулять»: обнулять нечего — дней подряд
-       * она не обещает. Иначе цель «пять дней» закрывалась пятью отметками
-       * раз в неделю, потому что считалась через серию.
-       */
-      if (habit.break_policy === 'keep' || freeSchedule(habit)) {
-        // накопительно: считаем выполненные дни от старта, срывы показываем отдельно
-        let cDone = 0, cBreaks = 0;
-        for (const d of rangeDates(start, rangeTo)) {
-          if (!habitActiveOn(habit, d)) continue;
-          const status = logsMap[d];
-          if (status === 'done') cDone += 1;
-          // неотмеченный день у свободного графика срывом не считается
-          else if (status === 'missed' || (status === undefined && d < today && !freeSchedule(habit))) cBreaks += 1;
-        }
-        challenge = {
-          day: Math.min(cDone, habit.challenge_target_days),
-          target: habit.challenge_target_days,
-          breaks: cBreaks,
-          complete: cDone >= habit.challenge_target_days,
-          startDate: start,
-        };
-      } else {
-        // reset: счётчик равен текущей серии подряд
-        challenge = {
-          day: Math.min(streak, habit.challenge_target_days),
-          target: habit.challenge_target_days,
-          breaks: missed,
-          complete: streak >= habit.challenge_target_days,
-          startDate: start,
-        };
+      let сделано = 0;
+      let срывов = 0;
+      for (const d of rangeDates(start, rangeTo)) {
+        if (!habitActiveOn(habit, d)) continue;
+        const status = logsMap[d];
+        if (status === 'done') сделано += 1;
+        else if (kind === 'series' && (status === 'missed' || (status === undefined && d < today))) срывов += 1;
       }
+      /*
+       * У серии счёт — это текущая серия подряд: сорвался, и счётчик снова
+       * с нуля. У цели — накопленное число отметок, оно не убывает.
+       */
+      const счёт = kind === 'series' ? streak : сделано;
+      challenge = {
+        day: Math.min(счёт, target),
+        target,
+        breaks: срывов,
+        complete: счёт >= target,
+        startDate: start,
+      };
     }
 
-    const gap = freeSchedule(habit) ? null : 'missed';
+    /*
+     * Полоска за 14 дней. У серии пропущенный день красный — он и правда
+     * сорвал счёт. У цели пустой: там нечего было срывать.
+     */
+    const gap = kind === 'series' ? 'missed' : null;
     const last14 = rangeDates(addDays(rangeTo, -13), rangeTo).map(d => ({
       date: d,
       status: habitActiveOn(habit, d) ? (logsMap[d] ?? (d < today ? gap : null)) : 'inactive',
@@ -204,6 +223,15 @@ function statsService(db, opts = {}) {
       }
       : null;
 
+    /*
+     * Проценты: у серии — доля сделанного из обещанного, у цели с числом —
+     * насколько она набрана (перевыполнение — это «цель взята», а не 137 %),
+     * у цели без числа процентам не от чего считаться.
+     */
+    const percent = kind === 'series'
+      ? pct(done, done + missed)
+      : (target ? Math.min(100, Math.round((total / target) * 100)) : null);
+
     return {
       id: habit.id,
       title: habit.title,
@@ -211,10 +239,13 @@ function statsService(db, opts = {}) {
       color: habit.color,
       from: rangeFrom,
       to: rangeTo,
+      kind,
+      target,
+      total,
       currentStreak: streak,
       bestStreak: bestStreak(habit, logsMap, rangeFrom, rangeTo),
       done, missed, skipped,
-      percent: pct(done, done + missed),
+      percent,
       challenge,
       timesPerWeek: habit.times_per_week ?? null,
       week,
@@ -245,7 +276,8 @@ function statsService(db, opts = {}) {
       const log = byId[h.id];
       const active = habitActiveOn(h, date);
       const s = habitStats(user, h.id, null, date);
-      const challenge = (h.mode === 'challenge' && h.challenge_target_days) ? s.challenge : null;
+      // челлендж живёт числом, а не режимом: цель без числа — просто счётчик
+      const challenge = h.challenge_target_days ? s.challenge : null;
 
       const weekMap = {};
       for (const l of habits.logsInRange(user.id, h.id, weekFrom, date)) weekMap[l.date] = l.status;
@@ -269,6 +301,10 @@ function statsService(db, opts = {}) {
         polarity: h.polarity,
         mode: h.mode,
         breakPolicy: h.break_policy,
+        // вид и общий счёт — клиенту, чтобы он не повторял правило у себя
+        kind: s.kind,
+        total: s.total,
+        target: s.target,
         scheduleMask: h.schedule_mask,
         timesPerWeek: h.times_per_week ?? null,
         weekNorm: s.week,
@@ -305,7 +341,12 @@ function statsService(db, opts = {}) {
     const today = todayFor(user.timezone, nowOf());
     const list = habits.list(user.id, { includeArchived: true })
       .map(h => localized(h, user.timezone))
-      .filter(h => !freeSchedule(h));
+      /*
+       * Только серии. Непроставленная цель законна — пропуск у неё не срыв,
+       * и рвать ею общую серию значит наказывать человека за то, что ему
+       * прямо разрешено.
+       */
+      .filter(h => kindOf(h) === 'series');
     if (!list.length) return 0;
 
     const from = addDays(date, -STREAK_LIMIT);
