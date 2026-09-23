@@ -225,23 +225,31 @@ export const habits = day => (day?.habits ?? []).map(h => ({
   raw: h,
 }));
 
-function habitMeta(h) {
+/**
+ * Подпись под привычкой — короткий ответ на «как у меня дела».
+ *
+ * У серии счёт идёт днями подряд, у цели — отметками. Раньше подпись была
+ * одна на оба случая и писала «челлендж 0 из 300 дней» человеку, который
+ * отбегал сорок дней с одним пропуском: показывалась текущая серия, а не
+ * сделанное. Теперь вид определяет и слова, и число.
+ */
+export function habitMeta(h) {
   if (h.activeToday === false) return 'сегодня по графику выходной';
   const parts = [];
-  /*
-   * Поле зовётся `day`, а не `done`: сервер отдаёт «какой это день челленджа».
-   * С `done` счётчик всегда показывал ноль — «челлендж 0 из 300 дней» при
-   * серии в 46 дней, — и это выглядело поломкой самого челленджа. Остальные
-   * экраны (habits.js, stats.js) читают `day` и показывали правду.
-   */
-  if (h.challenge) parts.push(`челлендж ${h.challenge.day ?? 0} из ${h.challenge.target ?? 0} дней`);
-  /*
-   * У свободного графика серия подряд ничего не значит: обещание считается
-   * за неделю. Поэтому вместо серии — норма недели.
-   */
-  else if (h.weekNorm) parts.push(`${h.weekNorm.done} из ${h.weekNorm.target} за неделю`);
-  else if (h.streak) parts.push(`подряд ${h.streak} ${plural(h.streak, 'день', 'дня', 'дней')}`);
-  if (h.bestStreak && !h.weekNorm) parts.push(`лучшая серия ${h.bestStreak}`);
+  if (h.kind === 'goal') {
+    /*
+     * У свободного графика обещание считается за неделю — её и показываем:
+     * «сделано 9 раз» ничего не говорит о том, держится ли человек ритма.
+     */
+    if (h.weekNorm) parts.push(`${h.weekNorm.done} из ${h.weekNorm.target} за неделю`);
+    else if (h.challenge) parts.push(`${h.challenge.day ?? 0} из ${h.challenge.target ?? 0}`);
+    else if (h.total) parts.push(`сделано ${h.total} ${plural(h.total, 'раз', 'раза', 'раз')}`);
+    if (h.challenge?.complete) parts.push('цель взята');
+  } else {
+    if (h.challenge) parts.push(`${h.challenge.day ?? 0} из ${h.challenge.target ?? 0} подряд`);
+    else if (h.streak) parts.push(`подряд ${h.streak} ${plural(h.streak, 'день', 'дня', 'дней')}`);
+    if (h.bestStreak) parts.push(`лучшая серия ${h.bestStreak}`);
+  }
   return parts.join(' · ') || 'ещё не отмечалась';
 }
 
