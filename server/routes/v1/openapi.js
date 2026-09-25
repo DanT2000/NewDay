@@ -11,11 +11,29 @@ const dateParam = {
 const idParam = { name: 'id', in: 'path', required: true, schema: { type: 'integer' } };
 const body = description => ({ required: true, description, content: json });
 
+/*
+ * Заголовок повтора: тот же ключ — тот же ответ, вторая строка не создаётся.
+ * Нужен всем, кто шлёт правки очередью и может не дождаться ответа.
+ */
+const ключПовтора = {
+  name: 'Idempotency-Key',
+  in: 'header',
+  required: false,
+  description: 'Повтор с тем же ключом не создаёт вторую строку, а отдаёт прежний ответ. Живёт сутки.',
+  schema: { type: 'string', maxLength: 100 },
+};
+
 function entityPaths(segment, human) {
   return {
     [`/days/{date}/${segment}`]: {
       get: { tags: [human], summary: `Список: ${human.toLowerCase()}`, parameters: [dateParam], responses: { 200: ok('Список строк') } },
-      post: { tags: [human], summary: 'Добавить строку', parameters: [dateParam], requestBody: body('Поля строки'), responses: { 201: ok('Созданная строка') } },
+      post: {
+        tags: [human],
+        summary: 'Добавить строку',
+        parameters: [dateParam, ключПовтора],
+        requestBody: body('Поля строки'),
+        responses: { 201: ok('Созданная строка') },
+      },
     },
     [`/days/{date}/${segment}/reorder`]: {
       post: { tags: [human], summary: 'Изменить порядок', parameters: [dateParam], requestBody: body('{ ids: number[] }'), responses: { 200: ok('Новый порядок') } },
@@ -149,8 +167,8 @@ function buildSpec(appUrl) {
       ...entityPaths('sport', 'Спорт'),
 
       '/habits': {
-        get: { tags: ['Привычки'], summary: 'Список привычек', responses: { 200: ok('Список') } },
-        post: { tags: ['Привычки'], summary: 'Создать привычку', requestBody: body('{ title, emoji, preset: simple|challenge30|marathon300|quit, … }'), responses: { 201: ok('Привычка') } },
+        get: { tags: ['Привычки'], summary: 'Список привычек (с полем kind: series|goal)', responses: { 200: ok('Список') } },
+        post: { tags: ['Привычки'], summary: 'Создать привычку', requestBody: body('{ title, emoji, preset: simple|challenge30|marathon300|quit, breakPolicy: reset (серия) | keep (цель), mode, challengeTargetDays, scheduleMask, timesPerWeek }'), responses: { 201: ok('Привычка с полем kind') } },
       },
       '/habits/{id}': {
         patch: { tags: ['Привычки'], summary: 'Изменить привычку', parameters: [idParam], requestBody: body('Изменяемые поля'), responses: { 200: ok('Привычка') } },
@@ -164,7 +182,7 @@ function buildSpec(appUrl) {
         { name: 'from', in: 'query', schema: { type: 'string' } },
         { name: 'to', in: 'query', schema: { type: 'string' } },
       ], responses: { 200: ok('Отметки') } } },
-      '/habits/{id}/stats': { get: { tags: ['Привычки'], summary: 'Стрики, проценты, прогресс челленджа', parameters: [idParam], responses: { 200: ok('Статистика') } } },
+      '/habits/{id}/stats': { get: { tags: ['Привычки'], summary: 'kind, target, total, серии, проценты, прогресс цели', parameters: [idParam], responses: { 200: ok('Статистика') } } },
       '/habits/{id}/restore': { post: { tags: ['Привычки'], summary: 'Вернуть из архива', parameters: [idParam], responses: { 200: ok('Привычка') } } },
       '/habits/reorder': { post: { tags: ['Привычки'], summary: 'Изменить порядок', requestBody: body('{ ids: number[] }'), responses: { 200: ok('Новый порядок') } } },
 
