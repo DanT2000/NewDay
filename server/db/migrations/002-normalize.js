@@ -1,8 +1,11 @@
 const { parseTimeRange } = require('../../lib/dates');
 
+/** Добавляет колонку, если её нет. Возвращает `true`, если добавил именно сейчас. */
 function addColumn(db, table, column, ddl) {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
-  if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  if (cols.includes(column)) return false;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  return true;
 }
 
 module.exports = {
@@ -47,10 +50,25 @@ module.exports = {
 
     // ── habit_logs: done 0/1 → status done|missed|skipped ───────────────
     // Отсутствие записи и «не сделал» раньше были неразличимы, из-за этого врала статистика.
-    addColumn(db, 'habit_logs', 'status', "status TEXT NOT NULL DEFAULT 'done'");
+    /*
+     * Переносим старые отметки ровно один раз — в тот проход, когда колонка
+     * `status` только появилась.
+     *
+     * Колонка `done` не удаляется (см. ниже), поэтому проверка «а есть ли
+     * она» истинна всегда, и при повторном проходе перенос запускался
+     * заново — уже поверх нового формата. Новые отметки пишут только
+     * `status`, а `done` у них остаётся нулём, и весь журнал привычек разом
+     * становился «не сделано»: серии, проценты и цели обнулялись молча, а
+     * сервер поднимался как ни в чём не бывало.
+     *
+     * Повторный проход — не выдумка: ради него все миграции и писались
+     * устойчивыми к повтору (восстановление из копии, снятой между шагом
+     * миграции и записью её номера).
+     */
+    const статусПоявился = addColumn(db, 'habit_logs', 'status', "status TEXT NOT NULL DEFAULT 'done'");
     addColumn(db, 'habit_logs', 'value',  'value INTEGER');
     const hlCols = db.prepare('PRAGMA table_info(habit_logs)').all().map(c => c.name);
-    if (hlCols.includes('done')) {
+    if (статусПоявился && hlCols.includes('done')) {
       db.exec("UPDATE habit_logs SET status = CASE WHEN done = 1 THEN 'done' ELSE 'missed' END");
     }
     // Столбец done не удаляем: DROP COLUMN в SQLite капризен, а лишняя колонка безвредна.
