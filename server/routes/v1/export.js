@@ -3,7 +3,7 @@ const { wrap, badRequest } = require('../../lib/errors');
 const v = require('../../lib/validate');
 const { publicUser, usersRepo } = require('../../repos/users');
 const { buildIcs } = require('../../lib/ical');
-const { todayFor, addDays, isValidDate } = require('../../lib/dates');
+const { todayFor, addDays, isValidDate, isValidTimezone } = require('../../lib/dates');
 
 const FORMAT_VERSION = 1;
 
@@ -33,6 +33,134 @@ const DATE_FIELDS = {
   series: ['start_date', 'end_date'],
 };
 const MAX_ROWS = 200000;
+
+/*
+ * Второй слой проверки выгрузки — значения.
+ *
+ * Даты сверяются до транзакции и целым файлом: с невозможной датой копию не
+ * берём вовсе. С остальными полями так нельзя — отказать во всей копии из-за
+ * одного цвета от прежней версии значит не вернуть человеку ничего. Поэтому
+ * тут значения не отвергают файл, а приводятся к допустимым: неизвестный
+ * цвет становится «без цвета», неизвестный тип — обычным блоком.
+ *
+ * Пропускать их тоже нельзя. Цвет не из палитры однажды гасил весь экран
+ * дня, и перезагрузка не помогала: строка приезжала с сервера снова.
+ */
+const ЦВЕТА = ['violet', 'orange', 'green', 'red'];
+const ВИДЫ = ['normal', 'work', 'meal', 'sport', 'rest', 'reminder'];
+const БУДИЛЬНИК = ['none', 'notify', 'alarm'];
+const ПРОФИЛИ = ['wakeup', 'gentle'];
+const ПРИЁМЫ = ['breakfast', 'lunch', 'dinner', 'snack', 'other'];
+const РАЗДЕЛЫ = ['work', 'home'];
+const ВИДЫ_ПРИВЫЧЕК = ['binary', 'quant'];
+const ПОЛЯРНОСТИ = ['do', 'avoid'];
+const РЕЖИМЫ = ['ongoing', 'challenge'];
+const ПРИ_СРЫВЕ = ['reset', 'keep'];
+const СТАТУСЫ = ['done', 'missed', 'skipped'];
+const ЦВЕТА_ПРИВЫЧЕК = ['blue', 'green', 'orange', 'red', 'purple', 'teal', 'pink', 'gray'];
+const ПОВТОРЫ = ['daily', 'weekly', 'monthly', 'yearly'];
+const ЦЕЛИ_ПОВТОРА = ['schedule', 'task', 'meal', 'sport'];
+const СРОК_МАКС = 7 * 24 * 60;
+
+const стр = (x, макс) => (x === undefined || x === null ? '' : String(x).slice(0, макс));
+const из = (x, список, по) => (список.includes(x) ? x : по);
+const флаг = x => (x ? 1 : 0);
+const цел = (x, { min, max, по = null }) => {
+  const n = Number(x);
+  if (!Number.isFinite(n)) return по;
+  return Math.min(max, Math.max(min, Math.trunc(n)));
+};
+const дробь = (x, { min, max, по = null }) => {
+  const n = Number(x);
+  if (!Number.isFinite(n)) return по;
+  return Math.min(max, Math.max(min, n));
+};
+
+/**
+ * Сроки предупреждения хранятся строкой JSON. Строка из чужого файла может
+ * оказаться чем угодно, а читают её и клиент, и планировщик — поэтому
+ * разбираем, чистим и собираем заново по тем же правилам, что при записи:
+ * по убыванию, не больше шести, −1 («к концу») допустим.
+ */
+function сроки(x) {
+  let list = x;
+  if (typeof x === 'string') {
+    try { list = JSON.parse(x); } catch { return null; }
+  }
+  if (!Array.isArray(list)) return null;
+  const числа = list
+    .map(n => цел(n, { min: -1, max: СРОК_МАКС }))
+    .filter(n => n !== null);
+  const чистые = [...new Set(числа)].sort((a, b) => b - a).slice(0, 6);
+  return чистые.length ? JSON.stringify(чистые) : null;
+}
+
+/**
+ * Тело правила повтора — тоже строка JSON. Неразбираемую заменяем пустой:
+ * правило без тела достроит пустую строку, а мусор в этой колонке роняет
+ * весь день, в который правило попадает.
+ */
+function телоПовтора(x) {
+  const s = стр(x, 20000) || '{}';
+  try {
+    const o = JSON.parse(s);
+    return o && typeof o === 'object' && !Array.isArray(o) ? s : '{}';
+  } catch { return '{}'; }
+}
+
+const ТЕМЫ = ['system', 'light', 'dark'];
+const ВИДЫ_РАСПИСАНИЯ = ['list', 'timeline'];
+const РЕЖИМЫ_ПИТАНИЯ = ['checklist', 'timed'];
+const НАСТРОЕК_МАКС = 100;
+const НАСТРОЙКА_МАКС = 20000;
+
+/**
+ * Человек и его переключатели.
+ *
+ * В выгрузке они есть, а восстановление их не трогало: аккаунт, поднятый из
+ * копии, возвращал все дни — и встречал человека чужим часовым поясом
+ * (значит, сдвинутым «сегодня»), системной темой, воскресеньем как началом
+ * недели и выключенным переносом невыполненного. Выглядело так, будто копия
+ * неполная, и найти этому объяснение было нельзя.
+ *
+ * Только при «заменить всё»: там человек и просит сделать аккаунт тем, что в
+ * файле. При «добавить» его собственные настройки важнее файла.
+ */
+function восстановитьЧеловека(users, uid, u) {
+  if (!u || typeof u !== 'object') return;
+
+  const профиль = {};
+  if (u.displayName !== undefined) профиль.displayName = стр(u.displayName, 80);
+  if (typeof u.timezone === 'string' && isValidTimezone(u.timezone)) профиль.timezone = u.timezone;
+  if (ТЕМЫ.includes(u.theme)) профиль.theme = u.theme;
+  const неделя = цел(u.weekStart, { min: 1, max: 7 });
+  if (неделя !== null) профиль.weekStart = неделя;
+  if (ВИДЫ_РАСПИСАНИЯ.includes(u.scheduleView)) профиль.scheduleView = u.scheduleView;
+  if (РЕЖИМЫ_ПИТАНИЯ.includes(u.foodMode)) профиль.foodMode = u.foodMode;
+  if (Object.keys(профиль).length) users.patchProfile(uid, профиль);
+
+  const s = u.settings;
+  if (!s || typeof s !== 'object' || Array.isArray(s)) return;
+  const чистые = {};
+  for (const [k, значение] of Object.entries(s)) {
+    if (Object.keys(чистые).length >= НАСТРОЕК_МАКС) break;
+    if (k.length > 64) continue;
+    if (JSON.stringify(значение ?? null).length > НАСТРОЙКА_МАКС) continue;
+    чистые[k] = значение;
+  }
+  // то же правило, что в настройках: «с какого дня переносим» без включённого
+  // переноса — мусор, который однажды сработает сам
+  if (чистые.carryOver !== true) чистые.carryOverSince = null;
+  else if (!isValidDate(чистые.carryOverSince)) чистые.carryOverSince = null;
+  if (Object.keys(чистые).length) users.setSettings(uid, чистые);
+}
+
+/** Первый настоящий срок — его видит всё, что умеет только одно число. */
+function первыйСрок(json) {
+  if (!json) return null;
+  const list = JSON.parse(json).filter(n => n >= 0);
+  return list.length ? list[0] : null;
+}
 
 function проверитьВыгрузку(data) {
   for (const [ключ, поля] of Object.entries(DATE_FIELDS)) {
@@ -190,6 +318,7 @@ module.exports = function exportRouter({ db }) {
         for (const t of [...DAY_TABLES, 'habit_logs', 'habits', 'series_overrides', 'series', 'days']) {
           db.prepare(`DELETE FROM ${t} WHERE user_id = ?`).run(uid);
         }
+        восстановитьЧеловека(users, uid, data.user);
       }
 
       const existingDates = new Set(
@@ -200,7 +329,8 @@ module.exports = function exportRouter({ db }) {
         if (mode === 'merge' && existingDates.has(d.date)) continue;
         db.prepare(`INSERT OR REPLACE INTO days (user_id, date, title, focus, weight, notes, food_plan)
                     VALUES (?,?,?,?,?,?,?)`)
-          .run(uid, d.date, d.title ?? '', d.focus ?? '', d.weight ?? null, d.notes ?? '', d.food_plan ?? '');
+          .run(uid, d.date, стр(d.title, 200), стр(d.focus, 500),
+               дробь(d.weight, { min: 0, max: 1000 }), стр(d.notes, 20000), стр(d.food_plan, 20000));
       }
 
       const skip = date => mode === 'merge' && existingDates.has(date);
@@ -229,9 +359,11 @@ module.exports = function exportRouter({ db }) {
         const info = db.prepare(`INSERT INTO series
           (user_id, target, freq, interval, byweekday, start_date, end_date, payload_json, name)
           VALUES (?,?,?,?,?,?,?,?,?)`).run(
-          uid, s.target ?? 'schedule', s.freq ?? 'daily', s.interval ?? 1,
-          s.byweekday ?? 127, s.start_date ?? null, s.end_date ?? null,
-          s.payload_json ?? '{}', s.name ?? null);
+          uid, из(s.target, ЦЕЛИ_ПОВТОРА, 'schedule'), из(s.freq, ПОВТОРЫ, 'daily'),
+          цел(s.interval, { min: 1, max: 365, по: 1 }),
+          цел(s.byweekday, { min: 0, max: 127, по: 127 }),
+          s.start_date || null, s.end_date || null,
+          телоПовтора(s.payload_json), s.name ? стр(s.name, 200) : null);
         ruleByKey.set(key, info.lastInsertRowid);
         if (s.id) seriesIdMap.set(s.id, info.lastInsertRowid);
       }
@@ -240,21 +372,32 @@ module.exports = function exportRouter({ db }) {
         if (!sid || skip(o.date)) continue;
         db.prepare(`INSERT INTO series_overrides (user_id, series_id, date, action) VALUES (?,?,?,?)
                     ON CONFLICT(series_id, date) DO UPDATE SET action = excluded.action`)
-          .run(uid, sid, o.date, o.action ?? 'deleted');
+          .run(uid, sid, o.date, из(o.action, ['deleted'], 'deleted'));
       }
 
       // старый id блока → новый: по нему приём пищи находит свой блок
       const rowIdMap = new Map();
       for (const r of data.scheduleItems || []) {
         if (skip(r.date)) continue;
+        /*
+         * Список сроков — главный, одиночное число выводится из него. Иначе
+         * из чужого файла приезжала пара, в которой они расходятся, и
+         * напоминание приходило не тогда, о чём просили.
+         */
+        const срокиСтроки = сроки(r.remind_before_json ?? r.remind_before_min);
         const info = db.prepare(`INSERT INTO schedule_items
           (user_id, date, start_min, end_min, title, note, done, sort_order, kind,
            alarm_mode, alarm_profile, remind_before_min, remind_before_json, color, series_id)
           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-          uid, r.date, r.start_min ?? 0, r.end_min ?? null, r.title ?? '', r.note ?? '',
-          r.done ?? 0, r.sort_order ?? 0, r.kind ?? 'normal',
-          r.alarm_mode ?? 'none', r.alarm_profile ?? 'gentle', r.remind_before_min ?? null,
-          r.remind_before_json ?? null, r.color ?? null,
+          uid, r.date,
+          цел(r.start_min, { min: 0, max: 1439, по: 0 }),
+          цел(r.end_min, { min: 0, max: 1439 }),
+          стр(r.title, 200), стр(r.note, 1000),
+          флаг(r.done), цел(r.sort_order, { min: 0, max: 100000, по: 0 }),
+          из(r.kind, ВИДЫ, 'normal'),
+          из(r.alarm_mode, БУДИЛЬНИК, 'none'), из(r.alarm_profile, ПРОФИЛИ, 'gentle'),
+          первыйСрок(срокиСтроки), срокиСтроки,
+          из(r.color, ЦВЕТА, null),
           seriesIdMap.get(r.series_id) ?? null);
         if (r.id) rowIdMap.set(r.id, info.lastInsertRowid);
       }
@@ -262,23 +405,30 @@ module.exports = function exportRouter({ db }) {
         if (skip(r.date)) continue;
         db.prepare(`INSERT INTO tasks (user_id, date, bucket, text, done, sort_order, carried_from)
                     VALUES (?,?,?,?,?,?,?)`)
-          .run(uid, r.date, r.bucket ?? 'work', r.text ?? '', r.done ?? 0, r.sort_order ?? 0, r.carried_from ?? null);
+          .run(uid, r.date, из(r.bucket, РАЗДЕЛЫ, 'work'), стр(r.text, 500), флаг(r.done),
+               цел(r.sort_order, { min: 0, max: 100000, по: 0 }), r.carried_from || null);
       }
       for (const r of data.meals || []) {
         if (skip(r.date)) continue;
         db.prepare(`INSERT INTO meals (user_id, date, slot, time_min, end_min, title, note,
                                        calories, done, sort_order, remind_before_json, schedule_item_id)
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
-          .run(uid, r.date, r.slot ?? 'other', r.time_min ?? null, r.end_min ?? null,
-               r.title ?? '', r.note ?? '', r.calories ?? null, r.done ?? 0, r.sort_order ?? 0,
-               r.remind_before_json ?? null, rowIdMap.get(r.schedule_item_id) ?? null);
+          .run(uid, r.date, из(r.slot, ПРИЁМЫ, 'other'),
+               цел(r.time_min, { min: 0, max: 1439 }), цел(r.end_min, { min: 0, max: 1439 }),
+               стр(r.title, 200), стр(r.note, 1000),
+               цел(r.calories, { min: 0, max: 20000 }),
+               флаг(r.done), цел(r.sort_order, { min: 0, max: 100000, по: 0 }),
+               сроки(r.remind_before_json), rowIdMap.get(r.schedule_item_id) ?? null);
       }
       for (const r of data.sportSets || []) {
         if (skip(r.date)) continue;
         db.prepare(`INSERT INTO sport_sets (user_id, date, exercise, sets, reps, reps_max, weight, done, sort_order)
                     VALUES (?,?,?,?,?,?,?,?,?)`)
-          .run(uid, r.date, r.exercise ?? '', r.sets ?? null, r.reps ?? null, r.reps_max ?? null,
-               r.weight ?? null, r.done ?? 0, r.sort_order ?? 0);
+          .run(uid, r.date, стр(r.exercise, 200),
+               цел(r.sets, { min: 0, max: 1000 }), цел(r.reps, { min: 0, max: 10000 }),
+               цел(r.reps_max, { min: 0, max: 10000 }),
+               дробь(r.weight, { min: 0, max: 10000 }),
+               флаг(r.done), цел(r.sort_order, { min: 0, max: 100000, по: 0 }));
       }
 
       /*
@@ -307,13 +457,19 @@ module.exports = function exportRouter({ db }) {
            times_per_week, polarity, mode, challenge_target_days, challenge_start_date, break_policy,
            allowed_skips_per_week, is_active, sort_order, archived_at, created_at)
           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-          uid, h.title ?? '', h.description ?? '', h.emoji ?? '', h.color ?? 'blue',
-          h.type ?? 'binary', h.target_per_day ?? null, h.unit ?? null, h.schedule_mask ?? 127,
-          h.times_per_week ?? null,
-          h.polarity ?? 'do', h.mode ?? 'ongoing', h.challenge_target_days ?? null,
-          h.challenge_start_date ?? null, h.break_policy ?? 'reset',
-          h.allowed_skips_per_week ?? 0, h.is_active ?? 1, h.sort_order ?? 0,
-          h.archived_at ?? null, h.created_at ?? new Date().toISOString().slice(0, 19).replace('T', ' '));
+          uid, стр(h.title, 200), стр(h.description, 1000), стр(h.emoji, 16),
+          из(h.color, ЦВЕТА_ПРИВЫЧЕК, 'blue'),
+          из(h.type, ВИДЫ_ПРИВЫЧЕК, 'binary'),
+          цел(h.target_per_day, { min: 1, max: 100000 }), h.unit ? стр(h.unit, 40) : null,
+          цел(h.schedule_mask, { min: 0, max: 127, по: 127 }),
+          цел(h.times_per_week, { min: 0, max: 7 }),
+          из(h.polarity, ПОЛЯРНОСТИ, 'do'), из(h.mode, РЕЖИМЫ, 'ongoing'),
+          цел(h.challenge_target_days, { min: 1, max: 3650 }),
+          h.challenge_start_date || null, из(h.break_policy, ПРИ_СРЫВЕ, 'reset'),
+          цел(h.allowed_skips_per_week, { min: 0, max: 7, по: 0 }),
+          флаг(h.is_active ?? 1), цел(h.sort_order, { min: 0, max: 100000, по: 0 }),
+          h.archived_at || null,
+          h.created_at || new Date().toISOString().slice(0, 19).replace('T', ' '));
         habitIdMap.set(h.id, info.lastInsertRowid);
         byTitle.set(String(h.title ?? '').trim().toLowerCase(), info.lastInsertRowid);
       }
@@ -322,14 +478,15 @@ module.exports = function exportRouter({ db }) {
         if (!newId) continue;
         db.prepare(`INSERT OR REPLACE INTO habit_logs (user_id, habit_id, date, status, value)
                     VALUES (?,?,?,?,?)`)
-          .run(uid, newId, l.date, l.status ?? 'done', l.value ?? null);
+          .run(uid, newId, l.date, из(l.status, СТАТУСЫ, 'done'),
+               цел(l.value, { min: 0, max: 1000000 }));
       }
 
       // Заметки без даты: в режиме «заменить всё» их тоже нужно заменить
       if (mode === 'replace') db.prepare('DELETE FROM free_notes WHERE user_id = ?').run(uid);
       for (const n of data.freeNotes || []) {
         db.prepare('INSERT INTO free_notes (user_id, title, text) VALUES (?,?,?)')
-          .run(uid, n.title ?? '', n.text ?? '');
+          .run(uid, стр(n.title, 200), стр(n.text, 100000));
       }
     });
     tx();

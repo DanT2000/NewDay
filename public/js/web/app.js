@@ -309,6 +309,20 @@ const accent = () => {
 };
 const soft = () => `color-mix(in srgb, ${accent()} 18%, transparent)`;
 
+/**
+ * Цветная метка строки — по тем же правилам, что и цвет оформления выше.
+ *
+ * Чужой ключ цвета приезжает откуда угодно: из старой версии, из чужой
+ * выгрузки, из правки базы руками. Падение здесь уносило не строку, а весь
+ * экран — и насовсем: строка приезжает с сервера снова, и «Сейчас»,
+ * расписание и месяц падали заново после каждой перезагрузки. Строка без
+ * метки — мелочь, экран без выхода — нет.
+ */
+const pin = (color) => {
+  const набор = PALETTE[color];
+  return набор ? { '--pin': набор[dark() ? 'dark' : 'light'] } : {};
+};
+
 const pad2 = n => String(n).padStart(2, '0');
 const hhmm = min => { const m = ((min % 1440) + 1440) % 1440; return `${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`; };
 const dayOf = () => { const [y, m, d] = state.date.split('-').map(Number); return new Date(y, m - 1, d); };
@@ -1017,7 +1031,7 @@ function scheduleList() {
         inner[r.id] ? 'inner' : '', parent[r.id] ? 'parent' : '',
         r.isReminder ? 'moment' : '',
       ].filter(Boolean).join(' '),
-      style: r.color ? { '--pin': PALETTE[r.color][dark() ? 'dark' : 'light'] } : {},
+      style: pin(r.color),
       onclick: () => openRow(r),
     });
     /*
@@ -1872,7 +1886,7 @@ function planColumn(dateKey, axis) {
         top: `${Math.round(top)}px`,
         height: `${Math.round(height)}px`,
         zIndex: String(1 + i),
-        ...(r.color ? { '--pin': PALETTE[r.color][dark() ? 'dark' : 'light'] } : {}),
+        ...pin(r.color),
         ...(of > 1
           ? { left: `calc(${i * step}% + 3px)`, width: `calc(${step}% - 6px)`, right: 'auto' }
           : {}),
@@ -2160,7 +2174,7 @@ function monthGrid() {
       const line = h('button.wcell-item', {
         type: 'button',
         class: r.isReminder ? 'rem' : '',
-        style: r.color ? { '--pin': PALETTE[r.color][dark() ? 'dark' : 'light'] } : {},
+        style: pin(r.color),
         onclick: e => { e.stopPropagation(); openRow(r, key); },
       });
       add(line,

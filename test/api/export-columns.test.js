@@ -33,7 +33,7 @@ const НАРОЧНО = {
 };
 
 const ТАБЛИЦЫ = ['days', 'schedule_items', 'tasks', 'meals', 'sport_sets',
-  'habits', 'habit_logs', 'series', 'series_overrides'];
+  'habits', 'habit_logs', 'series', 'series_overrides', 'free_notes'];
 
 test('каждая колонка попадает и в выгрузку, и в восстановление', () => {
   const { file, cleanup } = tmpDatabase();
