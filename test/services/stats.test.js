@@ -301,3 +301,73 @@ test('цель, поставленная давно ведомой привыч�
     assert.strictEqual(s.percent, 3, 'проценты — про цель, а не про всю жизнь привычки');
   } finally { cleanup(); }
 });
+
+test('у цели дни недели ничего не запрещают', () => {
+  const { db, cleanup } = fixture();
+  try {
+    /*
+     * «Бегать по понедельникам, средам и пятницам» у цели — это план, а не
+     * обязательство: пропустил среду, добежал в субботу — всё в зачёт.
+     * Раньше суббота считалась чужим днём: галочка была мёртвой, а если
+     * отметка всё же появлялась, счёт её не видел.
+     */
+    const MON_WED_FRI = (1 << 0) | (1 << 2) | (1 << 4);
+    const id = mkHabit(db, {
+      schedule_mask: MON_WED_FRI, break_policy: 'keep',
+      mode: 'challenge', challenge_target_days: 30, challenge_start_date: '2026-08-01',
+    });
+    log(db, id, '2026-08-03', 'done');  // пн — по плану
+    log(db, id, '2026-08-08', 'done');  // сб — вне плана, но сделал
+    const s = stats(db).habitStats(USER, id, null, '2026-08-09');
+    assert.strictEqual(s.total, 2, 'обе отметки в счёте');
+    assert.strictEqual(s.challenge.day, 2, 'и обе идут к цели');
+    const сб = s.last14.find(d => d.date === '2026-08-08');
+    assert.strictEqual(сб.status, 'done', 'суббота показана сделанной, а не «не её день»');
+
+    const наСегодня = stats(db).habitsForDate(USER, '2026-08-09').find(h => h.id === id);
+    assert.strictEqual(наСегодня.activeToday, true, 'отметить цель можно в любой день');
+  } finally { cleanup(); }
+});
+
+test('серии дни недели по-прежнему задают, где она живёт', () => {
+  const { db, cleanup } = fixture();
+  try {
+    const MON_WED_FRI = (1 << 0) | (1 << 2) | (1 << 4);
+    const id = mkHabit(db, { schedule_mask: MON_WED_FRI, break_policy: 'reset' });
+    const наСубботу = stats(db).habitsForDate(USER, '2026-08-08').find(h => h.id === id);
+    assert.strictEqual(наСубботу.activeToday, false, 'суббота у серии — законный выходной');
+  } finally { cleanup(); }
+});
+
+test('неотмеченная цель не портит прогресс дня', () => {
+  const { db, cleanup } = fixture();
+  try {
+    const серия = mkHabit(db, { break_policy: 'reset' });
+    mkHabit(db, { break_policy: 'keep' });   // цель, сегодня не отмечена
+    log(db, серия, '2026-08-09', 'done');
+    const p = stats(db).dayProgress(USER, '2026-08-09');
+    assert.strictEqual(p.habits.possible, 1, 'в знаменателе только серия');
+    assert.strictEqual(p.habits.percent, 100, 'пропуск цели не роняет прогресс дня');
+  } finally { cleanup(); }
+});
+
+test('у цели нет красных дней: срыва там не бывает', () => {
+  const { db, cleanup } = fixture();
+  try {
+    /*
+     * Отметку «не сделал» можно поставить со старых экранов и по API. У
+     * серии это честный срыв, у цели — ничто: срывов у неё не бывает по
+     * определению, и красный квадрат в полоске противоречит числу «срывов 0».
+     */
+    const id = mkHabit(db, { break_policy: 'keep' });
+    log(db, id, '2026-08-08', 'missed');
+    const s = stats(db).habitStats(USER, id, null, '2026-08-09');
+    assert.strictEqual(s.missed, 0);
+    const день = s.last14.find(d => d.date === '2026-08-08');
+    assert.strictEqual(день.status, null, 'в полоске пусто, а не красное');
+
+    const наДень = stats(db).habitsForDate(USER, '2026-08-08').find(h => h.id === id);
+    assert.strictEqual(наДень.week.find(d => d.date === '2026-08-08').status, null,
+      'и в недельных точках тоже');
+  } finally { cleanup(); }
+});

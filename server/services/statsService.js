@@ -15,6 +15,13 @@ function habitActiveOn(habit, date) {
   // архив считается с даты архивации, а не задним числом: в днях, когда
   // привычка ещё жила, её история остаётся правдой
   if (!habitExistsOn(habit, date)) return false;
+  /*
+   * У цели дни недели — план, а не обязательство: «бегать по понедельникам,
+   * средам и пятницам» не значит, что суббота не считается. Пропустил
+   * среду, добежал в субботу — всё в зачёт. Поэтому маска ограничивает
+   * только серию, которой дни нужны, чтобы знать, что такое «подряд».
+   */
+  if (kindOf(habit) === 'goal') return true;
   return weekdayInMask(date, habit.schedule_mask);
 }
 
@@ -205,9 +212,19 @@ function statsService(db, opts = {}) {
      * сорвал счёт. У цели пустой: там нечего было срывать.
      */
     const gap = kind === 'series' ? 'missed' : null;
+    /*
+     * Отметку «не сделал» можно поставить со старых экранов и по API. У
+     * серии это честный срыв, у цели — ничто: срывов у неё не бывает, и
+     * красный квадрат спорил бы с числом «срывов 0» на той же карточке.
+     */
+    const видноКак = d => {
+      const s = logsMap[d];
+      if (s === 'missed' && kind === 'goal') return null;
+      return s ?? (d < today ? gap : null);
+    };
     const last14 = rangeDates(addDays(rangeTo, -13), rangeTo).map(d => ({
       date: d,
-      status: habitActiveOn(habit, d) ? (logsMap[d] ?? (d < today ? gap : null)) : 'inactive',
+      status: habitActiveOn(habit, d) ? видноКак(d) : 'inactive',
     }));
 
     /*
@@ -284,9 +301,11 @@ function statsService(db, opts = {}) {
 
       const weekMap = {};
       for (const l of habits.logsInRange(user.id, h.id, weekFrom, date)) weekMap[l.date] = l.status;
+      // у цели «не сделал» — не срыв, и точка недели не должна быть красной
+      const целевая = s.kind === 'goal';
       const week = weekDates.map(d => ({
         date: d,
-        status: weekMap[d] ?? null,
+        status: (целевая && weekMap[d] === 'missed') ? null : (weekMap[d] ?? null),
         active: habitActiveOn(h, d),
       }));
 
@@ -389,14 +408,14 @@ function statsService(db, opts = {}) {
 
     const allTasks = tasks.list(user.id, date);
     /*
-     * Привычка со свободным графиком попадает в прогресс дня только если её
-     * в этот день отметили. Иначе «три раза в неделю» висела бы в знаменателе
-     * каждый день и портила процент в дни, на которые человек ничего и не
-     * обещал.
+     * Цель попадает в прогресс дня только если её в этот день отметили.
+     * Иначе «сделать 300 раз» висела бы в знаменателе каждый день и роняла
+     * процент в дни, на которые человек ничего и не обещал: у цели пропуск
+     * разрешён по самому её смыслу.
      */
     const habitRows = habitsForDate(user, date)
       .filter(h => h.activeToday && h.status !== 'skipped')
-      .filter(h => !h.timesPerWeek || h.status === 'done');
+      .filter(h => h.kind !== 'goal' || h.status === 'done');
 
     /*
      * Прогресс — это ответ на вопрос «что я сделал», и в него входит только
