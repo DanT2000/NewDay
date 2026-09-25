@@ -144,7 +144,9 @@ test('отвергнутая сервером правка уходит с эк�
   assert.strictEqual(data.store.day.tasks.home.length, 1, 'сперва видна');
   data.запуститьОчередь();
   await q.отправить();
-  await new Promise(r => setTimeout(r, 50));   // перечитывание дня идёт следом
+  // перечитывание дня идёт следом, с небольшой задержкой: отказы копятся
+  // и обрабатываются одним запросом, а не сотней подряд
+  await new Promise(r => setTimeout(r, 500));
   assert.strictEqual(data.store.day.tasks.home.length, 0, 'после отказа с экрана ушла');
   assert.strictEqual(q.конфликты().length, 1, 'и человеку есть что показать');
   assert.strictEqual(с.вызовы.length >= 0, true);
@@ -240,4 +242,36 @@ test('свой же повторный вход правки не теряет',
   с.починить({ email: 'user@example.com', username: 'user', settings: {} });
   await data.boot();
   assert.strictEqual(q.ожидает(), 1, 'своя правка на месте');
+});
+
+test('лавина отказов не превращается в лавину запросов', async () => {
+  const { data, q } = await стенд();
+  let запросовДня = 0;
+  globalThis.fetch = async (url, opts = {}) => {
+    const метод = opts.method ?? 'GET';
+    if (метод === 'POST') {
+      return {
+        ok: false, status: 400,
+        headers: { get: () => 'application/json' },
+        json: async () => ({ error: { code: 'BAD_REQUEST', message: 'Не приняли' } }),
+      };
+    }
+    if (String(url).includes('/full')) запросовДня += 1;
+    return {
+      ok: true, status: 200,
+      headers: { get: () => 'application/json' },
+      json: async () => structuredClone(ДЕНЬ),
+    };
+  };
+  /*
+   * Сервер отвергает всё подряд — так бывает после долгой работы без связи.
+   * Раньше на каждую отвергнутую правку уходил отдельный запрос дня: сотня
+   * правок — сотня запросов, и экран замирал.
+   */
+  data.запуститьОчередь();
+  for (let i = 0; i < 12; i++) data.createTask('2026-09-19', { text: `правка ${i}`, bucket: 'home' });
+  await q.отправить();
+  await new Promise(r => setTimeout(r, 700));
+  assert.strictEqual(q.конфликты().length, 12, 'все отказы человеку видны');
+  assert.ok(запросовДня <= 2, `дней перечитано ${запросовДня}, ожидали не больше двух`);
 });
