@@ -44,27 +44,52 @@ export async function loadUser() {
   return state.user;
 }
 
+/*
+ * Номер запроса: отвечает только последний.
+ *
+ * Без него быстрое листание дней оставляло на экране не тот день — ответ
+ * медленного запроса приходил позже и перезаписывал уже показанный. В
+ * веб-версии такая защита есть, здесь её не было.
+ */
+let поколение = 0;
+
 export async function loadDay(date) {
+  const мой = ++поколение;
+  const прежняяДата = state.date;
   state.date = date;
   state.loading = true;
   state.error = null;
   emit();
   try {
-    state.day = await api.getDay(date);
+    const день = await api.getDay(date);
+    if (мой !== поколение) return;   // нас уже обогнали: молчим
+    state.day = день;
   } catch (e) {
-    // Ошибку показываем, но день НЕ подменяем пустышкой:
-    // именно эта подмена в старом клиенте затирала данные.
+    if (мой !== поколение) return;
+    /*
+     * День не подменяем пустышкой — именно эта подмена в старом клиенте
+     * затирала данные. Но и оставлять прежний нельзя: на экране оказывался
+     * чужой день под новым числом, со своими номерами строк и своей версией,
+     * и первая же правка уезжала не туда. Убираем его и говорим, что не
+     * загрузилось.
+     */
+    if (прежняяДата !== date) state.day = null;
     state.error = e.message;
     toast(e.message, 'error');
   } finally {
-    state.loading = false;
-    emit();
+    if (мой === поколение) {
+      state.loading = false;
+      emit();
+    }
   }
 }
 
 export async function reloadDay() {
   if (!state.date) return;
-  state.day = await api.getDay(state.date);
+  const мой = ++поколение;
+  const день = await api.getDay(state.date);
+  if (мой !== поколение) return;
+  state.day = день;
   emit();
 }
 

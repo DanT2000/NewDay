@@ -15,6 +15,7 @@ import * as api from '../api.js';
 import * as очередь from '../outbox.js';
 import { наложить, наложитьВсе, наложитьНаПериод, наложитьНаЗаметки } from './apply.js';
 import { запрос } from './ops.js';
+import { wipeLocalKeys } from '../local-wipe.js';
 
 const pad2 = n => String(n).padStart(2, '0');
 export const keyOf = dt => `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
@@ -97,16 +98,8 @@ export const keptAt = name => kept(name)?.at ?? null;
 
 /** Забыть всё локальное: при выходе из аккаунта чужой день видеть нельзя. */
 export function forgetLocal() {
-  try {
-    // перебираем через length/key, а не Object.keys: так надёжнее и так
-    // хранилище перечисляется по правилам, а не по своим полям
-    const ключи = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && (k.startsWith(LOCAL) || k === КЛЮЧ_ХОЗЯИНА)) ключи.push(k);
-    }
-    for (const k of ключи) localStorage.removeItem(k);
-  } catch { /* нечего забывать */ }
+  // сам список ключей — в local-wipe.js: тем же списком выходит и прежний экран
+  wipeLocalKeys();
   // и очередь тоже: чужие правки отправлять некуда и незачем
   очередь.очистить();
   // и то, что уже прочитано в память: чужой день на экране висеть не должен

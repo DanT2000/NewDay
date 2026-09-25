@@ -24,13 +24,28 @@ export const ACCENTS = [
 
 const prefersDark = () => matchMedia('(prefers-color-scheme: dark)').matches;
 
+/*
+ * Хранилище может быть запрещено — и не только в приватном окне: настройка
+ * «блокировать данные сайтов» заставляет само обращение к localStorage
+ * бросать. Этот модуль импортируется первым на каждом прежнем экране, и
+ * бросок на уровне модуля означал не «тема по умолчанию», а пустую страницу
+ * без единого слова. Ровно от этого и обёрнут boot-theme.js — здесь правило
+ * то же, только записано было в одном месте из двух.
+ */
+const прочитать = (ключ) => {
+  try { return globalThis.localStorage?.getItem(ключ) ?? null; } catch { return null; }
+};
+const записать = (ключ, значение) => {
+  try { globalThis.localStorage?.setItem(ключ, значение); } catch { /* останется на этот заход */ }
+};
+
 export function getTheme() {
-  const v = localStorage.getItem(KEY);
+  const v = прочитать(KEY);
   return ORDER.includes(v) ? v : 'system';
 }
 
 export function getAccent() {
-  const v = localStorage.getItem(KEY_ACCENT);
+  const v = прочитать(KEY_ACCENT);
   return ACCENTS.some(a => a.key === v) ? v : 'violet';
 }
 
@@ -59,13 +74,13 @@ function persist(fields) {
 }
 
 export function setTheme(theme, { save = true } = {}) {
-  localStorage.setItem(KEY, theme);
+  записать(KEY, theme);
   applyTheme(theme);
   if (save) persist({ theme });
 }
 
 export function setAccent(accent, { save = true } = {}) {
-  localStorage.setItem(KEY_ACCENT, accent);
+  записать(KEY_ACCENT, accent);
   applyTheme(getTheme(), accent);
   if (save) persist({ settings: { accent } });
 }

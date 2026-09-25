@@ -223,15 +223,26 @@ export const DELETE = (p, h)    => request('DELETE', p, undefined, h);
 export const DELETE_BODY = (p, b, h) => request('DELETE', p, b, h);
 
 /**
- * Операции, переписывающие день целиком, требуют If-Match с его rev.
- * При расхождении сервер возвращает актуальный день — берём его rev
- * и повторяем один раз, вместо того чтобы затирать чужую правку.
+ * Правки дня идут с If-Match и его версией.
+ *
+ * При расхождении сервер возвращает актуальный день. Что делать дальше —
+ * зависит от того, что мы пишем:
+ *
+ *  - PATCH правит только названные поля. Повторить его с новой версией
+ *    безопасно: чужая правка других полей останется на месте, а наше поле
+ *    просто окажется свежее. Иначе сохранение заметки штатно падало бы на
+ *    отказе (notes.js зовёт patchDay вовсе без версии).
+ *  - PUT переписывает день целиком. Повтор здесь — это ровно то затирание
+ *    чужой правки, от которого версия и защищает: тело у нас старое, и всё,
+ *    что успело появиться на другом устройстве, исчезло бы. Отдаём отказ
+ *    наверх вместе с актуальным днём — пусть тот, кто просил, решает.
  */
 export async function withRev(method, path, body, rev) {
   try {
     return await request(method, path, body, { 'If-Match': `"${rev}"` });
   } catch (e) {
     if (e.code !== 'REV_MISMATCH' || !e.details?.current) throw e;
+    if (method !== 'PATCH') throw e;
     return request(method, path, body, { 'If-Match': `"${e.details.current.rev}"` });
   }
 }
@@ -335,10 +346,15 @@ export const sounds = {
    */
   async fileBlob(id) {
     const token = deviceToken();
-    const res = await fetch(`${apiBase()}/sounds/${id}/file`, {
+    const res = await сПределом(`${apiBase()}/sounds/${id}/file`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    if (!res.ok) throw new ApiError(res.status, 'ERROR', 'Звук не скачался');
+    }, ЖДЁМ_ДОЛГО_МС);   // файл звука везётся целиком
+    /*
+     * Вход разбираем и здесь. Раньше истёкшая сессия давала человеку
+     * «Звук не скачался» — то есть жалобу на звук вместо страницы входа.
+     */
+    if (res.status === 401) { onUnauthorized(); throw new ApiError(401, 'UNAUTHORIZED', 'Требуется вход'); }
+    if (!res.ok) throw new ApiError(res.status, 'HTTP_ERROR', сообщениеПоСтатусу(res.status));
     return res.blob();
   },
 };

@@ -22,6 +22,7 @@ import {
   ACCENTS, getTheme, setTheme, getAccent, setAccent, THEME_LABEL,
 } from './theme.js';
 import * as push from './push.js';
+import { wipeLocalKeys } from './local-wipe.js';
 import * as native from './native.js';
 import * as appUpdate from './update.js';
 import { formatShort } from './dates.js';
@@ -534,7 +535,22 @@ function openAccount() {
       }),
       h('button.btn.btn-block.btn-danger', {
         text: 'Выйти из аккаунта',
-        onclick: async () => { await api.logout(); location.href = '/login.html'; },
+        /*
+         * Выходя, забываем местное.
+         *
+         * Раньше здесь был только `api.logout()`, и в хранилище оставались
+         * копия дня, очередь правок, имя хозяина и дневник. Следующий человек
+         * на этом устройстве попадал сразу в приложение и до первого ответа
+         * сервера видел чужие дни и чужое имя.
+         */
+        onclick: async () => {
+          try { await api.logout(); } catch { /* уходим всё равно */ }
+          wipeLocalKeys();
+          // и сам ключ от аккаунта: сервер его уже отозвал, а в приложении он
+          // остаётся лежать и уходит в каждом запросе до первого отказа
+          api.setDeviceToken(null);
+          location.href = '/login.html';
+        },
       })));
   });
 }

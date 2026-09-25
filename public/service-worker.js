@@ -6,7 +6,7 @@
  * сказать, что связи нет.
  */
 
-const VERSION = 'newday-de25d33dea4c';
+const VERSION = 'newday-508f0b8858ca';
 const SHELL = [
   // Веб-версия: с неё начинается браузер, и офлайн она должна открываться
   '/web.html', '/css/web.css',
@@ -15,6 +15,13 @@ const SHELL = [
   '/js/web/apply.js', '/js/web/ops.js', '/js/outbox.js',
   '/now.html', '/app.html', '/habits.html', '/stats.html', '/settings.html', '/notes.html',
   '/login.html', '/register.html', '/reset.html', '/index.html', '/install.html',
+  /*
+   * Голый «/» — это адрес запуска установленного приложения (start_url в
+   * манифесте). В кеше его не было, а `activate` стирает всё, кроме этого
+   * списка: первый же запуск с иконки без сети встречал человека страницей
+   * «Нет связи» — без навигации и без кнопки «ещё раз».
+   */
+  '/',
   '/css/fonts.css', '/css/tokens.css', '/css/base.css', '/css/components.css',
   '/css/shell.css', '/css/print.css',
   // стили входа, широкого экрана и справки: без них страница открывается голой
@@ -22,8 +29,15 @@ const SHELL = [
   // Шрифт вшит в проект: без него интерфейс поедет системным
   '/fonts/inter-cyrillic-71d5ee93.woff2', '/fonts/inter-latin-3100e775.woff2',
   '/js/boot-theme.js', '/js/shell.js', '/js/vendor/icons.js',
-  '/js/now.js', '/js/main.js', '/js/habits.js', '/js/stats.js', '/js/settings.js',
-  '/js/notes.js', '/js/sidebar.js', '/js/settings-ref.js', '/js/assistant.js',
+  '/js/now.js', '/js/main.js', '/js/habits.js', '/js/stats.js',
+  /*
+   * Экран настроек — это `settings-ref.js`: на `settings.js` не ссылается ни
+   * одна страница. Пока в списке лежал он, правка живого файла не меняла
+   * отметку версии (то есть кеш у людей не обновлялся), а правка мёртвого —
+   * меняла всем.
+   */
+  '/js/settings-ref.js', '/js/notes.js', '/js/sidebar.js', '/js/assistant.js',
+  '/js/server-pick.js', '/js/local-wipe.js',
   '/js/api.js', '/js/store.js', '/js/dates.js', '/js/dom.js',
   '/js/theme.js', '/js/toast.js', '/js/emoji.js', '/js/emoji-data.json', '/js/qr.js',
   '/js/update.js', '/js/install-banner.js', '/js/native.js', '/js/diag.js',
@@ -100,9 +114,20 @@ self.addEventListener('fetch', event => {
     if (immutable && копия) return копия;
 
     const изСети = fetch(request).then(response => {
-      if (response.ok) caches.open(VERSION).then(cache => cache.put(request, response.clone()));
+      if (response.ok) {
+        caches.open(VERSION)
+          .then(cache => cache.put(request, response.clone()))
+          .catch(() => { /* кеш переполнен или запрещён — ответ всё равно отдадим */ });
+      }
       return response;
     });
+    /*
+     * Когда побеждает порог, отказ сетевого обещания остаётся без обработчика,
+     * и браузер пишет в консоль «Uncaught (in promise)». Ответ мы уже отдали из
+     * кеша, ошибка здесь никого не касается — но в дневнике ошибок страницы она
+     * выглядит как настоящая поломка и уводит от настоящих.
+     */
+    изСети.catch(() => {});
 
     if (!копия) {
       try {
@@ -135,7 +160,9 @@ self.addEventListener('push', event => {
     body: data.body || '',
     icon: '/icons/icon-192.png',
     badge: '/icons/favicon.png',
-    tag: data.itemId ? `nd-${data.date}-${data.itemId}` : undefined,
+    // метка склеивает повторные уведомления об одном деле; без даты она
+    // превращалась в «nd-undefined-5» и склеивала разные дни в одно
+    tag: (data.itemId && data.date) ? `nd-${data.date}-${data.itemId}` : undefined,
     renotify: Boolean(data.itemId),
     // будильник должен остаться на экране, пока его не тронут
     requireInteraction: isAlarm,
@@ -154,7 +181,11 @@ self.addEventListener('notificationclick', event => {
     // если приложение уже открыто — не плодим вкладки, а переводим фокус
     const target = new URL(url, self.location.origin);
     for (const client of clientsList) {
-      if (!client.url.includes(target.pathname)) continue;
+      // сверяем путь целиком, а не подстрокой: «/now.html» находился внутри
+      // чужого адреса, и фокус уезжал не в то окно
+      let путь;
+      try { путь = new URL(client.url).pathname; } catch { continue; }
+      if (путь !== target.pathname) continue;
       await client.focus();
       /*
        * И показываем тот день, о котором звали: без этого открытая вкладка

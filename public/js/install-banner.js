@@ -13,8 +13,15 @@ import { h, add } from './dom.js';
 
 const KEY = 'newday.install-banner.hidden';
 
+/*
+ * Через обёртки: бросок отсюда уносил с собой то, что шло следом в main.js —
+ * в частности подписку на смену хвоста адреса. Полоска «поставьте приложение»
+ * не стоит сломанной навигации.
+ */
+const прочитать = (k) => { try { return globalThis.localStorage?.getItem(k) ?? null; } catch { return null; } };
+
 function shouldShow() {
-  if (localStorage.getItem(KEY)) return false;
+  if (прочитать(KEY)) return false;
   if (window.Capacitor?.isNativePlatform?.()) return false;
   // standalone — уже поставлено как PWA, предлагать нечего
   if (window.matchMedia('(display-mode: standalone)').matches) return false;
@@ -23,7 +30,7 @@ function shouldShow() {
 }
 
 function hide(el) {
-  localStorage.setItem(KEY, '1');
+  try { globalThis.localStorage?.setItem(KEY, '1'); } catch { /* вернётся в следующий заход */ }
   el.remove();
   document.body.classList.remove('has-install-banner');
 }

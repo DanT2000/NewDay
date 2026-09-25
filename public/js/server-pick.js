@@ -27,7 +27,10 @@ const clean = url => String(url || '').trim().replace(/\/+$/, '');
  * @returns {{ base: () => string, custom: () => boolean }}
  */
 export function mountServerPick({ mount, group, input }) {
-  const saved = clean(localStorage.getItem('newday.apiBase'));
+  // на странице входа хранилище может быть запрещено — тогда просто наш адрес
+  let сохранённый = null;
+  try { сохранённый = globalThis.localStorage?.getItem('newday.apiBase') ?? null; } catch { сохранённый = null; }
+  const saved = clean(сохранённый);
   // Свой сервер — только если сохранён именно чужой адрес
   let custom = Boolean(saved) && saved !== DEFAULT_BASE;
 

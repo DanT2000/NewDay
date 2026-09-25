@@ -48,7 +48,10 @@ const lf = buf => Buffer.from(buf.toString('utf8').replaceAll('\r\n', '\n'));
 const hash = crypto.createHash('sha256');
 let missing = 0;
 for (const url of files.sort()) {
-  const file = path.join(ROOT, 'public', url.replace(/^\//, ''));
+  // «/» в списке — адрес запуска приложения; на диске это index.html
+  const file = url === '/'
+    ? path.join(ROOT, 'public/index.html')
+    : path.join(ROOT, 'public', url.replace(/^\//, ''));
   try {
     hash.update(url);
     const raw = await fs.readFile(file);

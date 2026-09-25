@@ -24,7 +24,15 @@ const SHELL = [...исходник.match(/const SHELL = \[[\s\S]*?\n\];/)[0].mat
 /** Диагностика по `?diag=1` — в офлайне не нужна, кешировать её нечего. */
 const НЕ_НУЖНО = new Set(['/js/dev-overflow.js']);
 
-const кФайлу = p => path.join(КОРЕНЬ, p.replace(/^\//, '').split(/[?#]/)[0]);
+/*
+ * «/» в списке — это адрес запуска приложения, а на диске ему отвечает
+ * index.html: тот же файл, другой адрес.
+ */
+const кФайлу = (p) => {
+  const чистый = p.split(/[?#]/)[0];
+  if (чистый === '/') return path.join(КОРЕНЬ, 'index.html');
+  return path.join(КОРЕНЬ, чистый.replace(/^\//, ''));
+};
 
 /** Ссылки страницы и импорты модуля — только свои, внешние адреса не трогаем. */
 function ссылкиИз(p, текст) {
@@ -32,7 +40,7 @@ function ссылкиИз(p, текст) {
   const свой = s => s.startsWith('/') || s.startsWith('./') || s.startsWith('../');
   const разрешить = s => (s.startsWith('/') ? s : path.posix.normalize(path.posix.join(path.posix.dirname(p), s)));
 
-  if (p.endsWith('.html')) {
+  if (p.endsWith('.html') || p === '/') {
     for (const m of текст.matchAll(/(?:src|href)="([^"]+)"/g)) {
       if (свой(m[1])) найдено.push(разрешить(m[1]));
     }

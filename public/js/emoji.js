@@ -10,19 +10,32 @@ let cache = null;
 
 async function loadData() {
   if (cache) return cache;
+  /*
+   * Проверяем ответ, а не только разбираем его. Без сети и без копии в кеше
+   * сюда приходил HTML страницы «Нет связи», `res.json()` бросал — и шторка
+   * значков оставалась пустой и молчащей. Пустой набор честнее: рядом есть
+   * поле ввода, и человек видит, что выбирать не из чего.
+   */
   const res = await fetch('/js/emoji-data.json');
+  if (!res.ok) throw new Error('Набор значков не загрузился');
   cache = await res.json();
   return cache;
 }
 
 function recent() {
-  try { return JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); }
+  try { return JSON.parse(globalThis.localStorage?.getItem(RECENT_KEY) || '[]'); }
   catch { return []; }
 }
 
 function remember(emoji) {
   const list = [emoji, ...recent().filter(e => e !== emoji)].slice(0, 16);
-  localStorage.setItem(RECENT_KEY, JSON.stringify(list));
+  /*
+   * Чтение обёрнуто, запись была нет — и в окне, где хранилище запрещено,
+   * нажатие на значок не срабатывало вовсе: бросок отсюда уносил и сам выбор.
+   * «Недавние» не сохранились — мелочь; выбрать значок нельзя — поломка.
+   */
+  try { globalThis.localStorage?.setItem(RECENT_KEY, JSON.stringify(list)); }
+  catch { /* «недавние» не переживут этот заход, и ладно */ }
 }
 
 /**
