@@ -28,7 +28,8 @@ const { aiProxiesRepo, publicProxy } = require('../repos/aiProxies');
 const { usersRepo } = require('../repos/users');
 const { TIERS } = require('../services/aiAccess');
 const { deleteAfterOf } = require('../services/userCleanup');
-const { randomHex, hashToken } = require('../lib/secrets');
+const { randomHex, hashToken, safeEqual } = require('../lib/secrets');
+const { локальныйАдрес } = require('../lib/net');
 
 /** Сессия админа живёт 12 часов: панель — не то, чему стоит быть открытым месяц. */
 const ADMIN_TTL_MS = 12 * 60 * 60 * 1000;
@@ -77,15 +78,39 @@ module.exports = function adminPanelRouter({ db, config, ai, access, push, clean
     else entry.count += 1;
   }
 
-  const verifyPassword = password => {
+  /**
+   * Проверка пароля панели — три источника, в порядке старшинства.
+   *
+   * 1. Пароль из окружения (ADMIN_PASSWORD). Владелец сервера правит
+   *    переменные, а не базу, и это единственный способ задать пароль, не имея
+   *    доступа к SQLite.
+   * 2. Свой пароль, заданный в панели, — хешем в базе.
+   * 3. Заводской «newday» — и только с локального адреса.
+   *
+   * Третий пункт — та самая дыра, которую тут закрыли. Свежий сервер надо
+   * как-то настроить, поэтому заводской пароль есть; но он же работал из
+   * интернета, а панель — это список людей, коды приглашений и ключи
+   * помощника. Теперь снаружи он не подходит вовсе: настройка делается с той
+   * же машины или из локальной сети (а на закрытом сервере — через
+   * ADMIN_PASSWORD).
+   *
+   * @param {string} password
+   * @param {object} req — нужен адрес запроса
+   */
+  const verifyPassword = (password, req) => {
+    if (config.adminPassword) return safeEqual(password, config.adminPassword);
     const hash = panel.adminPasswordHash();
-    return hash ? bcrypt.compareSync(password, hash) : password === DEFAULT_ADMIN_PASSWORD;
+    if (hash) return bcrypt.compareSync(password, hash);
+    if (!safeEqual(password, DEFAULT_ADMIN_PASSWORD)) return false;
+    if (локальныйАдрес(req.ip)) return true;
+    console.warn('[newday] заводской пароль панели отвергнут: запрос не из локальной сети (%s)', req.ip);
+    return false;
   };
 
   router.post('/login', wrap((req, res) => {
     checkBruteforce(req.ip);
     const password = String(req.body?.password ?? '');
-    if (!password || !verifyPassword(password)) {
+    if (!password || !verifyPassword(password, req)) {
       noteFail(req.ip);
       throw unauthorized('Неверный пароль');
     }
@@ -113,7 +138,7 @@ module.exports = function adminPanelRouter({ db, config, ai, access, push, clean
   router.post('/password', wrap((req, res) => {
     const current = String(req.body?.current ?? '');
     const next = v.password(req.body?.next);
-    if (!verifyPassword(current)) {
+    if (!verifyPassword(current, req)) {
       throw new ApiError(400, 'BAD_PASSWORD', 'Текущий пароль не совпадает');
     }
     panel.setAdminPasswordHash(bcrypt.hashSync(next, 10));

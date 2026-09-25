@@ -60,9 +60,21 @@ export async function enable() {
 export async function disable() {
   const sub = await currentSubscription();
   if (!sub) return { ok: true };
-  await api.DELETE('/push/subscribe', { endpoint: sub.endpoint }).catch(() => {});
+  /*
+   * Отказ не проглатываем молча: «Отключить» должно либо отключить, либо
+   * сказать, что не вышло. Раньше здесь стоял пустой catch, и экран после
+   * неудачи снова показывал «этот браузер подписан» — человек нажимал ещё
+   * раз с тем же исходом.
+   */
+  let серверЗнает = true;
+  try {
+    await api.DELETE_BODY('/push/subscribe', { endpoint: sub.endpoint });
+  } catch (e) {
+    // 404 значит, что на сервере подписки и так нет: цель достигнута
+    if (e?.status !== 404) серверЗнает = false;
+  }
   await sub.unsubscribe().catch(() => {});
-  return { ok: true };
+  return серверЗнает ? { ok: true } : { ok: false, reason: 'SERVER_KEPT' };
 }
 
 export const status = () => api.GET('/push/status');

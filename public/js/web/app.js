@@ -7497,10 +7497,28 @@ addEventListener('pagehide', releaseMic);
  * его позвали.
  */
 const askedDate = () => /^#(\d{4}-\d{2}-\d{2})$/.exec(location.hash)?.[1];
-addEventListener('hashchange', () => {
+
+/**
+ * Раздел настроек в хвосте адреса: `#alarm`, `#devices` и другие ключи
+ * SET_PAGES. Нужно ссылкам со стороны — прежние экраны ведут сюда за
+ * разрешениями и проверкой будильника, и раньше такая ссылка никуда не вела.
+ */
+function askedSetPage() {
+  const ключ = /^#([a-z]+)$/.exec(location.hash)?.[1];
+  return ключ && SET_PAGES[ключ] ? ключ : null;
+}
+
+function поХвосту() {
   const asked = askedDate();
-  if (asked && asked !== state.date) go(asked);
-});
+  if (asked && asked !== state.date) { go(asked); return; }
+  const page = askedSetPage();
+  if (page && (state.screen !== 'settings' || state.setPage !== page)) {
+    set({ screen: 'settings', setPage: null, modal: null });
+    set({ setPage: page });
+  }
+}
+
+addEventListener('hashchange', поХвосту);
 
 /*
  * Листание дней: смахнуть пальцем, прокрутить колесом с Shift, нажать
@@ -7664,6 +7682,13 @@ async function bootstrap() {
   }
 
   render();
+  /*
+   * Раздел настроек из хвоста адреса — после первой отрисовки, а не до неё:
+   * приход на экран настроек сбрасывает раздел (см. render), и заданный
+   * заранее он бы потерялся. Ссылка со стороны открывает страницу заново, и
+   * события смены хвоста здесь не будет, поэтому спрашиваем сами.
+   */
+  поХвосту();
   await reload();
 }
 

@@ -13,7 +13,7 @@ const { panelSettings } = require('../../repos/panelSettings');
 const { generateSecret, formatToken } = require('../../lib/secrets');
 const { deviceNameFrom } = require('../../lib/deviceName');
 const { verifyEmailMessage, resetPasswordMessage } = require('../../lib/mailer');
-const { rateLimit } = require('../../middleware/rateLimit');
+const { rateLimit, failCounter } = require('../../middleware/rateLimit');
 
 const VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
 const RESET_TTL_MS = 60 * 60 * 1000;
@@ -27,8 +27,24 @@ module.exports = function authRouter({ db, config, mailer, auth }) {
   const invites = invitesRepo(db);
   const panel = panelSettings(appSettingsRepo(db));
 
-  const limiter = rateLimit({ max: 10 });
+  /*
+   * Пределы у каждого пути свои.
+   *
+   * Раньше счётчик был один на регистрацию, вход, письмо подтверждения,
+   * «забыли пароль» и сброс: десять любых обращений с одного адреса — и вход
+   * закрывался. Хватало квартиры с общим адресом, офиса или приложения,
+   * переспросившего на плохой связи; человек с верным паролем упирался в
+   * «слишком много попыток» и не понимал, за что.
+   *
+   * Подбор пароля ловит не этот предел, а счётчик неудач ниже: у него ключ
+   * «адрес + логин», и успешный вход его обнуляет.
+   */
+  const регистрация = rateLimit({ max: 10 });
+  const письма = rateLimit({ max: 5 });
+  const входПоток = rateLimit({ max: 60 });
+  const сброс = rateLimit({ max: 10 });
   const claimLimiter = rateLimit({ max: 20 });
+  const неудачныеВходы = failCounter({ max: 10 });
 
   function issueEmailToken(userId, kind, ttlMs) {
     const token = randomHex(32);
@@ -60,7 +76,7 @@ module.exports = function authRouter({ db, config, mailer, auth }) {
   });
 
   // ── POST /register ────────────────────────────────────────────────
-  router.post('/register', limiter, wrap(async (req, res) => {
+  router.post('/register', регистрация, wrap(async (req, res) => {
     const email = v.email(req.body.email);
     const password = v.password(req.body.password);
     const inviteCode = v.str(req.body.invite, { max: 100, field: 'приглашение' });
@@ -159,7 +175,7 @@ module.exports = function authRouter({ db, config, mailer, auth }) {
   }));
 
   // ── POST /resend-verification ─────────────────────────────────────
-  router.post('/resend-verification', limiter, wrap(async (req, res) => {
+  router.post('/resend-verification', письма, wrap(async (req, res) => {
     const email = v.email(req.body.email);
     const user = users.findByEmail(email);
     if (user && user.email_verified !== 1 && mailer.enabled) {
@@ -170,16 +186,23 @@ module.exports = function authRouter({ db, config, mailer, auth }) {
   }));
 
   // ── POST /login ───────────────────────────────────────────────────
-  router.post('/login', limiter, wrap(async (req, res) => {
+  router.post('/login', входПоток, wrap(async (req, res) => {
     const login = v.str(req.body.emailOrUsername ?? req.body.email ?? req.body.username,
       { max: 254, field: 'логин' });
     const password = v.str(req.body.password, { max: 200, field: 'пароль', trim: false });
     if (!login || !password) throw badRequest('Введите почту и пароль');
 
+    // ключ «адрес + логин»: перебор одного аккаунта виден, а чужие опечатки
+    // не запирают дверь тому, кто набрал верно
+    const ключ = `${req.ip}|${String(login).toLowerCase()}`;
+    неудачныеВходы.проверить(ключ);
+
     const user = users.findByLogin(login);
     if (!user || !bcrypt.compareSync(password, user.password_hash)) {
+      неудачныеВходы.неудача(ключ);
       throw unauthorized('Неверная почта или пароль');
     }
+    неудачныеВходы.успех(ключ);
     // Тот же отказ, что и на запросах по живой сессии (middleware/auth):
     // верный пароль не должен открывать дверь, которую закрыл администратор
     if (user.blocked_at) {
@@ -241,7 +264,7 @@ module.exports = function authRouter({ db, config, mailer, auth }) {
   });
 
   // ── POST /forgot ──────────────────────────────────────────────────
-  router.post('/forgot', limiter, wrap(async (req, res) => {
+  router.post('/forgot', письма, wrap(async (req, res) => {
     const email = v.email(req.body.email);
     const user = users.findByEmail(email);
     // Отвечаем одинаково независимо от того, есть ли аккаунт.
@@ -253,7 +276,7 @@ module.exports = function authRouter({ db, config, mailer, auth }) {
   }));
 
   // ── POST /reset ───────────────────────────────────────────────────
-  router.post('/reset', limiter, wrap(async (req, res) => {
+  router.post('/reset', сброс, wrap(async (req, res) => {
     const password = v.password(req.body.password);
     const row = consumeEmailToken(req.body.token, 'reset');
     users.setPassword(row.user_id, bcrypt.hashSync(password, 10));

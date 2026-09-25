@@ -172,10 +172,28 @@ function notifyGroup() {
     iconName: 'bell', accentIcon: true,
     value: perm === 'granted' ? 'вкл' : '',
     onclick: async () => {
-      if (perm === 'granted') { await push.sendTest(); toast('Отправил проверочное'); return; }
-      const res = await push.enable();
-      if (res.ok) { toast('Уведомления включены'); render(); }
-      else toast('Не получилось включить уведомления', 'error');
+      /*
+       * Причину называем словами.
+       *
+       * «Не получилось включить уведомления» на всё подряд не говорит ничего:
+       * в браузере запрещено, сервер без ключей, устройство не умеет — это
+       * разные вещи и разные действия человека. Плюс `push.enable()` умеет
+       * бросать (другой ключ подписки), и без `try` отказ оставался
+       * необработанным: на экране не появлялось вообще ничего.
+       */
+      try {
+        if (perm === 'granted') { await push.sendTest(); toast('Отправил проверочное'); return; }
+        const res = await push.enable();
+        if (res.ok) { toast('Уведомления включены'); render(); return; }
+        const почему = {
+          UNSUPPORTED: 'Этот браузер не умеет уведомления',
+          SERVER_DISABLED: 'На сервере уведомления не настроены',
+          DENIED: 'Уведомления запрещены в настройках браузера',
+        };
+        toast(почему[res.reason] ?? 'Не получилось включить уведомления', 'error');
+      } catch (e) {
+        toast(e?.message || 'Не получилось включить уведомления', 'error');
+      }
     },
   }));
 
@@ -183,7 +201,12 @@ function notifyGroup() {
     add(box, linkRow('Будильник', {
       hint: 'разрешения и проверка на этом телефоне',
       iconName: 'alarm-fill', accentIcon: true,
-      onclick: () => { location.href = '/settings.html#alarm'; },
+      /*
+       * Ведёт в веб-версию, где и живут разрешения и проверка будильника.
+       * Раньше здесь был адрес этой же страницы с «#alarm», который никто не
+       * читает: человек нажимал и оставался там же.
+       */
+      onclick: () => { location.href = '/web.html#alarm'; },
     }));
   }
   return group('уведомления', box);
