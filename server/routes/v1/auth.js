@@ -5,6 +5,8 @@ const v = require('../../lib/validate');
 const { hashToken, randomHex } = require('../../lib/secrets');
 const { usersRepo, publicUser } = require('../../repos/users');
 const { devicesRepo } = require('../../repos/devices');
+const { tokensRepo } = require('../../repos/tokens');
+const { sessionsRepo } = require('../../repos/sessions');
 const { invitesRepo } = require('../../repos/invites');
 const { appSettingsRepo } = require('../../repos/appSettings');
 const { panelSettings } = require('../../repos/panelSettings');
@@ -20,6 +22,8 @@ module.exports = function authRouter({ db, config, mailer, auth }) {
   const router = express.Router();
   const users = usersRepo(db);
   const devices = devicesRepo(db);
+  const tokens = tokensRepo(db);
+  const sessions = sessionsRepo(db);
   const invites = invitesRepo(db);
   const panel = panelSettings(appSettingsRepo(db));
 
@@ -135,14 +139,23 @@ module.exports = function authRouter({ db, config, mailer, auth }) {
   }));
 
   // ── GET /verify ───────────────────────────────────────────────────
+  /**
+   * Подтверждение почты только подтверждает почту — входа не даёт.
+   *
+   * Раньше переход по ссылке клал номер её владельца в ту сессию, которая
+   * открыла ссылку. Нападающему хватало прислать жертве свою ссылку
+   * подтверждения: жертва открывала её в своём браузере и незаметно
+   * оказывалась в чужом аккаунте — всё, что она потом писала, ложилось
+   * нападающему и читалось им. Поэтому здесь нельзя трогать сессию: ни
+   * чужую, ни пустую. Человек подтверждает адрес и входит паролем.
+   */
   router.get('/verify', wrap(async (req, res) => {
     const row = consumeEmailToken(req.query.token, 'verify');
     users.setEmailVerified(row.user_id);
-    req.session.userId = row.user_id;
     if (req.get('accept')?.includes('application/json')) {
       return res.json({ success: true });
     }
-    res.redirect('/app.html?verified=1');
+    res.redirect('/login.html?verified=1');
   }));
 
   // ── POST /resend-verification ─────────────────────────────────────
@@ -245,6 +258,14 @@ module.exports = function authRouter({ db, config, mailer, auth }) {
     const row = consumeEmailToken(req.body.token, 'reset');
     users.setPassword(row.user_id, bcrypt.hashSync(password, 10));
     users.setEmailVerified(row.user_id);
+    /*
+     * «Забыл пароль» — это путь возврата аккаунта, а не смена пароля из
+     * настроек: сюда приходят и когда доступ уже увели. Поэтому обрываем
+     * всё выданное раньше — сессии, устройства и токены интеграций.
+     */
+    sessions.revokeAllForUser(row.user_id);
+    devices.revokeAll(row.user_id);
+    tokens.revokeAll(row.user_id);
     res.json({ success: true });
   }));
 
@@ -270,12 +291,43 @@ module.exports = function authRouter({ db, config, mailer, auth }) {
     }
 
     users.setPassword(user.id, bcrypt.hashSync(next, 10));
-    res.json({ success: true });
+
+    /*
+     * Пароль сменили — прежние входы закончились.
+     *
+     * Человек меняет пароль именно тогда, когда думает, что доступ есть у
+     * кого-то ещё: украли телефон, осталась открытая вкладка. Пока сессии и
+     * токены устройств жили дальше, смена пароля ничего не отбирала —
+     * чужое устройство входит по своему токену, а не по паролю.
+     *
+     * Свою сессию оставляем: выкидывать человека из вкладки, где он только
+     * что сменил пароль, — это не защита, а поломка.
+     *
+     * Токены интеграций живут дальше: их выдают руками и осознанно, а
+     * тихо оборвать чужие связки при каждой смене пароля хуже, чем
+     * оставить. Отзыв всего — в /reset, там для этого есть повод.
+     */
+    const закрыто = sessions.revokeAllForUser(user.id, req.sessionID);
+    const отозвано = devices.revokeAll(user.id);
+    res.json({ success: true, revokedSessions: закрыто, revokedDevices: отозвано });
   }));
 
-  // ── POST /bind-email — для мигрированных аккаунтов без почты ──────
-  router.post('/bind-email', auth.requireAuth, wrap(async (req, res) => {
+  /**
+   * POST /bind-email — для мигрированных аккаунтов без почты.
+   *
+   * Только из веб-сессии: токен интеграции этот путь не открывает. Смена
+   * адреса — это захват аккаунта в один шаг (следом «забыл пароль» уходит
+   * уже на новый адрес), а роутер входа монтируется раньше общей проверки
+   * прав, так что охрана нужна здесь.
+   *
+   * Уже привязанный адрес не меняем: менять почту продукт не предлагает, и
+   * незачем оставлять для этого чёрный ход.
+   */
+  router.post('/bind-email', auth.requireAuth, auth.requireSession, wrap(async (req, res) => {
     const email = v.email(req.body.email);
+    if (req.user.email) {
+      throw badRequest('К аккаунту уже привязана почта');
+    }
     const existing = users.findByEmail(email);
     if (existing && existing.id !== req.user.id) {
       throw badRequest('Этот адрес уже занят');

@@ -97,6 +97,18 @@ function devicesRepo(db) {
       if (r.changes === 0) throw notFound('Устройство не найдено');
     },
 
+    /**
+     * Отзывает все устройства человека. Нужно при смене пароля: телефон
+     * входит по токену, а не по паролю, — без этого украденное устройство
+     * остаётся в аккаунте, сколько бы раз пароль ни меняли.
+     * @returns {number} сколько устройств отозвано
+     */
+    revokeAll(userId) {
+      return db.prepare(
+        "UPDATE devices SET revoked_at = datetime('now') WHERE user_id = ? AND revoked_at IS NULL"
+      ).run(userId).changes;
+    },
+
     /** Возвращает { userId, deviceId } или null. Устройство всегда имеет права на запись. */
     authenticate(raw, ip) {
       const parsed = parseToken(raw);

@@ -46,6 +46,14 @@
         <input type="url" id="server" placeholder="https://newday.example.com" autocomplete="url">
         <p class="form-hint">Полный адрес с https:// — тот, где стоит ваш NewDay</p>
       </div>
+      <!--
+        Подтверждение почты больше не впускает само (ссылку из письма могли
+        подсунуть чужую), поэтому человек приходит сюда и должен понимать,
+        что письмо сработало и осталось только войти.
+      -->
+      <div id="verified-msg" class="form-hint" style="display:none">
+        Почта подтверждена — войдите паролем.
+      </div>
       <div id="error-msg" class="form-error" style="display:none"></div>
       <button type="submit" class="btn btn-primary btn-block">Войти</button>
     </form>
@@ -60,6 +68,12 @@
     -->
     <p class="auth-footer" id="get-app"><a href="/install.html">Приложение для Android</a></p>
   </div>
+
+  <script>
+    if (new URLSearchParams(location.search).get('verified') === '1') {
+      document.getElementById('verified-msg').style.display = '';
+    }
+  </script>
 
   <script type="module">
     /*

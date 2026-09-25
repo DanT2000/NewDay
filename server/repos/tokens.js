@@ -41,6 +41,19 @@ function tokensRepo(db) {
       if (r.changes === 0) throw notFound('Токен не найден');
     },
 
+    /**
+     * Отзывает все токены человека — при восстановлении доступа по письму.
+     * Токен интеграции переживает смену пароля нарочно (иначе каждая смена
+     * ломает чужие связки), но «забыл пароль» — это ровно тот случай, когда
+     * аккаунт могли уже увести, и всё выданное раньше должно умереть.
+     * @returns {number} сколько токенов отозвано
+     */
+    revokeAll(userId) {
+      return db.prepare(
+        "UPDATE api_tokens SET revoked_at = datetime('now') WHERE user_id = ? AND revoked_at IS NULL"
+      ).run(userId).changes;
+    },
+
     /** Возвращает { userId, scope, tokenId } или null. */
     authenticate(raw) {
       const parsed = parseToken(raw);

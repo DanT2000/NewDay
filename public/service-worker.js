@@ -6,21 +6,24 @@
  * сказать, что связи нет.
  */
 
-const VERSION = 'newday-44e99e148b53';
+const VERSION = 'newday-5c639768c31c';
 const SHELL = [
   // Веб-версия: с неё начинается браузер, и офлайн она должна открываться
   '/web.html', '/css/web.css',
   '/js/web/app.js', '/js/web/store.js', '/js/web/adapt.js', '/js/web/data.js', '/js/web/sheet.js',
   // офлайн-правки: наложение, описание запроса и сама очередь
   '/js/web/apply.js', '/js/web/ops.js', '/js/outbox.js',
-  '/now.html', '/app.html', '/habits.html', '/stats.html', '/settings.html',
-  '/login.html', '/register.html', '/index.html', '/install.html',
+  '/now.html', '/app.html', '/habits.html', '/stats.html', '/settings.html', '/notes.html',
+  '/login.html', '/register.html', '/reset.html', '/index.html', '/install.html',
   '/css/fonts.css', '/css/tokens.css', '/css/base.css', '/css/components.css',
   '/css/shell.css', '/css/print.css',
+  // стили входа, широкого экрана и справки: без них страница открывается голой
+  '/css/auth.css', '/css/desktop.css', '/css/ref.css',
   // Шрифт вшит в проект: без него интерфейс поедет системным
   '/fonts/inter-cyrillic-71d5ee93.woff2', '/fonts/inter-latin-3100e775.woff2',
   '/js/boot-theme.js', '/js/shell.js', '/js/vendor/icons.js',
   '/js/now.js', '/js/main.js', '/js/habits.js', '/js/stats.js', '/js/settings.js',
+  '/js/notes.js', '/js/sidebar.js', '/js/settings-ref.js', '/js/assistant.js',
   '/js/api.js', '/js/store.js', '/js/dates.js', '/js/dom.js',
   '/js/theme.js', '/js/toast.js', '/js/emoji.js', '/js/emoji-data.json', '/js/qr.js',
   '/js/update.js', '/js/install-banner.js', '/js/native.js', '/js/diag.js',
@@ -31,7 +34,9 @@ const SHELL = [
   '/js/views/lists.js', '/js/views/progress.js', '/js/views/habits-today.js',
   '/js/views/datestrip.js', '/js/views/print.js',
   '/manifest.webmanifest',
-  '/icons/favicon.png', '/icons/logo-256.png', '/icons/icon-192.png', '/icons/icon-512.png',
+  '/icons/favicon.png', '/icons/favicon-16.png', '/icons/apple-touch-icon.png',
+  '/icons/logo-256.png', '/icons/logo-light-256.png', '/icons/logo-dark-256.png',
+  '/icons/icon-192.png', '/icons/icon-512.png',
   // знак для тёмной и светлой темы: без него в офлайне место логотипа пустует
   '/icons/logo-dark-64.png', '/icons/logo-light-64.png',
 ];
