@@ -516,3 +516,42 @@ test('подошедшее напоминание не удаляется при
     assert.strictEqual(осталось, 1, 'напоминание должно уйти человеку, а не исчезнуть');
   } finally { await s.close(); }
 });
+
+test('еда, привязанная к тихому блоку, напоминает сама', async () => {
+  const s = await loggedIn(withPush());
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/push/subscribe', { subscription: SUB });
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    /*
+     * «Добавить в расписание» у приёма пищи ставит блок; если у блока
+     * напоминание выключено, напомнить должна сама еда — иначе колокольчик у
+     * неё горит, обещая то, чего не будет.
+     */
+    const блок = await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/schedule`,
+      { time: '13:00-14:00', title: 'Обед', kind: 'meal', alarmMode: 'none' });
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/meals`,
+      { title: 'Обед', slot: 'lunch', timeMin: 13 * 60, endMin: 14 * 60,
+        remindBefore: [15], scheduleItemId: блок.id });
+
+    const status = await getJson(s.url, s.cookie, '/api/v1/push/status');
+    assert.strictEqual(status.pending.length, 1,
+      `ждали напоминание о еде, в очереди ${status.pending.length}`);
+    assert.match(status.pending[0].payload.body, /Обед/);
+  } finally { await s.close(); }
+});
+
+test('еда за говорящим блоком второго напоминания не добавляет', async () => {
+  const s = await loggedIn(withPush());
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/push/subscribe', { subscription: SUB });
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    const блок = await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/schedule`,
+      { time: '13:00-14:00', title: 'Обед', kind: 'meal', alarmMode: 'notify', remindBeforeMin: 15 });
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/meals`,
+      { title: 'Обед', slot: 'lunch', timeMin: 13 * 60, endMin: 14 * 60,
+        remindBefore: [15], scheduleItemId: блок.id });
+
+    const status = await getJson(s.url, s.cookie, '/api/v1/push/status');
+    assert.strictEqual(status.pending.length, 1, 'одно напоминание, а не два');
+  } finally { await s.close(); }
+});

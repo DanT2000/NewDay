@@ -248,25 +248,39 @@ function repaint(selector, build) {
   el.replaceWith(build());
 }
 
-const setIn = patch => {
-  Object.assign(state, typeof patch === 'function' ? patch(state) : patch);
-  const body = $('.wmodal-body');
-  if (!body || !state.modal) { render(); return; }
-
+/**
+ * Выполнить перерисовку, вернув курсор туда, где он был.
+ *
+ * Полная перерисовка забирает фокус вместе со старыми узлами: человек набирает
+ * название в шторке, в это время уезжает правка (или приходит ответ, или
+ * вернулись в приложение) — и на середине слова курсор выпадает из поля, а на
+ * телефоне закрывается клавиатура. Текст не теряется, он в состоянии, но набор
+ * обрывается. Поэтому запоминаем поле и каретку до перерисовки и возвращаем
+ * после — по имени поля, а не по узлу: узла уже не будет.
+ */
+function сФокусом(перерисовать) {
   const live = document.activeElement;
-  const name = live && body.contains(live) ? live.getAttribute('name') : null;
+  const внутри = live && live.closest?.('.wmodal-body');
+  const name = внутри ? live.getAttribute('name') : null;
   const caret = name && live.selectionStart !== undefined
     ? [live.selectionStart, live.selectionEnd] : null;
 
-  replace(body, ...modalBody());
+  перерисовать();
 
   if (!name) return;
-  const again = body.querySelector(`[name="${name}"]`);
-  if (!again) return;
+  const again = document.querySelector(`.wmodal-body [name="${name}"]`);
+  if (!again || again === document.activeElement) return;
   again.focus();
   if (caret && again.setSelectionRange) {
     try { again.setSelectionRange(caret[0], caret[1]); } catch { /* не текстовое поле */ }
   }
+}
+
+const setIn = patch => {
+  Object.assign(state, typeof patch === 'function' ? patch(state) : patch);
+  const body = $('.wmodal-body');
+  if (!body || !state.modal) { render(); return; }
+  сФокусом(() => replace(body, ...modalBody()));
 };
 
 /*
@@ -489,13 +503,26 @@ function toggle(r, kind) {
   r.done = next;
   if (kind === 'habit') r.status = next ? 'done' : null;
   render();
-  send(r.raw ?? r, next).then(() => reload()).catch(e => {
+  /*
+   * Перечитывать день здесь не надо.
+   *
+   * Правка уходит в очередь и применяется на экране сразу, а день сама
+   * очередь перечитывает, когда правка доехала (см. `послеОтправки` в
+   * store.js). Стоявший тут `reload()` срабатывал в тот же миг, когда правка
+   * только легла в очередь, — то есть тянул объявление, день, повторы и
+   * заметки до того, как на сервере что-то изменилось. Одна галочка стоила
+   * шести запросов, десять подряд — шестидесяти.
+   */
+  send(r.raw ?? r, next).catch(e => {
     r.done = !next;
     fail(e);
   });
 }
 
 const bellOf = mode => ALARM.find(a => a.k === mode) ?? ALARM[0];
+
+/** Пауза перед сохранением подписи «где наклеен»: набор не должен уезжать по букве. */
+let держимПодпись = null;
 
 /** Есть ли в дне дела — по выборке за период, если она загружена. */
 const hasPlans = date => {
@@ -600,7 +627,16 @@ async function reload() {
    */
   const DAY_SCREENS = ['today', 'tasks', 'habits'];
   const needsDay = DAY_SCREENS.includes(state.screen);
-  const needsRange = state.screen === 'plan';
+  /*
+   * Период нужен не только «Расписанию».
+   *
+   * Точки «в этом дне что-то есть» на полоске недели считаются по периоду, а
+   * грузился он только на экране расписания: человек открывал приложение —
+   * полоска пустая, хотя на завтра есть дела; заглядывал в «Расписание»,
+   * возвращался — точки появлялись. После перезагрузки снова пусто. Для
+   * полоски хватает недели, это один запрос на семь коротких сводок.
+   */
+  const needsRange = state.screen === 'plan' || state.screen === 'today';
   try {
     const jobs = [];
     /*
@@ -612,7 +648,9 @@ async function reload() {
      */
     loadAnnounce();
     if (needsDay || state.modal) jobs.push(data.loadDay(state.date));
-    if (needsRange) jobs.push(data.loadRange(state.date, state.view));
+    if (needsRange) {
+      jobs.push(data.loadRange(state.date, state.screen === 'plan' ? state.view : 'week'));
+    }
     // Правила повторов: по ним редактор напоминания понимает, повтор это или разовое
     if (needsDay || needsRange) jobs.push(data.loadSeries().catch(() => []));
     // Заметки нужны «Сейчас» (правая колонка дня) и самим «Заметкам». На
@@ -845,7 +883,7 @@ function sideBar() {
     onclick: () => {
       const next = dark() ? 'light' : 'dark';
       set({ theme: next });
-      api.saveSettings({ theme: next }).catch(fail);
+      data.saveProfile({ theme: next }).catch(fail);
     },
   });
   add(themeBtn, ico(dark() ? 'moon' : 'sun', '16px'), h('span', { text: dark() ? 'Тёмная тема' : 'Светлая тема' }));
@@ -1420,8 +1458,13 @@ function dayNotes() {
   const mine = NOTES.filter(n => n.on);
 
   if (!mine.length) {
-    const empty = h('div.wdaynote', {
-      onclick: () => openNote(null),
+    /*
+     * Кнопкой, а не div с onclick: до карточки на div не добраться с
+     * клавиатуры, а экранный диктор не назовёт её нажимаемой. Рядом всё
+     * остальное — кнопки.
+     */
+    const empty = h('button.wdaynote', {
+      type: 'button', onclick: () => openNote(null),
     });
     add(empty,
       h('div.wdaynote-title', { text: 'Заметок нет' }),
@@ -1430,8 +1473,8 @@ function dayNotes() {
   }
 
   add(wrap, ...mine.map(n => {
-    const card = h('div.wdaynote', {
-      onclick: () => openNote(n),
+    const card = h('button.wdaynote', {
+      type: 'button', onclick: () => openNote(n),
     });
     add(card,
       h('div.wdaynote-title', { text: n.title }),
@@ -2694,7 +2737,7 @@ function lookPanel() {
   add(themeSeg, ...[['system', 'Система'], ['light', 'Светлая'], ['dark', 'Тёмная']].map(([k, label]) =>
     h('button', {
       type: 'button', text: label, class: state.theme === k ? 'on' : '',
-      onclick: () => { state.theme = k; render(); api.saveSettings({ theme: k }).catch(fail); },
+      onclick: () => { state.theme = k; render(); data.saveProfile({ theme: k }).catch(fail); },
     })));
 
   const scaleSeg = h('div.wsegline');
@@ -3333,10 +3376,24 @@ function qrRows(s, save) {
     h('span.wfield-cap', { text: 'Где наклеен' }),
     h('input.winput', {
       type: 'text', value: s.alarmQrLabel ?? '', placeholder: 'на чайнике', maxLength: 60,
-      onchange: e => {
+      name: 'alarmQrLabel',
+      /*
+       * Сохраняем по вводу, а не только по уходу из поля.
+       *
+       * На `onchange` набранное пропадало при любой полной перерисовке —
+       * уехала правка, вернулись в приложение, повернули телефон: поле
+       * пересобиралось из настроек и возвращало прежнее значение. На телефоне,
+       * где из поля уходят не «табом», а сворачиванием клавиатуры, это
+       * случалось постоянно.
+       */
+      oninput: e => {
         const label = e.target.value.trim();
-        native.setCodeLabel(label).catch(() => {});
-        save({ alarmQrLabel: label });
+        s.alarmQrLabel = label;   // чтобы перерисовка не вернула прежнее
+        clearTimeout(держимПодпись);
+        держимПодпись = setTimeout(() => {
+          native.setCodeLabel(label).catch(() => {});
+          save({ alarmQrLabel: label });
+        }, 600);
       },
     })));
 
@@ -4765,9 +4822,16 @@ function durPicker(rs, dur, endKey = 'rowEnd') {
       h('input.wnum', {
         name: `${endKey}Dur`, value: String(dur), inputMode: 'numeric',
         oninput: e => {
-          const n = Number(String(e.target.value).replace(/\D+/g, ''));
-          if (!n) return;
-          state[endKey] = Math.min(1439, rs + Math.max(5, n));
+          /*
+           * Прижимаем к минимуму и возвращаем это в поле: набрал «4» — плитка
+           * писала «5 мин», а в поле оставалась четвёрка. Два числа про одно
+           * читаются как ошибка приложения.
+           */
+          const цифры = String(e.target.value).replace(/\D+/g, '');
+          if (!цифры) return;
+          const n = Math.min(1439 - rs, Math.max(5, Number(цифры)));
+          if (String(n) !== цифры) e.target.value = String(n);
+          state[endKey] = Math.min(1439, rs + n);
           paintTiles(rs, state[endKey]);
         },
       }),
@@ -7372,7 +7436,8 @@ addEventListener('offline', render);
 let таймерСвязи = null;
 data.подписаться(() => {
   fill();
-  render();
+  // курсор возвращаем: правка могла уехать, пока человек набирает в шторке
+  сФокусом(render);
   clearTimeout(таймерСвязи);
   const с = data.старейшаяПравка();
   if (с) таймерСвязи = setTimeout(render, Math.max(0, с + ЗАВИСЛА_МС - Date.now()) + 50);

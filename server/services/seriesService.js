@@ -157,8 +157,25 @@ function seriesService(db) {
     try { payload = JSON.parse(rule.payload_json); } catch { payload = {}; }
     const rows = Array.isArray(payload.rows) ? payload.rows : [payload];
 
+    /*
+     * Второе применение не делает второй копии.
+     *
+     * Применить шаблон дважды — обычное дело: человек нажал, не понял,
+     * появилось ли, нажал ещё раз; или день уже заполнился сам, а потом
+     * нажали кнопку. Раньше каждый заход добавлял все строки заново, и в дне
+     * оказывалось два подъёма, два обеда и два отбоя. Сверяем по началу и
+     * названию — этим строка шаблона и опознаётся, — и дописываем только то,
+     * чего в дне ещё нет: так добавленная в шаблон строка доезжает, а
+     * существующие не плодятся.
+     */
+    const уже = new Set(schedule.list(userId, date)
+      .filter(r => r.series_id === seriesId)
+      .map(r => `${r.start_min}|${r.title}`));
+    const новые = rows.filter(r => !уже.has(`${r.startMin ?? 0}|${r.title ?? ''}`));
+    if (!новые.length) return 0;
+
     const tx = db.transaction(() => {
-      rows.forEach((r, i) => schedule.create(userId, date, {
+      новые.forEach((r, i) => schedule.create(userId, date, {
         startMin: r.startMin ?? 0, endMin: r.endMin ?? null,
         title: r.title ?? '', note: r.note ?? '',
         kind: r.kind ?? 'normal', alarmMode: r.alarmMode ?? 'none',
@@ -185,7 +202,7 @@ function seriesService(db) {
       }));
     });
     tx();
-    return rows.length;
+    return новые.length;
   }
 
   return { materializeDay, applyTemplate, matchesDate };

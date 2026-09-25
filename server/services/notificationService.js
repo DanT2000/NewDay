@@ -203,8 +203,17 @@ function notificationService(db, { push, now = () => Date.now() } = {}) {
     for (const meal of meals.list(user.id, date)) {
       if (meal.time_min === null || meal.time_min === undefined) continue;
       if (meal.done === 1) { skipped += 1; continue; }
-      // блок в расписании напомнит сам — второе напоминание об одном и том же лишнее
-      if (meal.schedule_item_id) continue;
+      /*
+       * Блок в расписании напомнит сам — второе напоминание об одном и том же
+       * лишнее. Но только если он действительно напоминает: у блока без
+       * будильника («не напоминать») напоминания нет, и приём пищи, к нему
+       * привязанный, оставался вообще без него — колокольчик у еды горел,
+       * обещая то, чего не будет.
+       */
+      if (meal.schedule_item_id) {
+        const блок = rows.find(r => r.id === meal.schedule_item_id);
+        if (блок && блок.alarm_mode !== 'none') continue;
+      }
 
       const leads = parseLeads(meal.remind_before_json);
       if (!leads) continue;

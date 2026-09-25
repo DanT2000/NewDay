@@ -65,3 +65,24 @@ test('временный id отличается от настоящего', asy
   assert.strictEqual(временный(17), false);
   assert.strictEqual(временный(null), false);
 });
+
+test('настройки: поля человека и свободные переключатели уезжают вместе', async () => {
+  const { запрос } = await import('../../public/js/web/ops.js');
+  const профиль = запрос({
+    вид: 'настройки', дата: '2026-09-25', цель: null, данные: { профиль: { theme: 'dark' } },
+  });
+  assert.strictEqual(профиль.путь, '/settings');
+  assert.deepStrictEqual(профиль.тело, { theme: 'dark' },
+    'тема — поле человека, а не запись в мешке настроек');
+
+  const переключатель = запрос({
+    вид: 'настройки', дата: '2026-09-25', цель: null, данные: { поля: { accent: 'green' } },
+  });
+  assert.deepStrictEqual(переключатель.тело, { settings: { accent: 'green' } });
+
+  const оба = запрос({
+    вид: 'настройки', дата: '2026-09-25', цель: null,
+    данные: { профиль: { weekStart: 7 }, поля: { accent: 'red' } },
+  });
+  assert.deepStrictEqual(оба.тело, { weekStart: 7, settings: { accent: 'red' } });
+});
