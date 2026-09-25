@@ -5,16 +5,34 @@ const { mealsRepo } = require('../repos/meals');
 const { sportRepo } = require('../repos/sport');
 const { todayFor, localDateOf, addDays, rangeDates, weekdayInMask } = require('../lib/dates');
 
+/*
+ * Граница «с сегодня» для выключенной привычки без даты архива. Пояс здесь не
+ * важен: речь о том, считать ли пропуски вперёд, и сутки туда-сюда на это не
+ * влияют — а дату архивации, когда она есть, мы знаем точно.
+ */
+const сегодняПоUTC = () => new Date().toISOString().slice(0, 10);
+
 /**
  * Привычка «активна» в дату, если она не в архиве, дата не раньше создания,
  * не раньше старта челленджа и попадает в её маску дней недели.
  * Всё остальное — не считается ни выполнением, ни пропуском.
  */
 function habitActiveOn(habit, date) {
-  if (habit.is_active !== 1) return false;
   // архив считается с даты архивации, а не задним числом: в днях, когда
   // привычка ещё жила, её история остаётся правдой
   if (!habitExistsOn(habit, date)) return false;
+  /*
+   * Выключенная привычка без даты архива — «не активна с сегодня», а не
+   * «никогда не была активна».
+   *
+   * Раньше здесь стояло просто `is_active !== 1`, и оно отвечало «не активна»
+   * за все дни, включая прошлые. Архивация ставит и дату, и этот флаг, так
+   * что проверка флага съедала собственную же проверку даты: убрал привычку в
+   * архив — и из сводки исчезли месяцы её отметок, «лучшая серия» обнулилась,
+   * проценты за прошлые недели пересчитались так, будто привычки не было
+   * вовсе. Человек не удалял её, он убрал её с глаз.
+   */
+  if (habit.is_active !== 1 && !habit.archived_at && date >= сегодняПоUTC()) return false;
   /*
    * У цели дни недели — план, а не обязательство: «бегать по понедельникам,
    * средам и пятницам» не значит, что суббота не считается. Пропустил
@@ -268,6 +286,12 @@ function statsService(db, opts = {}) {
       kind,
       target,
       total,
+      /*
+       * Дата, с которой привычка в архиве, — в сводке за прошлый период она
+       * есть, и экран должен уметь сказать «её уже нет», а не показывать её
+       * наравне с живыми.
+       */
+      archived_at: habit.archived_at ?? null,
       currentStreak: streak,
       bestStreak: bestStreak(habit, logsMap, rangeFrom, rangeTo),
       done, missed, skipped,
@@ -277,6 +301,29 @@ function statsService(db, opts = {}) {
       week,
       last14,
     };
+  }
+
+  /**
+   * Привычки дня без пересчёта всей истории.
+   *
+   * Прогрессу дня нужно ровно три вещи про каждую привычку: вид, обещана ли
+   * она на этот день и что в ней отмечено. `habitsForDate` даёт это вместе с
+   * полоской недели, текущей и лучшей серией, а для них перечитывает всю
+   * жизнь привычки от самого создания. В сводке за месяц прогресс считается
+   * тридцать раз — и выходило тридцать полных проходов по истории на каждую
+   * привычку: полсекунды ответа на пустяковую цифру.
+   */
+  function habitRowsForProgress(user, date) {
+    const list = habits.list(user.id, { includeArchived: true })
+      .map(h => localized(h, user.timezone))
+      .filter(h => habitExistsOn(h, date));
+    const byId = {};
+    for (const l of habits.logsForDate(user.id, date)) byId[l.habit_id] = l;
+    return list.map(h => ({
+      kind: kindOf(h),
+      activeToday: habitActiveOn(h, date),
+      status: byId[h.id]?.status ?? null,
+    }));
   }
 
   /** Привычки на конкретный день — то, что показывается в блоке «Привычки сегодня». */
@@ -420,7 +467,7 @@ function statsService(db, opts = {}) {
      * процент в дни, на которые человек ничего и не обещал: у цели пропуск
      * разрешён по самому её смыслу.
      */
-    const habitRows = habitsForDate(user, date)
+    const habitRows = habitRowsForProgress(user, date)
       .filter(h => h.activeToday && h.status !== 'skipped')
       .filter(h => h.kind !== 'goal' || h.status === 'done');
 
@@ -469,7 +516,25 @@ function statsService(db, opts = {}) {
       progress: dayProgress(user, d).total,
     }));
 
-    const habitList = habits.list(user.id).map(h => habitStats(user, h.id, rangeFrom, rangeTo));
+    /*
+     * Архивные привычки в сводке за прошлый период нужны.
+     *
+     * Список без них означал, что сентябрь, открытый в декабре, показывает не
+     * тот сентябрь: привычка, которую человек вёл весь месяц и убрал в
+     * октябре, исчезала из него целиком вместе со своими процентами. Берём те,
+     * что жили хотя бы часть периода; у каждой в ответе есть `archived_at`,
+     * и экран может сказать, что её уже нет.
+     */
+    const жилаВПериоде = (h) => {
+      const создана = String(h.created_at || '').slice(0, 10);
+      const убрана = String(h.archived_at || '').slice(0, 10);
+      if (создана && создана > rangeTo) return false;
+      if (убрана && убрана <= rangeFrom) return false;
+      return true;
+    };
+    const habitList = habits.list(user.id, { includeArchived: true })
+      .filter(жилаВПериоде)
+      .map(h => habitStats(user, h.id, rangeFrom, rangeTo));
 
     /*
      * В «лучшую» и «слабую» попадают только серии.

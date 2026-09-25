@@ -109,7 +109,7 @@ function notificationService(db, { push, now = () => Date.now() } = {}) {
     const prefix = `sched:${date}:`;
 
     if (!cfg.notifyEnabled) {
-      queue.dropQueuedExcept(user.id, prefix, []);
+      queue.dropQueuedExcept(user.id, prefix, [], now());
       return { planned: 0, skipped: 0, reason: 'NOTIFICATIONS_OFF' };
     }
 
@@ -157,8 +157,17 @@ function notificationService(db, { push, now = () => Date.now() } = {}) {
           : startsAt - before * 60000;
         if (fireAt <= now()) { skipped += 1; continue; }
 
-        // тихие часы проверяем по местному времени самого напоминания
-        if (inQuietHours(minutesInZone(fireAt, user.timezone), cfg.quietFrom, cfg.quietTo)) {
+        /*
+         * Тихие часы глушат уведомления, но не будильник.
+         *
+         * Проверяем по местному времени самого напоминания — и только для
+         * вида «уведомление». Будильник в тишину попадает всегда: тихие часы
+         * ставят на ночь, а подъём и есть ночь по этим меркам. Раньше
+         * «не беспокоить с 23:00 до 07:00» молча снимало подъём в 06:30 —
+         * человек включал тишину, чтобы не дёргали, и терял будильник.
+         */
+        if (row.alarm_mode !== 'alarm'
+            && inQuietHours(minutesInZone(fireAt, user.timezone), cfg.quietFrom, cfg.quietTo)) {
           skipped += 1;
           continue;
         }
@@ -237,7 +246,7 @@ function notificationService(db, { push, now = () => Date.now() } = {}) {
       }
     }
 
-    queue.dropQueuedExcept(user.id, prefix, keep);
+    queue.dropQueuedExcept(user.id, prefix, keep, now());
     return { planned: keep.length, skipped };
   }
 
@@ -260,7 +269,13 @@ function notificationService(db, { push, now = () => Date.now() } = {}) {
   }
 
   function planAll() {
-    const all = db.prepare('SELECT * FROM users WHERE email_verified = 1').all();
+    /*
+     * Заблокированным не планируем. Блокировка — первая ступень удаления
+     * аккаунта: доступ закрыт, а уведомления продолжали приходить — человек
+     * получал напоминания о делах в аккаунте, в который его не впускают.
+     */
+    const all = db.prepare(
+      'SELECT * FROM users WHERE email_verified = 1 AND blocked_at IS NULL').all();
     for (const user of all) {
       try { planUpcoming(user); }
       catch (e) { console.error('[newday] не удалось спланировать уведомления:', user.id, e.message); }

@@ -64,6 +64,20 @@ const строка = (поля) => ({
 
 const пустойДень = { schedule: [], tasks: { work: [], home: [] }, meals: [], sport: [] };
 
+/**
+ * Минута внутри суток по Москве прямо сейчас.
+ *
+ * Нужна, чтобы сроки в тестах всегда оказывались в будущем: срок «за день» у
+ * строки на завтра приходится на сегодня в то же время, и с числом,
+ * записанным в коде, тест зеленел утром и падал вечером.
+ */
+function московскаяМинута() {
+  const ч = new Intl.DateTimeFormat('ru-RU', {
+    timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(new Date()).split(':').map(Number);
+  return ч[0] * 60 + ч[1];
+}
+
 test('нет связи — список будильников не отправляется вовсе', async () => {
   const { native, уехало, настройки } = await телефон(() => new Error('сеть недоступна'));
   const r = await native.syncAlarms(профиль);
@@ -74,18 +88,24 @@ test('нет связи — список будильников не отпра�
 });
 
 test('один день из двух не дочитан — тоже не отправляем', async () => {
+  const сегодня = new Date().toLocaleDateString('en-CA');
   const { native, уехало } = await телефон(
-    d => (d.endsWith('-25') ? { ...пустойДень, schedule: [строка({})] } : new Error('сеть')),
+    d => (d === сегодня ? { ...пустойДень, schedule: [строка({})] } : new Error('сеть')),
   );
   await native.syncAlarms(профиль);
   assert.deepStrictEqual(уехало, [], 'иначе будильники второго дня были бы сняты');
 });
 
 test('пара сроков «за день и за час» даёт два будильника, а не ни одного', async () => {
+  // время начала — на полтора часа вперёд от текущего: тогда и «за день»
+  // (сегодня в это же время), и «за час» ещё не наступили
+  const начало = Math.min(1380, московскаяМинута() + 90);
+  const завтра = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
   const { native, уехало } = await телефон(d => ({
     ...пустойДень,
-    schedule: d.endsWith('-26')
-      ? [строка({ remind_before_json: '[1440,60]', remind_before_min: 1440 })]
+    schedule: d === завтра
+      ? [строка({ start_min: начало, end_min: начало + 60,
+        remind_before_json: '[1440,60]', remind_before_min: 1440 })]
       : [],
   }));
   await native.syncAlarms(профиль);
@@ -97,11 +117,10 @@ test('пара сроков «за день и за час» даёт два б�
 });
 
 test('«к концу» звонит по концу блока, а не за десять минут до начала', async () => {
+  const завтра = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
   const { native, уехало } = await телефон(d => ({
     ...пустойДень,
-    schedule: d.endsWith('-26')
-      ? [строка({ remind_before_json: '[-1]', remind_before_min: null })]
-      : [],
+    schedule: d === завтра ? [строка({ remind_before_json: '[-1]', remind_before_min: null })] : [],
   }));
   await native.syncAlarms(профиль);
   const [a] = уехало[0].alarms;
@@ -112,20 +131,20 @@ test('«к концу» звонит по концу блока, а не за д
 });
 
 test('«к концу» у блока без конца не ставит ничего вместо неверного времени', async () => {
+  const завтра = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
   const { native, уехало } = await телефон(d => ({
     ...пустойДень,
-    schedule: d.endsWith('-26')
-      ? [строка({ end_min: null, remind_before_json: '[-1]' })]
-      : [],
+    schedule: d === завтра ? [строка({ end_min: null, remind_before_json: '[-1]' })] : [],
   }));
   await native.syncAlarms(профиль);
   assert.strictEqual(уехало[0].alarms.length, 0);
 });
 
 test('отмеченная и выключенная строка будильника не получают', async () => {
+  const завтра = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
   const { native, уехало } = await телефон(d => ({
     ...пустойДень,
-    schedule: d.endsWith('-26')
+    schedule: d === завтра
       ? [строка({ id: 1, done: 1 }), строка({ id: 2, alarm_mode: 'none' })]
       : [],
   }));

@@ -155,11 +155,31 @@ test('/api/v1/stats отдаёт сводку по дням и привычка�
   const s = await loggedIn();
   try {
     const h = await api(s.url, s.cookie, 'POST', '/api/v1/habits', { title: 'Вода' });
-    await api(s.url, s.cookie, 'PUT', `/api/v1/habits/${h.id}/log/2026-08-03`, { status: 'done' });
-    const overview = await getJson(s.url, s.cookie, '/api/v1/stats?from=2026-08-01&to=2026-08-05');
+    await api(s.url, s.cookie, 'PUT', `/api/v1/habits/${h.id}/log/${dayFromToday(-2)}`, { status: 'done' });
+    /*
+     * Период считаем от сегодня, а не датами в коде.
+     *
+     * Раньше здесь стояли фиксированные августовские числа — те, что были
+     * «сегодня» в день написания теста. В сводку привычка попадает, только
+     * если она в этом периоде жила, и с уходом календаря вперёд такой тест
+     * начинает сторожить не то, что задумано.
+     */
+    const overview = await getJson(s.url, s.cookie,
+      `/api/v1/stats?from=${dayFromToday(-4)}&to=${today()}`);
     assert.strictEqual(overview.days.length, 5);
     assert.strictEqual(overview.habits.length, 1);
     assert.ok(overview.summary);
+  } finally { await s.close(); }
+});
+
+test('привычка, заведённая позже, не появляется в сводке за прошлый месяц', async () => {
+  const s = await loggedIn();
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/habits', { title: 'Вода' });
+    const было = await getJson(s.url, s.cookie,
+      `/api/v1/stats?from=${dayFromToday(-90)}&to=${dayFromToday(-60)}`);
+    assert.strictEqual(было.habits.length, 0,
+      'в тех днях её не было — и в сводке за них ей не место');
   } finally { await s.close(); }
 });
 

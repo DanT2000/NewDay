@@ -36,6 +36,16 @@ function pushRepo(db) {
      * dedupe_key делает планирование идемпотентным: пересчёт дня не создаёт
      * дублей, а меняет время уже запланированного уведомления.
      */
+    /**
+     * Ставит или переставляет одно уведомление.
+     *
+     * Отправленное не пересылаем — но переставить его можно, если время
+     * изменилось. Раньше стояло просто «только пока не отправлено», и
+     * получалось так: напоминание о созвоне пришло в 10:00, человек перенёс
+     * созвон на 15:00 — и второго напоминания не было вовсе, потому что ключ
+     * уже «использован». Теперь другое время означает другое событие, а тот же
+     * текст в то же время второй раз не уходит.
+     */
     upsertQueued(userId, dedupeKey, fireAtUtc, payload) {
       db.prepare(`
         INSERT INTO notification_queue (user_id, dedupe_key, fire_at_utc, payload_json)
@@ -45,14 +55,26 @@ function pushRepo(db) {
           payload_json = excluded.payload_json,
           sent_at = NULL, failed_at = NULL, attempts = 0
         WHERE notification_queue.sent_at IS NULL
+           OR notification_queue.fire_at_utc <> excluded.fire_at_utc
       `).run(userId, dedupeKey, fireAtUtc, JSON.stringify(payload));
     },
 
-    /** Убирает запланированное, чего в дне больше нет. */
-    dropQueuedExcept(userId, prefix, keepKeys) {
-      const rows = db.prepare(
-        'SELECT id, dedupe_key FROM notification_queue WHERE user_id = ? AND sent_at IS NULL AND dedupe_key LIKE ?'
-      ).all(userId, `${prefix}%`);
+    /**
+     * Убирает запланированное, чего в дне больше нет.
+     *
+     * Подошедшее по времени не трогаем. Планировщик считает прошедшее время
+     * «не подлежащим планированию» и в список «оставить» не кладёт, поэтому
+     * напоминание, которому пришёл срок между двумя прогонами планирования,
+     * удалялось за минуту до отправки — вместо того чтобы уйти человеку.
+     * Отправкой занимается deliverDue, уборкой старого — purgeOld.
+     *
+     * @param {number} now — момент, раньше которого запись считается подошедшей
+     */
+    dropQueuedExcept(userId, prefix, keepKeys, now = Date.now()) {
+      const rows = db.prepare(`
+        SELECT id, dedupe_key FROM notification_queue
+         WHERE user_id = ? AND sent_at IS NULL AND dedupe_key LIKE ? AND fire_at_utc > ?
+      `).all(userId, `${prefix}%`, now);
       const keep = new Set(keepKeys);
       const del = db.prepare('DELETE FROM notification_queue WHERE id = ?');
       for (const r of rows) if (!keep.has(r.dedupe_key)) del.run(r.id);

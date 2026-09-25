@@ -133,7 +133,14 @@ test('глобальный выключатель снимает всё запл
   } finally { await s.close(); }
 });
 
-test('тихие часы отбрасывают ночные напоминания', async () => {
+/*
+ * Тишина — про уведомления, а не про будильник.
+ *
+ * Раньше этот тест сторожил обратное: «не беспокоить с 23:00 до 07:00» снимало
+ * и подъём в 06:00. Человек включает тишину, чтобы ночью не дёргали
+ * напоминания, — и молча теряет будильник, ради которого всё это и заведено.
+ */
+test('тихие часы отбрасывают ночные уведомления, но не будильник', async () => {
   const s = await loggedIn(withPush());
   try {
     await api(s.url, s.cookie, 'POST', '/api/v1/push/subscribe', { subscription: SUB });
@@ -145,11 +152,16 @@ test('тихие часы отбрасывают ночные напоминан
     await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/schedule`,
       { time: '06:00', title: 'Подъём', alarmMode: 'alarm', remindBeforeMin: 0 });
     await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/schedule`,
+      { time: '05:30', title: 'Ночное напоминание', alarmMode: 'notify', remindBeforeMin: 0 });
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/schedule`,
       { time: '09:00', title: 'Работа', alarmMode: 'notify', remindBeforeMin: 0 });
 
     const status = await getJson(s.url, s.cookie, '/api/v1/push/status');
-    assert.strictEqual(status.pending.length, 1, 'ночное отброшено, дневное осталось');
-    assert.match(status.pending[0].payload.body, /Работа/);
+    const тексты = status.pending.map(p => p.payload.body).join(' | ');
+    assert.strictEqual(status.pending.length, 2, `осталось: ${тексты}`);
+    assert.ok(/Подъём/.test(тексты), 'будильник тишина не глушит');
+    assert.ok(/Работа/.test(тексты), 'дневное уведомление осталось');
+    assert.ok(!/Ночное напоминание/.test(тексты), 'ночное уведомление отброшено');
   } finally { await s.close(); }
 });
 
@@ -438,5 +450,69 @@ test('приём пищи нельзя привязать к чужому бло
     assert.strictEqual(patched.status, 404);
     const after = await getJson(s.url, s.cookie, '/api/v1/push/status');
     assert.strictEqual(after.pending.length, 1, 'напоминание не потерялось');
+  } finally { await s.close(); }
+});
+
+/*
+ * Уже отправленное и уже подошедшее — два места, где напоминание пропадало
+ * молча. Обе записи лежат в той же очереди, и правки дня по ним проходят.
+ */
+test('перенос созвона после отправки напоминания даёт новое напоминание', async () => {
+  const s = await loggedIn(withPush());
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/push/subscribe', { subscription: SUB });
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    const row = await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/schedule`,
+      { time: '09:00-10:00', title: 'Созвон', alarmMode: 'notify', remindBeforeMin: 15 });
+
+    // напоминание ушло: отмечаем отправленным прямо в очереди
+    s.db.prepare("UPDATE notification_queue SET sent_at = datetime('now')").run();
+
+    // созвон перенесли на 15:00 — человек ждёт, что предупредят снова
+    await api(s.url, s.cookie, 'PATCH', `/api/v1/days/${tomorrow}/schedule/${row.id}`,
+      { startMin: 15 * 60, endMin: 16 * 60 });
+
+    const status = await getJson(s.url, s.cookie, '/api/v1/push/status');
+    assert.strictEqual(status.pending.length, 1,
+      'после переноса напоминание должно встать заново');
+    // 15:00 минус 15 минут по Москве = 14:45 = 11:45 UTC
+    assert.strictEqual(new Date(status.pending[0].fireAt).toISOString(), `${tomorrow}T11:45:00.000Z`);
+  } finally { await s.close(); }
+});
+
+test('тот же текст в то же время второй раз не уходит', async () => {
+  const s = await loggedIn(withPush());
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/push/subscribe', { subscription: SUB });
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    const row = await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/schedule`,
+      { time: '09:00-10:00', title: 'Созвон', alarmMode: 'notify', remindBeforeMin: 15 });
+    s.db.prepare("UPDATE notification_queue SET sent_at = datetime('now')").run();
+
+    // правка, которая времени не меняет
+    await api(s.url, s.cookie, 'PATCH', `/api/v1/days/${tomorrow}/schedule/${row.id}`,
+      { note: 'взять ноутбук' });
+
+    const status = await getJson(s.url, s.cookie, '/api/v1/push/status');
+    assert.strictEqual(status.pending.length, 0, 'повторно то же самое не шлём');
+  } finally { await s.close(); }
+});
+
+test('подошедшее напоминание не удаляется при перепланировании', async () => {
+  const s = await loggedIn(withPush());
+  try {
+    await api(s.url, s.cookie, 'POST', '/api/v1/push/subscribe', { subscription: SUB });
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/schedule`,
+      { time: '09:00-10:00', title: 'Созвон', alarmMode: 'notify', remindBeforeMin: 15 });
+    // время пришло, а отправка ещё не случилась: так бывает между прогонами
+    s.db.prepare('UPDATE notification_queue SET fire_at_utc = ?').run(Date.now() - 5000);
+
+    // любая правка дня заново планирует его — и раньше сметала эту запись
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${tomorrow}/tasks`, { text: 'что-то ещё' });
+
+    const осталось = s.db.prepare(
+      'SELECT COUNT(*) n FROM notification_queue WHERE sent_at IS NULL').get().n;
+    assert.strictEqual(осталось, 1, 'напоминание должно уйти человеку, а не исчезнуть');
   } finally { await s.close(); }
 });
