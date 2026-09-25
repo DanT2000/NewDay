@@ -279,3 +279,25 @@ test('серия привычек не рвётся из-за неотмечен
     assert.strictEqual(stats(db).habitsStreak(USER, '2026-08-09'), 3);
   } finally { cleanup(); }
 });
+
+test('цель, поставленная давно ведомой привычке: счёт и проценты про одно и то же', () => {
+  const { db, cleanup } = fixture();
+  try {
+    /*
+     * Привычку вели с июля, а цель «30 раз» поставили 1 августа. Счётчик
+     * считает от постановки цели — и проценты обязаны считать то же самое.
+     * Иначе выходит «0 из 30» рядом со «100 %», и оба числа про эту же
+     * привычку.
+     */
+    const id = mkHabit(db, {
+      mode: 'challenge', break_policy: 'keep',
+      challenge_target_days: 30, challenge_start_date: '2026-08-01',
+    });
+    for (const d of ['2026-07-10', '2026-07-11', '2026-07-12']) log(db, id, d, 'done');
+    log(db, id, '2026-08-02', 'done');
+    const s = stats(db).habitStats(USER, id, null, '2026-08-05');
+    assert.strictEqual(s.challenge.day, 1, 'к цели идёт только то, что после её постановки');
+    assert.strictEqual(s.total, 4, 'а всего отметок видно честно');
+    assert.strictEqual(s.percent, 3, 'проценты — про цель, а не про всю жизнь привычки');
+  } finally { cleanup(); }
+});
