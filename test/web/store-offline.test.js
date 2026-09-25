@@ -68,6 +68,16 @@ async function стенд() {
   const q = await import('../../public/js/outbox.js');
   q.настроить({ автоповтор: false });
   q.очистить();
+  /*
+   * Вход — как в жизни: до него очередь не отправляет ничего, потому что
+   * неизвестно, чьи в ней правки. Тесты, которые сразу шлют, без этого
+   * проверяли бы несуществующий порядок работы.
+   */
+  globalThis.fetch = async () => ({
+    ok: true, status: 200, headers: { get: () => 'application/json' },
+    json: async () => ({ email: 'user@example.com', username: 'user', settings: {} }),
+  });
+  await data.boot();
   data.store.day = structuredClone(ДЕНЬ);
   return { data, q };
 }
@@ -274,4 +284,43 @@ test('лавина отказов не превращается в лавину 
   await new Promise(r => setTimeout(r, 700));
   assert.strictEqual(q.конфликты().length, 12, 'все отказы человеку видны');
   assert.ok(запросовДня <= 2, `дней перечитано ${запросовДня}, ожидали не больше двух`);
+});
+
+test('очередь прежнего хозяина не уезжает до проверки, чей это вход', async () => {
+  const { data, q } = await стенд();
+  const с = сеть();
+  с.починить({ email: 'user@example.com', username: 'user', settings: {} });
+  await data.boot();
+  с.обрыв();
+  data.createTask('2026-09-19', { text: 'моё личное', bucket: 'home' });
+
+  /*
+   * Запуск очереди стоит в самом начале работы экрана, а «чей это вход»
+   * выясняется ответом сервера — то есть позже. Значит отправлять до этого
+   * ответа нельзя: правка прежнего хозяина успевала уехать в аккаунт
+   * нового, и только потом её стирали.
+   */
+  /*
+   * Новая загрузка страницы: модуль экрана поднимается заново, а очередь и
+   * хранилище остаются от прежнего хозяина — ровно как в браузере.
+   */
+  const свежий = await import(`../../public/js/web/store.js?${Math.random()}`);
+  const отправленные = [];
+  globalThis.fetch = async (url, opts = {}) => {
+    const метод = opts.method ?? 'GET';
+    if (метод !== 'GET') отправленные.push(String(url));
+    return {
+      ok: true, status: 200,
+      headers: { get: () => 'application/json' },
+      json: async () => (String(url).includes('/settings')
+        ? { email: 'other@example.com', username: 'other', settings: {} }
+        : {}),
+    };
+  };
+  свежий.запуститьОчередь();
+  await q.отправить();
+  await свежий.boot();
+  await q.отправить();
+  assert.deepStrictEqual(отправленные, [], 'чужая правка никуда не ушла');
+  assert.strictEqual(q.ожидает(), 0, 'и стёрта вместе с остальным чужим');
 });
