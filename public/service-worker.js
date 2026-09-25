@@ -6,7 +6,7 @@
  * сказать, что связи нет.
  */
 
-const VERSION = 'newday-8c23e5634448';
+const VERSION = 'newday-57cdb28760d9';
 const SHELL = [
   // Веб-версия: с неё начинается браузер, и офлайн она должна открываться
   '/web.html', '/css/web.css',
@@ -170,6 +170,42 @@ self.addEventListener('push', event => {
     data: { url: data.url || '/web.html' },
     actions: [{ action: 'open', title: 'Открыть день' }],
   }));
+});
+
+/*
+ * Браузер сам меняет подписку — и без этого обработчика уведомления просто
+ * переставали приходить.
+ *
+ * Такое бывает при смене ключей на сервере и при восстановлении сервера из
+ * копии: старая подписка перестаёт быть действительной, браузер выдаёт новую,
+ * а сервер о ней не знает и продолжает слать в никуда. Отказ при этом не 410,
+ * значит и выбросить старую сервер не догадается: экран настроек бодро пишет
+ * «этот браузер подписан», а не приходит ничего.
+ */
+self.addEventListener('pushsubscriptionchange', event => {
+  event.waitUntil((async () => {
+    try {
+      const прежняя = event.oldSubscription || await self.registration.pushManager.getSubscription();
+      const ключ = event.newSubscription?.options?.applicationServerKey
+        ?? прежняя?.options?.applicationServerKey;
+      const свежая = event.newSubscription
+        ?? await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: ключ });
+      await fetch('/api/v1/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscription: свежая.toJSON() }),
+      });
+      if (прежняя && прежняя.endpoint !== свежая.endpoint) {
+        await fetch('/api/v1/push/subscribe', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ endpoint: прежняя.endpoint }),
+        }).catch(() => {});
+      }
+    } catch (e) {
+      console.warn('[sw] подписка сменилась, но сообщить не вышло:', e?.message || e);
+    }
+  })());
 });
 
 self.addEventListener('notificationclick', event => {

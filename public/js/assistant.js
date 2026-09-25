@@ -364,11 +364,18 @@ async function apply(talk, draw, close) {
   let ok = 0;
   const touched = new Set();
 
-  for (const item of chosen) {
+  /*
+   * Ключ повтора у каждого пункта свой и не меняется между попытками: связь
+   * могла оборваться уже после записи, и «добавить оставшееся» вторым
+   * нажатием иначе задваивало то, что доехало молча.
+   */
+  const метка = `ai-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+  for (const [i, item] of chosen.entries()) {
     const p = place(item);
     const date = dateOf(item);
     try {
-      await api[p.where].create(date, p.body);
+      await api[p.where].create(date, p.body, `${метка}-${i}`);
       touched.add(date);
       ok += 1;
     } catch (e) {

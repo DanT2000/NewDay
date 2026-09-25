@@ -23,8 +23,20 @@ export function permission() {
   return Notification.permission;   // default | granted | denied
 }
 
+/**
+ * Зарегистрированный service worker — или отказ по времени.
+ *
+ * `navigator.serviceWorker.ready` — обещание, которое никогда не разрешится,
+ * если worker не зарегистрирован: в вебвью приложения, на странице, где
+ * регистрация не прошла, в приватном окне. Нажатие «Разрешить уведомления»
+ * при этом висело молча — ни ответа, ни сообщения. Ждём не дольше пяти
+ * секунд: дольше регистрация всё равно не идёт.
+ */
 async function registration() {
-  return navigator.serviceWorker.ready;
+  const ждать = new Promise((_, отказ) => {
+    setTimeout(() => отказ(new Error('Уведомления в этом окне недоступны')), 5000);
+  });
+  return Promise.race([navigator.serviceWorker.ready, ждать]);
 }
 
 export async function currentSubscription() {

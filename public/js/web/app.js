@@ -1121,6 +1121,9 @@ function scheduleList() {
         r.past ? 'past' : '', r.now ? 'now' : '',
         inner[r.id] ? 'inner' : '', parent[r.id] ? 'parent' : '',
         r.isReminder ? 'moment' : '',
+        // отметка приходит с телефона, и на сайте она должна быть видна:
+        // строка, отмеченная утром, выглядела здесь несделанной
+        isDone(r) ? 'done' : '',
       ].filter(Boolean).join(' '),
       style: pin(r.color),
       onclick: () => openRow(r),
@@ -1182,7 +1185,9 @@ function nowCard() {
    * другое время, и это хуже, чем вторая строка.
    */
   const live = cur
-    ? { top: `сейчас · ${hhmm(cur.start)} – ${cur.end === null ? '' : hhmm(cur.end)}`.trim(),
+    // у блока без конца тире не рисуем: «сейчас · 10:00 –» с висячим тире
+    // читается как незаконченная мысль, а `trim` его не убирал
+    ? { top: `сейчас · ${cur.end === null ? hhmm(cur.start) : `${hhmm(cur.start)} – ${hhmm(cur.end)}`}`,
       title: cur.title,
       left: cur.end === null ? null : durLabel(Math.max(1, cur.end - minutes)),
       leftNote: 'до конца блока',
@@ -1191,7 +1196,16 @@ function nowCard() {
       ? { top: isToday ? 'дальше' : 'начало дня', title: next.title,
         left: isToday ? durLabel(Math.max(1, next.start - minutes)) : hhmm(next.start),
         leftNote: isToday ? 'до начала' : 'по расписанию', share: 0 }
-      : { top: isToday ? 'сейчас' : 'этот день', title: 'Расписание пустое',
+      /*
+       * «Расписание пустое» — только когда оно и правда пустое. Когда все
+       * блоки уже прошли, расписание было, и подпись про пустоту читалась как
+       * потеря: человек видел свои строки списком ниже и не понимал, почему
+       * плитка говорит, что их нет.
+       */
+      : { top: isToday ? 'сейчас' : 'этот день',
+        title: SCHEDULE.length
+          ? (isToday ? 'На сегодня всё' : 'Всё позади')
+          : 'Расписание пустое',
         left: null, leftNote: '', share: 0 };
 
   return h('div.wnow',
@@ -3913,6 +3927,18 @@ function openRow(r, date = state.date) {
   });
 }
 
+/** Открытая в шторке строка — как она лежит в дне. */
+const строкаШторки = () => SCHEDULE.find(x => String(x.id) === String(state.rowId)) ?? null;
+
+const отмеченаЛиСтрока = () => isDone(строкаШторки() ?? {});
+
+/** Переключить отметку прямо из шторки: правка уходит в очередь, как и всё. */
+function отметитьСтроку() {
+  const r = строкаШторки();
+  if (!r) return;
+  toggle(r, 'schedule');
+}
+
 /** Новый блок: время либо протянутое, либо предложенное кнопкой. */
 function newRow({ date = state.date, start = 600, end = 660, kind = 'normal' } = {}) {
   set({
@@ -5205,6 +5231,20 @@ const BODIES = {
           })
           : null),
       repeating ? h('div', h('div.wfield-label', { text: 'убрать' }), removes) : null,
+      /*
+       * «Сделано» — только у существующей строки.
+       *
+       * На телефоне строку расписания отмечают галочкой, а на сайте отметить
+       * её было нечем: сделанное утром дело выглядело здесь несделанным, и
+       * снять отметку тоже было нельзя. Кладём переключатель в шторку, а не
+       * галочку в список: строка списка — уже кнопка, и вкладывать кнопку в
+       * кнопку нельзя.
+       */
+      state.rowId === 'new' ? null : h('div',
+        h('div.wfield-label', { text: 'отметка' }),
+        h('div.wrow',
+          sheetChip(отмеченаЛиСтрока() ? 'Сделано' : 'Отметить сделанным',
+            отмеченаЛиСтрока(), () => отметитьСтроку(), 'wchip-flex'))),
       h('div.wrow-end',
         repeating ? null : h('button.wbtn-quiet', {
           type: 'button', text: state.rowId === 'new' ? 'Отменить' : 'Удалить',

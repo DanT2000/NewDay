@@ -258,7 +258,13 @@ export const copyDay    = (date, targetDate, sections) =>
 
 // ── Строки дня ───────────────────────────────────────────────
 const entity = seg => ({
-  create:  (date, data)      => POST(`/days/${date}/${seg}`, data),
+  /*
+   * `ключ` — Idempotency-Key: повтор после потерянного ответа не делает
+   * вторую строку. Нужен там, где запросы идут пачкой и обрыв посреди
+   * пачки — обычное дело (помощник записывает разобранный день).
+   */
+  create:  (date, data, ключ) => POST(`/days/${date}/${seg}`, data,
+    ключ ? { 'Idempotency-Key': ключ } : undefined),
   update:  (date, id, data)  => PATCH(`/days/${date}/${seg}/${id}`, data),
   remove:  (date, id)        => DELETE(`/days/${date}/${seg}/${id}`),
   reorder: (date, ids)       => POST(`/days/${date}/${seg}/reorder`, { ids }),

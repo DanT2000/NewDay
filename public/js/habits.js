@@ -133,7 +133,7 @@ function card(x) {
         h('i', { style: { width: `${Math.min(100, barPct)}%`, background: color } })),
 
       s ? h('div.hdots',
-            h('div.dots', ...s.last14.map(d => h('i', { class: d.status || 'none', title: d.date }))),
+            h('div.dots', ...(s.last14 ?? []).map(d => h('i', { class: d.status || 'none', title: d.date }))),
             h('span.micro', { text: streakLine(s) }))
         : null),
 

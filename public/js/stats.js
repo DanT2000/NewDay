@@ -93,7 +93,8 @@ function weekdayGrid(points) {
 function render() {
   if (!data) return;
   const flat = flatten(data.days);
-  const filled = data.days.filter(d => d.progress.possible > 0);
+  // через «?.», как в соседней строке: неполный ответ не должен ронять экран
+  const filled = data.days.filter(d => (d.progress?.possible ?? 0) > 0);
   const avg = filled.length
     ? Math.round(filled.reduce((s, d) => s + d.progress.percent, 0) / filled.length)
     : null;
@@ -154,7 +155,7 @@ function habitRow(x) {
       h('div.bar', { style: { marginTop: '6px' } },
         h('i', { style: { width: `${x.percent ?? 0}%`, background: color } })),
       h('div.dots', { style: { marginTop: '6px' } },
-        ...x.last14.map(d => h('i', { class: d.status || 'none', title: d.date })))),
+        ...(x.last14 ?? []).map(d => h('i', { class: d.status || 'none', title: d.date })))),
     h('div', { style: { textAlign: 'right' } },
       h('div.title', { text: x.percent === null ? '—' : `${x.percent}%` }),
       x.challenge

@@ -29,15 +29,26 @@ export async function installed() {
   try { return await plugin().getInfo(); } catch { return null; }
 }
 
-/** Что лежит на сервере. Ошибку не поднимаем: это фоновая проверка. */
+/**
+ * Что лежит на сервере. Ошибку не поднимаем: это фоновая проверка.
+ *
+ * С пределом ожидания: висящий запрос держал бы за собой экран настроек, а
+ * узнать про новую версию — дело не срочное.
+ */
 export async function latest() {
+  const ctrl = new AbortController();
+  const таймер = setTimeout(() => ctrl.abort(), 8000);
   try {
-    const res = await fetch(apiBase() + '/app/version', { headers: { Accept: 'application/json' } });
+    const res = await fetch(apiBase() + '/app/version', {
+      headers: { Accept: 'application/json' }, signal: ctrl.signal,
+    });
     if (!res.ok) return null;
     const body = await res.json();
     return body?.latest ?? null;
   } catch {
     return null;
+  } finally {
+    clearTimeout(таймер);
   }
 }
 
@@ -49,7 +60,7 @@ export async function latest() {
  * Функция оставлена, потому что её зовут экраны запуска, и возвращает состояние
  * — по нему видно, что проверять нечего.
  */
-export async function check() {
+export async function check(_повод = '') {
   if (!available()) return { state: 'not-app' };
   const me = await installed();
   return me ? { state: 'store-managed', installed: me } : { state: 'unknown' };
