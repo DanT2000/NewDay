@@ -176,7 +176,13 @@ function statsService(db, opts = {}) {
 
     /** Всего отметок «сделано» за всю жизнь привычки — это и есть счёт цели. */
     const total = Object.values(logsMap).filter(s => s === 'done').length;
-    const target = habit.challenge_target_days ?? null;
+    /*
+     * Цель есть, когда её задали числом И не сняли режимом. Прежний
+     * интерфейс при выборе «∞» ставил режим «бессрочно», но число в базе
+     * оставлял: считая по одному только числу, мы вернули бы человеку
+     * счётчик, который он убрал.
+     */
+    const target = (habit.mode === 'challenge' && habit.challenge_target_days) || null;
 
     /*
      * Цель живёт числом, а не режимом: «сделать 30 раз» — это цель, а
@@ -297,7 +303,8 @@ function statsService(db, opts = {}) {
       const active = habitActiveOn(h, date);
       const s = habitStats(user, h.id, null, date);
       // челлендж живёт числом, а не режимом: цель без числа — просто счётчик
-      const challenge = h.challenge_target_days ? s.challenge : null;
+      // правило про цель одно и живёт в habitStats — здесь просто берём
+      const challenge = s.challenge;
 
       const weekMap = {};
       for (const l of habits.logsInRange(user.id, h.id, weekFrom, date)) weekMap[l.date] = l.status;

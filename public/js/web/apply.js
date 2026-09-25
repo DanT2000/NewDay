@@ -30,13 +30,37 @@ const ТЕКСТОМ = new Set(['remindBefore']);
 /** Флажки: в API это true/false, в строке — 1/0. */
 const ФЛАЖКИ = new Set(['done']);
 
+/*
+ * Сроки напоминаний сервер приводит к порядку: убирает повторы, сортирует
+ * по убыванию и оставляет не больше шести (server/routes/v1/entities.js).
+ * Повторяем это здесь, иначе метки перескакивают в другой порядок в тот
+ * миг, когда правка доехала, — то самое дёрганье, от которого очередь и
+ * должна избавлять.
+ */
+const МАКС_СРОКОВ = 6;
+
+function сроки(список) {
+  if (!Array.isArray(список) || !список.length) return null;
+  const числа = [...new Set(список.map(v => (v === 'end' ? 'end' : Number(v))))]
+    .filter(v => v === 'end' || Number.isFinite(v))
+    .sort((a, b) => (a === 'end' ? 1 : b === 'end' ? -1 : b - a))
+    .slice(0, МАКС_СРОКОВ);
+  return числа.length ? числа : null;
+}
+
 /** Тело запроса → поля строки дня. */
 export function вСтроку(поля) {
   const out = {};
   for (const [k, знач] of Object.entries(поля ?? {})) {
     const имя = В_КОЛОНКУ[k] ?? k;
     if (ТЕКСТОМ.has(k)) {
-      out[имя] = Array.isArray(знач) && знач.length ? JSON.stringify(знач) : null;
+      const список = сроки(знач);
+      out[имя] = список ? JSON.stringify(список) : null;
+      // первый срок сервер дублирует отдельным полем — и мы тоже
+      if (k === 'remindBefore') {
+        const обычные = (список ?? []).filter(v => v !== 'end');
+        out.remind_before_min = обычные.length ? обычные[0] : null;
+      }
     } else if (ФЛАЖКИ.has(k)) {
       out[имя] = знач ? 1 : 0;
     } else {

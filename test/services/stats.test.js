@@ -396,3 +396,21 @@ test('сводка сравнивает сравнимое: цели в «луч
       'сама цель из списка не исчезает — у неё свой счёт');
   } finally { cleanup(); }
 });
+
+test('снятая цель не возвращается сама: считает режим, а не остаток числа', () => {
+  const { db, cleanup } = fixture();
+  try {
+    /*
+     * Прежний интерфейс при выборе «∞» ставил режим «бессрочно», но число
+     * цели в базе оставлял. Если считать цель по одному только числу, у
+     * таких привычек внезапно появится счётчик «12 из 30», которого
+     * человек не заводил.
+     */
+    const id = mkHabit(db, { mode: 'ongoing', break_policy: 'reset', challenge_target_days: 30 });
+    log(db, id, '2026-08-09', 'done');
+    const s = stats(db).habitStats(USER, id, null, '2026-08-09');
+    assert.strictEqual(s.challenge, null, 'цели нет — есть только серия');
+    assert.strictEqual(s.target, null);
+    assert.strictEqual(s.currentStreak, 1);
+  } finally { cleanup(); }
+});

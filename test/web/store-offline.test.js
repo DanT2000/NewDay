@@ -324,3 +324,11 @@ test('очередь прежнего хозяина не уезжает до п
   assert.deepStrictEqual(отправленные, [], 'чужая правка никуда не ушла');
   assert.strictEqual(q.ожидает(), 0, 'и стёрта вместе с остальным чужим');
 });
+
+test('правка без загруженного дня не уезжает по адресу с undefined', async () => {
+  const { data, q } = await стенд();
+  сеть().обрыв();
+  data.store.day = null;   // день ещё не загрузился, а человек уже нажал
+  await assert.rejects(() => data.toggleHabit({ id: 4, status: null }, true), /день/i);
+  assert.strictEqual(q.ожидает(), 0, 'в очередь такая правка не попадает');
+});
