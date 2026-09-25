@@ -139,9 +139,45 @@ function minutesNow() {
 // ── Мелкие помощники ─────────────────────────────────────────
 
 const set = patch => {
-  Object.assign(state, typeof patch === 'function' ? patch(state) : patch);
+  const было = { screen: state.screen, setPage: state.setPage, modal: state.modal };
+  const поля = typeof patch === 'function' ? patch(state) : patch;
+  Object.assign(state, поля);
+  приУходе(было, поля);
   render();
 };
+
+/**
+ * Что не должно переживать уход с экрана, из раздела настроек или из шторки.
+ *
+ * Путей уйти много — боковое меню, нижняя панель, ссылка в карточке, — и
+ * каждый из них раньше уносил своё. Правило одно и стоит здесь, в единственном
+ * месте, через которое эти переходы и проходят:
+ *
+ *  - запись голоса. Микрофон оставался открытым: в браузере горел индикатор
+ *    записи, счётчик шёл, а человек был уже на «Сейчас» и не знал, что его
+ *    слушают. Снимала запись только сама кнопка.
+ *  - сообщение. «Впишите, что делаем» из блока расписания всплывало над пустой
+ *    формой задачи: гасил его только `closeModal`, а половина шторок
+ *    открывается мимо него.
+ *  - «Отправлено, сообщение №7». Раздел настроек — не шторка, своего закрытия
+ *    у него нет, и человек, вернувшийся в «Сообщить о проблеме», встречал
+ *    зелёную полосу так, будто отправил второй раз.
+ *  - фильтр задач. Оставшийся с прошлого раза, он читается как «задачи
+ *    пропали» — ровно так же, как это было с фильтром заметок.
+ */
+function приУходе(было, поля) {
+  const другоеМесто = ('screen' in поля && поля.screen !== было.screen)
+    || ('setPage' in поля && поля.setPage !== было.setPage)
+    || ('modal' in поля && поля.modal !== было.modal);
+  if (!другоеМесто) return;
+
+  if (state.repRec || state.repTick) repStop();
+  if (!('notice' in поля)) state.notice = null;
+  if (было.screen !== state.screen || было.setPage !== state.setPage) {
+    state.repDone = null;
+    state.catFilter = 'all';
+  }
+}
 
 /**
  * Правка внутри шторки перерисовывает только шторку.
@@ -379,6 +415,21 @@ function go(date) {
   reload();
 }
 const mondayOf = dt => { const m = new Date(dt); m.setDate(dt.getDate() - ((dt.getDay() + 6) % 7)); return m; };
+
+/**
+ * Число из поля, прижатое к пределам.
+ *
+ * Раньше значение вне предела просто не применялось: в поле оставалось «10
+ * раз в неделю», а в состоянии — прежняя единица, и привычка создавалась не
+ * той, что человек видел на экране. Экран и то, что уедет на сервер, должны
+ * показывать одно число, поэтому лишнее прижимаем, а не отбрасываем.
+ * `null` — в поле пусто, человек ещё набирает.
+ */
+function числоИзПоля(e, { min, max }) {
+  const цифры = String(e.target.value).replace(/\D+/g, '');
+  if (!цифры) return null;
+  return Math.min(max, Math.max(min, Number(цифры)));
+}
 
 const isDone = r => Boolean(r.done);
 const alarmOf = r => r.alarm ?? 'off';
@@ -1983,7 +2034,18 @@ function planTasks(dateKey) {
   if (!rows.length) {
     add(wrap, h('button.wptasks-add', {
       type: 'button', text: '+ задача',
-      onclick: () => set({ modal: 'task', taskId: 'new', taskCat: 'work', taskTitle: '', date: dateKey }),
+      /*
+       * Выбранный день меняем через `go`, а не полем состояния.
+       *
+       * `set({ date })` переводил выбор в обход перечитывания: в памяти
+       * оставался прежний день, и человек, нажавший «+ задача» в пятничной
+       * колонке и просто закрывший шторку, оставался на пятнице с
+       * содержимым понедельника — до первой перезагрузки.
+       */
+      onclick: () => {
+        if (dateKey !== state.date) go(dateKey);
+        set({ modal: 'task', taskId: 'new', taskCat: 'work', taskTitle: '' });
+      },
     }));
     return wrap;
   }
@@ -2417,12 +2479,28 @@ const repExt = type => ({
   'audio/mpeg': 'mp3', 'audio/wav': 'wav',
 }[String(type || '').split(';')[0].trim()] || 'webm');
 
+/**
+ * Остановить запись и дождаться, пока она действительно закроется.
+ *
+ * `rec.stop()` только просит остановиться: настоящий MediaRecorder отвечает
+ * `onstop` следующим тиком. Поэтому `repSend`, звавший `repStop` и тут же
+ * проверявший `state.repAudio`, не находил записи — и человек, наговоривший
+ * жалобу и нажавший «Отправить», не остановив запись, получал «Напишите или
+ * наговорите, что случилось», а сказанное не уезжало никуда.
+ */
 function repStop() {
   clearInterval(state.repTick);
   state.repTick = null;
   const rec = state.repRec;
   state.repRec = null;
-  if (rec && rec.state !== 'inactive') { try { rec.stop(); } catch { /* уже стоит */ } }
+  if (!rec || rec.state === 'inactive') return Promise.resolve();
+  return new Promise(готово => {
+    const прежний = rec.onstop;
+    rec.onstop = (e) => {
+      try { прежний?.(e); } finally { готово(); }
+    };
+    try { rec.stop(); } catch { готово(); }   // уже стоит
+  });
 }
 
 async function repRecord() {
@@ -2479,7 +2557,7 @@ async function repRecord() {
 }
 
 async function repSend() {
-  repStop();
+  await repStop();
   if (!state.repText.trim() && !state.repAudio && !state.repShot) {
     note('Напишите или наговорите, что случилось', true); return;
   }
@@ -3615,6 +3693,12 @@ function openAi() {
   set({
     modal: 'ai', aiStep: 'input',
     aiText: '', aiItems: null, aiOff: {}, aiQuestion: '', aiOptions: [],
+    /*
+     * И переписка: она оставалась от прошлого раза, и в новый разбор уезжал
+     * чужой разговор — уточнение «На какой день?» с ответом «завтра» из
+     * позапрошлого. Модель отвечала не на то, что спросили сейчас.
+     */
+    aiHistory: [],
     notice: null,
   });
 }
@@ -5059,7 +5143,8 @@ const BODIES = {
       repeating ? h('div', h('div.wfield-label', { text: 'убрать' }), removes) : null,
       h('div.wrow-end',
         repeating ? null : h('button.wbtn-quiet', {
-          type: 'button', text: state.rowId === 'new' ? 'Отменить' : 'Удалить', onclick: deleteRow,
+          type: 'button', text: state.rowId === 'new' ? 'Отменить' : 'Удалить',
+          disabled: state.busy, onclick: deleteRow,
         }),
         h('button.wbtn-wide', {
           type: 'button', text: state.busy ? 'Сохраняю…' : 'Готово',
@@ -5333,8 +5418,8 @@ const BODIES = {
       h('input.wnum', {
         name: 'habitTimes', value: String(state.habitTimes), inputMode: 'numeric',
         oninput: e => {
-          const n = Number(String(e.target.value).replace(/\D+/g, ''));
-          if (n >= 1 && n <= 7) setIn({ habitTimes: n });
+          const n = числоИзПоля(e, { min: 1, max: 7 });
+          if (n !== null) setIn({ habitTimes: n });
         },
       }),
       h('span.wsmall', { text: 'раз в неделю — день выбираете сами' }));
@@ -5394,8 +5479,8 @@ const BODIES = {
             h('input.wnum', {
               name: 'habitGoalDays', value: String(state.habitGoalDays), inputMode: 'numeric',
               oninput: e => {
-                const n = Number(String(e.target.value).replace(/\D+/g, ''));
-                if (n >= 1 && n <= 3650) setIn({ habitGoalDays: n });
+                const n = числоИзПоля(e, { min: 1, max: 3650 });
+                if (n !== null) setIn({ habitGoalDays: n });
               },
             }),
             h('span.wsmall', { text: state.habitKind === 'goal' ? 'раз' : 'дней подряд' }))
@@ -5404,6 +5489,7 @@ const BODIES = {
         h('button.wbtn-quiet', {
           type: 'button',
           text: state.habitId === 'new' ? 'Отмена' : 'Удалить',
+          disabled: state.busy,
           onclick: () => (state.habitId === 'new' ? closeModal() : busy(data.removeHabit(state.habitId))),
         }),
         h('button.wbtn-wide', {
@@ -5708,7 +5794,8 @@ const BODIES = {
           : null),
       h('div.wrow-end',
         h('button.wbtn-quiet', {
-          type: 'button', text: state.mealId === 'new' ? 'Отменить' : 'Удалить', onclick: deleteMeal,
+          type: 'button', text: state.mealId === 'new' ? 'Отменить' : 'Удалить',
+          disabled: state.busy, onclick: deleteMeal,
         }),
         h('button.wbtn-wide', {
           type: 'button', text: state.busy ? 'Сохраняю…' : 'Готово', disabled: state.busy,
@@ -6794,8 +6881,12 @@ async function aiApply(items) {
     /*
      * То, что уже записано, из списка убрано, и повторное нажатие
      * «Добавить» допишет только оставшееся.
+     *
+     * Галочки снимаем вместе со списком: они хранятся по номерам строк, и
+     * после «Добавлено 5 из 12» прежние номера показывали выключенными не те
+     * строки — человек дописывал не то, что выбрал.
      */
-    if (ok) state.aiItems = осталось;
+    if (ok) { state.aiItems = осталось; state.aiOff = {}; }
     fail(ok ? `Добавлено ${ok} из ${items.length}, остальное осталось в списке: ${e.message}` : e.message);
   }
 }
