@@ -176,14 +176,28 @@ export async function loadDay(date) {
     return store.day;
   } catch (e) {
     if (e?.status === 401) throw e;
-    const saved = kept(`day.${date}`);
-    if (!saved) throw e;
     if (gen !== dayGen) return store.day;
-    store.day = сОчередью(saved.value);
+    const saved = kept(`day.${date}`);
+    /*
+     * Копии этого дня нет — показываем пустой день этой даты, а не оставляем
+     * на экране прежний. Иначе выходило так: человек без связи листает на
+     * день, которого он ещё не открывал, добавляет задачу — и не видит её.
+     * Правка уезжала на сервер потом, но выглядело это как «нажал, и ничего
+     * не произошло». Пустой день — то же самое, что отдал бы сервер за день,
+     * в котором ничего нет.
+     */
+    store.day = сОчередью(saved ? saved.value : пустойДень(date));
     store.offline = true;
     return store.day;
   }
 }
+
+/** День, в котором ничего нет: тот же вид, что отдаёт сервер за пустую дату. */
+const пустойДень = date => ({
+  date, rev: 0, title: '', focus: '', weight: null, notes: '', foodPlan: '',
+  schedule: [], tasks: { work: [], home: [] }, meals: [], sport: [],
+  habits: [], progress: {}, habitsStreak: 0,
+});
 
 /**
  * Период для сетки. Неделя — семь дней от понедельника, месяц — вся сетка
