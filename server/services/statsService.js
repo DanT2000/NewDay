@@ -464,7 +464,16 @@ function statsService(db, opts = {}) {
 
     const habitList = habits.list(user.id).map(h => habitStats(user, h.id, rangeFrom, rangeTo));
 
-    const withPercent = habitList.filter(h => h.percent !== null);
+    /*
+     * В «лучшую» и «слабую» попадают только серии.
+     *
+     * У серии процент — доля сделанного из обещанного за этот период, у
+     * цели — насколько она набрана за всё время, и от периода он не
+     * зависит вовсе. В одном списке это несравнимые величины: добранный
+     * марафон объявлялся лучшей привычкой недели, в которую человек не
+     * сделал ничего, а свежая цель — самой слабой.
+     */
+    const withPercent = habitList.filter(h => h.kind === 'series' && h.percent !== null);
     const sorted = [...withPercent].sort((a, b) => b.percent - a.percent);
 
     return {
@@ -486,4 +495,4 @@ function statsService(db, opts = {}) {
   return { habitStats, habitsForDate, habitsStreak, dayProgress, overview, habitActiveOn };
 }
 
-module.exports = { statsService, habitActiveOn };
+module.exports = { statsService, habitActiveOn, kindOf };

@@ -3,7 +3,7 @@ const { wrap, badRequest } = require('../../lib/errors');
 const v = require('../../lib/validate');
 const { diffDays, todayFor } = require('../../lib/dates');
 const { habitsRepo } = require('../../repos/habits');
-const { statsService } = require('../../services/statsService');
+const { statsService, kindOf } = require('../../services/statsService');
 
 const TYPES = ['binary', 'quant'];
 const POLARITIES = ['do', 'avoid'];
@@ -70,8 +70,16 @@ module.exports = function habitsRouter({ db }) {
 
   const idOf = req => v.int(req.params.id, { min: 1, field: 'id' });
 
+  /*
+   * Вид привычки — серия или цель — выводится из полей, и правило это одно
+   * и живёт в статистике. Отдаём его вместе со списком: иначе каждому, кто
+   * читает привычки (старые страницы, интеграция, помощник), пришлось бы
+   * повторять правило у себя — и однажды разойтись.
+   */
+  const свид = h => ({ ...h, kind: kindOf(h) });
+
   router.get('/', wrap((req, res) => {
-    res.json(habits.list(req.user.id, { includeArchived: req.query.archived === '1' }));
+    res.json(habits.list(req.user.id, { includeArchived: req.query.archived === '1' }).map(свид));
   }));
 
   router.post('/', wrap((req, res) => {
@@ -80,7 +88,7 @@ module.exports = function habitsRouter({ db }) {
     if (data.mode === 'challenge' && !data.challengeStartDate) {
       data.challengeStartDate = todayFor(req.user.timezone);
     }
-    res.status(201).json(habits.create(req.user.id, data));
+    res.status(201).json(свид(habits.create(req.user.id, data)));
   }));
 
   router.post('/reorder', wrap((req, res) => {
@@ -131,7 +139,7 @@ module.exports = function habitsRouter({ db }) {
   }));
 
   router.patch('/:id', wrap((req, res) => {
-    res.json(habits.update(req.user.id, idOf(req), sanitize(req.body || {}, { partial: true })));
+    res.json(свид(habits.update(req.user.id, idOf(req), sanitize(req.body || {}, { partial: true }))));
   }));
 
   // По умолчанию — в архив: логи и статистика прошлого сохраняются.
