@@ -92,12 +92,22 @@ export const keptAt = name => kept(name)?.at ?? null;
 /** Забыть всё локальное: при выходе из аккаунта чужой день видеть нельзя. */
 export function forgetLocal() {
   try {
-    for (const k of Object.keys(localStorage)) {
-      if (k.startsWith(LOCAL)) localStorage.removeItem(k);
+    // перебираем через length/key, а не Object.keys: так надёжнее и так
+    // хранилище перечисляется по правилам, а не по своим полям
+    const ключи = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && (k.startsWith(LOCAL) || k === КЛЮЧ_ХОЗЯИНА)) ключи.push(k);
     }
+    for (const k of ключи) localStorage.removeItem(k);
   } catch { /* нечего забывать */ }
   // и очередь тоже: чужие правки отправлять некуда и незачем
   очередь.очистить();
+  // и то, что уже прочитано в память: чужой день на экране висеть не должен
+  store.day = null;
+  store.range = null;
+  store.notes = [];
+  store.habits = [];
 }
 
 /**
@@ -106,9 +116,30 @@ export function forgetLocal() {
  * Без сети берём последнюю копию и говорим об этом полем `offline`: врать, что
  * это свежие настройки, нельзя — от них зависит и «сегодня», и тема.
  */
+/*
+ * Чьё это устройство.
+ *
+ * Очередь и местные копии лежат в одном хранилище на всех, кто сюда
+ * входил. Пока хозяин один, это незаметно; стоит войти второму — и правки
+ * первого уехали бы в его день, а до первого удачного запроса он видел бы
+ * чужие дни и чужое имя. Поэтому при входе сверяем, тот ли человек, и
+ * чужое стираем. Свой же повторный вход (сессия истекла, токен отозвали)
+ * правки сохраняет: они его и ждут.
+ */
+const КЛЮЧ_ХОЗЯИНА = 'newday.owner';
+
+function сменаХозяина(кто) {
+  if (!кто) return;
+  let прежний = null;
+  try { прежний = localStorage.getItem(КЛЮЧ_ХОЗЯИНА); } catch { /* нет хранилища — нечего и сверять */ }
+  if (прежний && прежний !== кто) forgetLocal();
+  try { localStorage.setItem(КЛЮЧ_ХОЗЯИНА, кто); } catch { /* не запомнили — сверим в следующий раз */ }
+}
+
 export async function boot() {
   try {
     const settings = await api.getSettings();
+    сменаХозяина(settings.email || settings.username || null);
     store.settings = settings;
     store.user = { email: settings.email, username: settings.username, isAdmin: settings.isAdmin };
     store.offline = false;

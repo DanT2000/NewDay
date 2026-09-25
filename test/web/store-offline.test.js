@@ -205,3 +205,39 @@ test('о каждой правке сообщают подписчику: экр
   data.createTask('2026-09-19', { text: 'хлеб' });
   assert.ok(вестей >= 1, 'экран узнал о правке');
 });
+
+test('вход другого человека на том же устройстве не уносит чужие правки', async () => {
+  const { data, q } = await стенд();
+  const с = сеть();
+  /*
+   * Токен отозвали или сессия истекла — человек попадает на вход, и за
+   * него входит другой. Очередь и местные копии не привязаны ни к кому:
+   * без этой проверки правки первого уезжали бы в день второго, а до
+   * первого удачного запроса второй видел бы чужие дни и чужое имя.
+   */
+  с.починить({ email: 'user@example.com', username: 'user', settings: {} });
+  await data.boot();
+  с.обрыв();
+  data.createTask('2026-09-19', { text: 'моё личное', bucket: 'home' });
+  assert.strictEqual(q.ожидает(), 1);
+
+  с.починить({ email: 'other@example.com', username: 'other', settings: {} });
+  await data.boot();
+  assert.strictEqual(q.ожидает(), 0, 'чужая очередь стёрта, а не отправлена под новым входом');
+  assert.strictEqual(data.store.day, null, 'и чужой день не показывается');
+});
+
+test('свой же повторный вход правки не теряет', async () => {
+  const { data, q } = await стенд();
+  const с = сеть();
+  с.починить({ email: 'user@example.com', username: 'user', settings: {} });
+  await data.boot();
+  с.обрыв();
+  data.createTask('2026-09-19', { text: 'моё', bucket: 'home' });
+  assert.strictEqual(q.ожидает(), 1);
+
+  // тот же человек вошёл заново — правка обязана дождаться отправки
+  с.починить({ email: 'user@example.com', username: 'user', settings: {} });
+  await data.boot();
+  assert.strictEqual(q.ожидает(), 1, 'своя правка на месте');
+});
