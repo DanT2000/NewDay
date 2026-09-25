@@ -1,8 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!--
+        Резервное копирование выключено нарочно.
+
+        В хранилище приложения лежит токен устройства — ключ к аккаунту без
+        пароля. С allowBackup="true" он уезжал в облачную копию и в `adb
+        backup`, а восстановление такой копии на другом телефоне давало
+        полный доступ к аккаунту без единого пароля. Данные человека и так
+        живут на сервере: после переустановки нужен один вход, и это дешевле,
+        чем ключ, гуляющий по копиям.
+    -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"

@@ -54,7 +54,7 @@ object AlarmScheduler {
             Log.i(TAG, "SYNCED будильники выключены в настройках — ничего не ставим")
             return
         }
-        alarms.filter { it.fireAt > now }.forEach { schedule(ctx, it) }
+        alarms.filter { it.fireAt > now }.forEach { scheduleSafely(ctx, it) }
         // SYNCED — метка латиницей: по ней живые тесты понимают, что приложение
         // уже отправило свой список и можно ставить проверочный будильник,
         // не боясь, что следующая синхронизация его снимет
@@ -81,7 +81,7 @@ object AlarmScheduler {
             return
         }
         val now = System.currentTimeMillis()
-        alarms.filter { it.fireAt > now }.forEach { schedule(ctx, it) }
+        alarms.filter { it.fireAt > now }.forEach { scheduleSafely(ctx, it) }
         Log.i(TAG, "REARMED переставлено: ${alarms.count { it.fireAt > now }}")
     }
 
@@ -166,18 +166,47 @@ object AlarmScheduler {
         val am = ctx.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val fire = pendingIntent(ctx, alarm)
 
+        /*
+         * Разрешение на точное время проверяем для любого вида, а не только
+         * для будильника.
+         *
+         * `setExactAndAllowWhileIdle` без разрешения бросает SecurityException,
+         * и раньше на этом обрывалась вся постановка: первое же уведомление
+         * без разрешения — и ни один будильник из остатка списка не поставлен.
+         * Хуже всего это выглядело после перезагрузки телефона, где список
+         * восстанавливается целиком: человек не просыпался.
+         *
+         * Неточный будильник — заметно хуже точного (система сдвигает его на
+         * своё усмотрение), но это единственное, что здесь можно поставить.
+         */
+        val точноМожно = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || am.canScheduleExactAlarms()
+        if (!точноМожно) {
+            Log.w(TAG, "Нет разрешения на точное время — ставим приблизительный (${alarm.id})")
+            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, alarm.fireAt, fire)
+            return
+        }
+
         if (alarm.isAlarm) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !am.canScheduleExactAlarms()) {
-                // без разрешения точный будильник поставить нельзя — ставим неточный
-                // и честно сообщаем об этом в экране проверки
-                Log.w(TAG, "Нет разрешения на точные будильники, ставим приблизительный")
-                am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, alarm.fireAt, fire)
-                return
-            }
             // показывает системную иконку будильника и имеет высший приоритет
             am.setAlarmClock(AlarmManager.AlarmClockInfo(alarm.fireAt, openAppIntent(ctx)), fire)
         } else {
             am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, alarm.fireAt, fire)
+        }
+    }
+
+    /**
+     * Поставить, не роняя остальных.
+     *
+     * Система отказывает по-разному и не всегда предсказуемо: кончился лимит
+     * будильников, отобрали разрешение между проверкой и постановкой, изготовитель
+     * добавил свою квоту. Один отказ не должен уносить с собой весь список —
+     * именно так и получалось, что после перезагрузки не звонило ничего.
+     */
+    private fun scheduleSafely(ctx: Context, alarm: Alarm) {
+        try {
+            schedule(ctx, alarm)
+        } catch (e: Exception) {
+            Log.e(TAG, "Будильник ${alarm.id} поставить не удалось: " + e.message)
         }
     }
 

@@ -55,6 +55,8 @@ class AlarmService : Service() {
 
         const val CHANNEL_ALARM = "newday_alarm"
         const val CHANNEL_NOTIFY = "newday_notify"
+        /** Дольше этого будильник не звонит: телефон в сумке иначе садится в ноль. */
+        private const val RING_LIMIT_MS = 15 * 60 * 1000L
         /*
          * Номер уведомления звонящего будильника — заведомо вне диапазона
          * номеров строк расписания.
@@ -134,6 +136,17 @@ class AlarmService : Service() {
     private var pauseHandler: Handler? = null
     private var soundPaused = false
     private var targetVolume = -1
+    /*
+     * Громкость потока будильника до нашего вмешательства.
+     *
+     * Будильник выкручивает STREAM_ALARM на максимум и раньше так его и
+     * оставлял: человек выключил звонок, а поток остался на максимуме — и
+     * следующий же сигнал на этом потоке бил в полную громкость, хотя
+     * человек когда-то убавил его сам. −1 — «не трогали».
+     */
+    private var volumeBefore = -1
+    /** Отложенная остановка: звонок не может длиться вечно. */
+    private var limitHandler: Handler? = null
 
     /*
      * Режим «случайный»: очередь злых звуков и признак тихой фазы.
@@ -192,10 +205,18 @@ class AlarmService : Service() {
         val cfg = AlarmStore.config(this)
         val grace = cfg.effectiveGraceSec
         graceUntilMs = if (grace > 0) System.currentTimeMillis() + grace * 1000L else 0L
+        /*
+         * Каждый шаг звонка — отдельно и под охраной.
+         *
+         * Раньше отказ в любом из них уносил всю службу: плеер не открылся,
+         * система не дала громкость, изготовитель запретил вибрацию — и
+         * будильник не звонил вовсе, хотя оставались ещё два способа разбудить.
+         * Вибрация без звука будит, отсутствие всего — нет.
+         */
         acquireWakeLock()
-        startSound(found)
-        startVibration(found, gentle = grace > 0)
-        launchDismissScreen(found)
+        безопасно("звук") { startSound(found) }
+        безопасно("вибрация") { startVibration(found, gentle = grace > 0) }
+        безопасно("экран отключения") { launchDismissScreen(found) }
 
         /*
          * REDELIVER, а не STICKY.
@@ -370,7 +391,15 @@ class AlarmService : Service() {
             else -> openSystemPlayer()
         }
 
+        /*
+         * Запоминаем громкость до первого изменения — вернём её при остановке.
+         * Именно до: дальше идут и тихое начало, и нарастание, и максимум.
+         */
+        if (volumeBefore < 0) {
+            volumeBefore = try { am.getStreamVolume(AudioManager.STREAM_ALARM) } catch (e: Exception) { -1 }
+        }
         startVolumeGuard(am)
+        startRingLimit(a)
 
         val grace = cfg.effectiveGraceSec
         if (grace > 0) {
@@ -773,6 +802,9 @@ class AlarmService : Service() {
         rampHandler = null
         volumeGuard?.removeCallbacksAndMessages(null)
         volumeGuard = null
+        limitHandler?.removeCallbacksAndMessages(null)
+        limitHandler = null
+        restoreVolume()
         pauseHandler?.removeCallbacksAndMessages(null)
         pauseHandler = null
         soundPaused = false
@@ -788,6 +820,73 @@ class AlarmService : Service() {
         vibrator = null
         if (wakeLock?.isHeld == true) wakeLock?.release()
         wakeLock = null
+    }
+
+    /** Шаг звонка, отказ которого не должен унести с собой остальные. */
+    private inline fun безопасно(что: String, дело: () -> Unit) {
+        try {
+            дело()
+        } catch (e: Exception) {
+            Log.e("NewDayAlarm", "Будильник без «$что»: " + e.message)
+        }
+    }
+
+    /**
+     * Возвращает громкость потока будильника такой, какой она была.
+     *
+     * Сторож громкости к этому моменту уже снят: иначе он вернул бы максимум
+     * обратно через секунду.
+     */
+    private fun restoreVolume() {
+        val было = volumeBefore
+        volumeBefore = -1
+        if (было < 0) return
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            if (am.getStreamVolume(AudioManager.STREAM_ALARM) != было) {
+                am.setStreamVolume(AudioManager.STREAM_ALARM, было, 0)
+                Log.i("NewDayAlarm", "VOLUME_RESTORED громкость будильника возвращена: " + было)
+            }
+        } catch (e: Exception) {
+            Log.e("NewDayAlarm", "Не удалось вернуть громкость: " + e.message)
+        }
+    }
+
+    /**
+     * Предел звонка.
+     *
+     * Никем не выключенный будильник звонил, пока не сядет батарея: телефон,
+     * забытый в сумке, к вечеру разряжен в ноль, а человек к этому времени
+     * давно проснулся сам. Системные часы Android глушат звонок так же —
+     * через считанные минуты. Оставляем спокойное уведомление: человек должен
+     * узнать, что будильник звонил и его не выключили.
+     */
+    private fun startRingLimit(a: Alarm) {
+        limitHandler?.removeCallbacksAndMessages(null)
+        val handler = Handler(Looper.getMainLooper())
+        limitHandler = handler
+        handler.postDelayed({
+            Log.i("NewDayAlarm", "RING_LIMIT звонок длился " + (RING_LIMIT_MS / 60000) + " мин — глушим")
+            tellUnanswered(a)
+            stopEverything()
+        }, RING_LIMIT_MS)
+    }
+
+    /** «Звонил и не был выключен» — это не то же самое, что «не звонил». */
+    private fun tellUnanswered(a: Alarm) {
+        try {
+            createChannels(this)
+            val минут = RING_LIMIT_MS / 60000
+            val note = NotificationCompat.Builder(this, CHANNEL_NOTIFY)
+                .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                .setContentTitle("Будильник выключился сам")
+                .setContentText("${a.title.ifBlank { "Будильник" }} звонил $минут мин и остался без ответа")
+                .setAutoCancel(true)
+                .build()
+            NotificationManagerCompat.from(this).notify(a.id.toInt(), note)
+        } catch (e: Exception) {
+            Log.e("NewDayAlarm", "Сообщить о невыключенном будильнике не удалось: " + e.message)
+        }
     }
 
     private fun stopEverything() {
