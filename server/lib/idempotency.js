@@ -32,7 +32,17 @@ function opKeys(db) {
         .get(userId, key);
       if (!row) return null;
       try { return { status: row.status, body: row.body ? JSON.parse(row.body) : null }; }
-      catch { return null; }
+      catch {
+        /*
+         * Ключ есть, а ответ прочитать не удалось. Считать это «ключа не
+         * было» нельзя: запись уже создана, и повтор сделал бы вторую.
+         * Честнее сказать, что повтор уже обработан.
+         */
+        return {
+          status: 409,
+          body: { error: { code: 'ALREADY_DONE', message: 'Этот запрос уже был обработан' } },
+        };
+      }
     },
 
     запомнить(userId, key, status, body) {

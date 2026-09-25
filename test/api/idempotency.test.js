@@ -71,3 +71,20 @@ test('слишком длинный ключ отвергается, а не п�
     assert.strictEqual(r.status, 400);
   } finally { await s.close(); }
 });
+
+test('испорченный сохранённый ответ не превращается в дубль', async () => {
+  const s = await loggedIn();
+  try {
+    const D = today();
+    const h = { 'Idempotency-Key': 'op-broken-1' };
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${D}/tasks`, { text: 'один раз' }, h);
+    // портим сохранённый ответ так, как это сделала бы повреждённая база
+    s.db.prepare("UPDATE op_keys SET body = '{не json' WHERE key = ?").run('op-broken-1');
+
+    const второй = await api(s.url, s.cookie, 'POST', `/api/v1/days/${D}/tasks`, { text: 'один раз' }, h, true);
+    assert.notStrictEqual(второй.status, 201, 'вторую строку не создаём');
+    const день = await getJson(s.url, s.cookie, `/api/v1/days/${D}/full`);
+    const свои = [...день.tasks.work, ...день.tasks.home].filter(t => t.text === 'один раз');
+    assert.strictEqual(свои.length, 1, 'строка осталась одна');
+  } finally { await s.close(); }
+});
