@@ -94,6 +94,38 @@ function dismissConfig(settings = {}) {
   };
 }
 
+/** «К концу» — не минуты до начала, а отметка; то же число, что на сервере. */
+const К_КОНЦУ = -1;
+
+/**
+ * Сроки предупреждения строки — списком, как их понимает сервер.
+ *
+ * Раньше здесь читалось только одиночное `remind_before_min`, и телефон звонил
+ * не о том, что просили: пара «за день и за час» давала одно число 1440, из
+ * него выходило время до полуночи — и будильник не ставился вовсе; «к концу»
+ * (−1) в одиночное число не попадает, и вместо конца окна телефон брал общую
+ * настройку «за 10 минут». Уведомления, поставленные ради офлайна, офлайн и
+ * не приходили.
+ */
+function срокиСтроки(row, settings) {
+  // будильник звонит в срок, а не заранее — у него сроков нет
+  if (row.alarm_mode === 'alarm') return [0];
+
+  let list = null;
+  if (row.remind_before_json) {
+    try {
+      const разобрано = JSON.parse(row.remind_before_json);
+      if (Array.isArray(разобрано) && разобрано.length) {
+        list = [...new Set(разобрано.filter(Number.isFinite))].sort((a, b) => b - a);
+      }
+    } catch { list = null; }
+  }
+  if (!list) {
+    list = [row.remind_before_min ?? Number(settings.notifyDefaultBeforeMin ?? 10)];
+  }
+  return list.slice(0, 6);
+}
+
 /**
  * Пересчитывает нативные будильники на сегодня и завтра.
  * Двух дней достаточно: приложение синхронизируется при каждом открытии дня,
@@ -112,29 +144,57 @@ export async function syncAlarms(profile) {
   for (const date of dates) {
     let day;
     try { day = await api.getDay(date); }
-    catch { continue; }   // нет связи — оставляем то, что уже стоит на устройстве
+    catch {
+      /*
+       * Не дочитали день — список не отправляем вовсе.
+       *
+       * Присланный список заменяет на устройстве всё (AlarmPlugin: «Заменяет
+       * весь список будильников на присланный»), поэтому пропустить день
+       * значило снять его будильники, а пропустить оба — снять все. Человек
+       * открывал приложение вечером в метро, и утром не звонило ничего.
+       *
+       * Настройки отправить можно: они список не трогают.
+       */
+      await pushAlarmConfig(profile);
+      return null;
+    }
 
     for (const row of day.schedule) {
       if (row.alarm_mode === 'none') continue;
       if (row.done === 1) continue;
 
-      const before = row.alarm_mode === 'alarm'
-        ? 0                                    // будильник звонит в срок, а не заранее
-        : (row.remind_before_min ?? Number(settings.notifyDefaultBeforeMin ?? 10));
-      const fireMinutes = row.start_min - before;
-      if (fireMinutes < 0) continue;
+      срокиСтроки(row, settings).forEach((before, i) => {
+        // «к концу» — отметка, а не минуты: момент считается по концу блока
+        if (before === К_КОНЦУ && row.end_min === null) return;
+        /*
+         * Вычитаем из самого времени начала, а не из минут внутри суток: «за
+         * день» и «за неделю» приходятся на другую дату, и вычитание в
+         * минутах уводило их в отрицательные числа — такие сроки просто
+         * пропадали. Сервер считает так же (notificationService).
+         */
+        const fireAt = before === К_КОНЦУ
+          ? zonedTimeToUtc(date, row.end_min, tz)
+          : zonedTimeToUtc(date, row.start_min, tz) - before * 60000;
+        if (fireAt <= now) return;
 
-      const fireAt = zonedTimeToUtc(date, fireMinutes, tz);
-      if (fireAt <= now) continue;
-
-      alarms.push({
-        id: row.id,
-        fireAt,
-        title: row.alarm_mode === 'alarm' ? 'Будильник' : 'NewDay',
-        body: row.title || 'Без названия',
-        kind: row.alarm_mode,
-        profile: row.alarm_profile || 'gentle',
-        date,
+        alarms.push({
+          /*
+           * Номер будильника на устройстве становится кодом запроса
+           * (`alarm.id.toInt()`), поэтому он должен быть единственным. У
+           * первого срока это номер строки — таким он был всегда, и
+           * отложенный кнопкой «Отложить» будильник продолжает узнаваться.
+           * Остальным срокам той же строки отводится своя сотня миллионов:
+           * пересечься с чужим номером строки или с проверочным будильником
+           * (999 999 999) так нельзя.
+           */
+          id: i === 0 ? row.id : row.id + i * 100000000,
+          fireAt,
+          title: row.alarm_mode === 'alarm' ? 'Будильник' : 'NewDay',
+          body: row.title || 'Без названия',
+          kind: row.alarm_mode,
+          profile: row.alarm_profile || 'gentle',
+          date,
+        });
       });
     }
   }

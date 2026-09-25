@@ -386,3 +386,95 @@ test('«повторить» возвращает правку из «не до�
   await q.отправить();
   assert.strictEqual(q.ожидает(), 0);
 });
+
+/**
+ * Хранилище, в котором кончилось место.
+ * @param {(ключ: string) => boolean} полно — для какого ключа запись бросает
+ */
+function хранилищеБезМеста(полно) {
+  const map = new Map();
+  return {
+    getItem: k => (map.has(k) ? map.get(k) : null),
+    setItem: (k, v) => {
+      if (полно(k)) throw new DOMException('QuotaExceededError', 'QuotaExceededError');
+      map.set(k, String(v));
+    },
+    removeItem: k => map.delete(k),
+    key: i => [...map.keys()][i] ?? null,
+    get length() { return map.size; },
+  };
+}
+
+test('места нет — отвергнутая правка не исчезает молча', async () => {
+  globalThis.localStorage = хранилищеБезМеста(() => false);
+  const q = await import(`../../public/js/outbox.js?${Math.random()}`);
+  q.настроить({
+    отправитель: async () => { const e = new Error('нельзя'); e.status = 400; throw e; },
+    автоповтор: false,
+  });
+  q.добавить(правка());
+  // место кончилось ровно между «дописать в беды» и «снять с очереди»
+  globalThis.localStorage.setItem = () => { throw new DOMException('QuotaExceededError'); };
+  await q.отправить();
+  assert.strictEqual(q.ожидает() + q.конфликты().length >= 1, true,
+    'правка обязана остаться хоть где-то: человек уже видел её на экране');
+});
+
+test('места нет — прогон останавливается, а не крутит одну правку без конца', async () => {
+  globalThis.localStorage = хранилищеБезМеста(k => k.includes('bad'));
+  const q = await import(`../../public/js/outbox.js?${Math.random()}`);
+  let отправок = 0;
+  q.настроить({
+    отправитель: async () => { отправок += 1; const e = new Error('нельзя'); e.status = 400; throw e; },
+    автоповтор: false,
+  });
+  q.добавить(правка());
+  await q.отправить();
+  assert.strictEqual(отправок, 1,
+    `одна попытка, а не круг: сервер получил ${отправок} одинаковых запросов`);
+});
+
+test('места нет — об этом сообщают наружу', async () => {
+  globalThis.localStorage = хранилищеБезМеста(k => k.includes('bad'));
+  const q = await import(`../../public/js/outbox.js?${Math.random()}`);
+  const вести = [];
+  q.подписаться(в => вести.push(в.вид));
+  q.настроить({
+    отправитель: async () => { const e = new Error('нельзя'); e.status = 400; throw e; },
+    автоповтор: false,
+  });
+  q.добавить(правка());
+  await q.отправить();
+  assert.ok(вести.includes('нетМеста'), `вести: ${вести.join(', ')}`);
+});
+
+test('успешная отправка при полном хранилище не уезжает дважды', async () => {
+  globalThis.localStorage = хранилищеБезМеста(() => false);
+  const q = await import(`../../public/js/outbox.js?${Math.random()}`);
+  let отправок = 0;
+  q.настроить({ отправитель: async () => { отправок += 1; return { id: 1 }; }, автоповтор: false });
+  q.добавить(правка());
+  globalThis.localStorage.setItem = () => { throw new DOMException('QuotaExceededError'); };
+  await q.отправить();
+  assert.strictEqual(отправок, 1, `правка уехала ${отправок} раз(а) — сервер получил дубли`);
+});
+
+test('сорвавшийся прогон не останавливает очередь навсегда', async () => {
+  const q = await свежая();
+  let рвём = true;
+  q.настроить({
+    отправитель: async оп => {
+      // срыв не из ожидания, а сразу: так падает правка незнакомого вида
+      if (рвём) throw Object.assign(new Error('сорвалось'), { status: undefined, code: undefined });
+      return { id: оп.цель };
+    },
+    автоповтор: false,
+  });
+  q.добавить(правка('строка.изменить', 1));
+  await q.отправить();
+  рвём = false;
+  q.добавить(правка('строка.изменить', 2));
+  await q.отправить();
+  await q.отправить();
+  assert.strictEqual(q.ожидает(), 0, 'после срыва очередь снова едет');
+});

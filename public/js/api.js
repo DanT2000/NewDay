@@ -55,12 +55,40 @@ let onUnauthorized = () => {
 };
 export function setUnauthorizedHandler(fn) { onUnauthorized = fn; }
 
+/*
+ * У каждого запроса есть предел ожидания.
+ *
+ * Без него «Сохраняю…», «Разбираю…» и «Распознаю…» висели столько, сколько
+ * браузер решит держать соединение: в гостиничном вайфае это минуты, а на
+ * экране всё это время ни ответа, ни кнопки. Отказ по времени — тоже ответ,
+ * и очередь правок с ним работает как с любым отсутствием связи.
+ *
+ * Помощник и выгрузка честно долгие: у них свой предел, иначе разбор дня
+ * обрывался бы на середине.
+ */
+const ЖДЁМ_МС = 20000;
+const ЖДЁМ_ДОЛГО_МС = 120000;
+const долгийПуть = p => /^\/(ai|import|export|reports)\b/.test(p);
+
+/** fetch с пределом ожидания: по истечении — понятный отказ, а не вечное ожидание. */
+async function сПределом(url, init, мс) {
+  // AbortSignal.timeout есть не везде, где работает приложение
+  const ctrl = new AbortController();
+  const таймер = setTimeout(() => ctrl.abort(), мс);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(таймер);
+  }
+}
+
 async function request(method, path, body, headers = {}) {
   const token = deviceToken();
   const started = Date.now();
+  const предел = долгийПуть(path) ? ЖДЁМ_ДОЛГО_МС : ЖДЁМ_МС;
   let res;
   try {
-    res = await fetch(apiBase() + path, {
+    res = await сПределом(apiBase() + path, {
       method,
       headers: {
         'Content-Type': 'application/json',
@@ -68,9 +96,14 @@ async function request(method, path, body, headers = {}) {
         ...headers,
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
-  } catch {
-    diag.note('сеть', `${method} ${path} — не дозвонились`, { мс: Date.now() - started });
+    }, предел);
+  } catch (e) {
+    const мс = Date.now() - started;
+    if (e?.name === 'AbortError') {
+      diag.note('сеть', `${method} ${path} — не дождались ответа`, { мс });
+      throw new ApiError(0, 'TIMEOUT', 'Сервер не ответил вовремя');
+    }
+    diag.note('сеть', `${method} ${path} — не дозвонились`, { мс });
     throw new ApiError(0, 'NETWORK', 'Нет связи с сервером');
   }
   /*
@@ -87,22 +120,43 @@ async function request(method, path, body, headers = {}) {
   }
   if (res.status === 204) return null;
 
+  const type = res.headers.get('content-type') || '';
+  const поJson = type.includes('application/json');
+  const data = поJson ? await res.json().catch(() => ({})) : null;
+
+  /*
+   * Отказ разбираем раньше, чем тип ответа.
+   *
+   * Обратный порядок означал, что любой HTML от прокси — 502 от шлюза, 413
+   * «тело слишком велико» — читался человеку как «Сервер ответил не по-JSON.
+   * Проверьте адрес сервера в настройках входа». Адрес был верным, и совет
+   * уводил в сторону; а очередь правок считала такой ответ отсутствием связи
+   * и повторяла запрос без конца.
+   */
+  if (!res.ok) {
+    const e = (data && data.error) || {};
+    diag.note('отказ', `${method} ${path} → ${res.status} ${e.message || e.code || ''}`.trim(), { мс: ms });
+    throw new ApiError(res.status, e.code || 'HTTP_ERROR',
+      e.message || сообщениеПоСтатусу(res.status), e.details);
+  }
+
   // Локальный сервер Capacitor отдаёт index.html на неизвестные пути.
   // Без этой проверки такой ответ выглядел бы как успешный вызов API.
-  const type = res.headers.get('content-type') || '';
-  if (!type.includes('application/json')) {
+  if (!поJson) {
     diag.note('отказ', `${method} ${path} → ответ не JSON (${res.status}, ${type || 'без типа'})`);
     throw new ApiError(res.status, 'BAD_RESPONSE',
       'Сервер ответил не по-JSON. Проверьте адрес сервера в настройках входа.');
   }
-
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const e = data.error || {};
-    diag.note('отказ', `${method} ${path} → ${res.status} ${e.message || e.code || ''}`.trim(), { мс: ms });
-    throw new ApiError(res.status, e.code || 'ERROR', e.message || `Ошибка ${res.status}`, e.details);
-  }
   return data;
+}
+
+/** Что сказать человеку, когда сервер отказал без своего объяснения. */
+function сообщениеПоСтатусу(status) {
+  if (status === 413) return 'Слишком большой запрос — сервер его не принял';
+  if (status === 429) return 'Слишком часто — подождите немного';
+  if (status === 502 || status === 503 || status === 504) return 'Сервер сейчас недоступен';
+  if (status >= 500) return 'Сервер ответил ошибкой';
+  return `Ошибка ${status}`;
 }
 
 export const GET    = (p, h)    => request('GET', p, undefined, h);
@@ -118,22 +172,38 @@ export async function postForm(path, form) {
   const token = deviceToken();
   let res;
   try {
-    res = await fetch(apiBase() + path, {
+    res = await сПределом(apiBase() + path, {
       method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: form,
-    });
-  } catch {
+    }, ЖДЁМ_ДОЛГО_МС);   // здесь везут запись голоса — по мобильной сети это долго
+  } catch (e) {
+    if (e?.name === 'AbortError') {
+      diag.note('сеть', `форма ${path} — не дождались ответа`);
+      throw new ApiError(0, 'TIMEOUT', 'Сервер не ответил вовремя');
+    }
     diag.note('сеть', `форма ${path} — не дозвонились`);
     throw new ApiError(0, 'NETWORK', 'Нет связи с сервером');
   }
 
   if (res.status === 401) { onUnauthorized(); throw new ApiError(401, 'UNAUTHORIZED', 'Требуется вход'); }
-  const data = await res.json().catch(() => ({}));
+  if (res.status === 204) return {};
+  /*
+   * Тип ответа проверяем и здесь. Раньше `postForm` брал любой ответ: HTML от
+   * прокси со статусом 200 становился пустым `{}` и уходил дальше как успех —
+   * в поле диктовки появлялось слово «undefined», а следующее нажатие падало.
+   */
+  const поJson = (res.headers.get('content-type') || '').includes('application/json');
+  const data = поJson ? await res.json().catch(() => ({})) : null;
   if (!res.ok) {
-    const e = data.error || {};
+    const e = (data && data.error) || {};
     diag.note('отказ', `форма ${path} → ${res.status} ${e.message || e.code || ''}`.trim());
-    throw new ApiError(res.status, e.code || 'ERROR', e.message || `Ошибка ${res.status}`);
+    throw new ApiError(res.status, e.code || 'HTTP_ERROR',
+      e.message || сообщениеПоСтатусу(res.status));
+  }
+  if (!поJson) {
+    diag.note('отказ', `форма ${path} → ответ не JSON (${res.status})`);
+    throw new ApiError(res.status, 'BAD_RESPONSE', 'Сервер ответил не по-JSON');
   }
   return data;
 }
