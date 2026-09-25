@@ -135,7 +135,10 @@ module.exports = function daysRouter({ db }) {
     const sections = Array.isArray(req.body.sections) && req.body.sections.length
       ? req.body.sections.filter(s => DAY_SECTIONS.includes(s))
       : DAY_SECTIONS;
-    res.json(svc.copyTo(req.user, dateOf(req), target, sections));
+    res.json(svc.copyTo(req.user, dateOf(req), target, sections, {
+      ifMatch: req.get('if-match'),
+      overwrite: req.body.overwrite === true,
+    }));
   }));
 
   router.use('/:date/schedule', entities.schedule);

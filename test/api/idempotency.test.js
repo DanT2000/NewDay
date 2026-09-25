@@ -78,8 +78,12 @@ test('испорченный сохранённый ответ не превра
     const D = today();
     const h = { 'Idempotency-Key': 'op-broken-1' };
     await api(s.url, s.cookie, 'POST', `/api/v1/days/${D}/tasks`, { text: 'один раз' }, h);
-    // портим сохранённый ответ так, как это сделала бы повреждённая база
-    s.db.prepare("UPDATE op_keys SET body = '{не json' WHERE key = ?").run('op-broken-1');
+    /*
+     * Портим сохранённый ответ так, как это сделала бы повреждённая база.
+     * Ключ хранится вместе с путём («…/tasks|op-broken-1»): один и тот же ключ
+     * на разных путях — разные запросы, поэтому ищем по концу строки.
+     */
+    s.db.prepare("UPDATE op_keys SET body = '{не json' WHERE key LIKE ?").run('%op-broken-1');
 
     const второй = await api(s.url, s.cookie, 'POST', `/api/v1/days/${D}/tasks`, { text: 'один раз' }, h, true);
     assert.notStrictEqual(второй.status, 201, 'вторую строку не создаём');

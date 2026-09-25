@@ -8,6 +8,7 @@ const { sendFileSafe } = require('../../lib/sendFile');
 const v = require('../../lib/validate');
 const { isAdmin } = require('../../lib/admin');
 const { reportsRepo } = require('../../repos/reports');
+const { rateLimit } = require('../../middleware/rateLimit');
 
 /*
  * Пределы. Запись голоса на минуту разговора — около мегабайта, снимок
@@ -112,7 +113,17 @@ module.exports = function reportsRouter({ db, config, ai, access }) {
    * не повторишь — поэтому неудача записывается в `voiceError`, файл
    * сохраняется, и сообщение всё равно принимается.
    */
-  router.post('/', wrap(async (req, res) => {
+  /*
+   * Предел на приём сообщений.
+   *
+   * Каждое кладёт на диск запись голоса и снимок экрана, а расшифровка ещё и
+   * уходит к провайдеру за деньги. Человек отправляет сообщение раз в день,
+   * поэтому десяток за четверть часа — с большим запасом; без предела сюда
+   * можно было заливать мегабайты, пока не кончится место.
+   */
+  const пределОтчётов = rateLimit({ max: 10 });
+
+  router.post('/', пределОтчётов, wrap(async (req, res) => {
     const declared = Number(req.get('content-length')) || 0;
     if (declared > MAX_AUDIO + MAX_SHOT + MAX_LOG) {
       throw new ApiError(413, 'TOO_BIG', 'Сообщение слишком большое');

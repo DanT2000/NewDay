@@ -126,14 +126,23 @@ function dayService(db, opts = {}) {
      * и следующая синхронизация просто создаст её заново на прежнем месте.
      */
     const rows = db.prepare(
-      `SELECT id, date, text FROM tasks
+      `SELECT id, date, text, bucket FROM tasks
         WHERE user_id = ? AND done = 0 AND date < ? AND date >= ? AND source IS NULL
         ORDER BY date ASC, sort_order ASC, id ASC`,
     ).all(user.id, today, since);
     if (!rows.length) return;
 
+    /*
+     * «Та же задача» — это тот же текст в том же разделе.
+     *
+     * Раньше сравнивался только текст, и «Позвонить» в рабочих делах на сегодня
+     * не давало перенести «Позвонить» из домашних за вчера: задача молча
+     * оставалась в прошлом дне, и человек считал, что перенос не работает.
+     * Разделы — это разные списки, одинаковые названия в них обычны.
+     */
     const here = tasks.list(user.id, today);
-    const seen = new Set(here.map(t => sameText(t.text)));
+    const ключ = t => `${t.bucket}|${sameText(t.text)}`;
+    const seen = new Set(here.map(ключ));
     let order = here.reduce((max, t) => Math.max(max, t.sort_order ?? 0), -1);
     /*
      * `carried_from` и `date` справа считаются по прежним значениям строки —
@@ -149,8 +158,8 @@ function dayService(db, opts = {}) {
     db.transaction(() => {
       for (const t of rows) {
         // такая же задача на сегодня уже стоит — пусть остаётся в своём дне
-        if (seen.has(sameText(t.text))) continue;
-        seen.add(sameText(t.text));
+        if (seen.has(ключ(t))) continue;
+        seen.add(ключ(t));
         move.run(today, (order += 1), t.id);
         from.add(t.date);
       }
@@ -347,10 +356,34 @@ function dayService(db, opts = {}) {
   }
 
   /** Копирование дня в другую дату. Отметки выполнения не переносятся — это план, а не факт. */
-  function copyTo(user, date, targetDate, sections = SECTIONS) {
+  /**
+   * Копия дня в другой день.
+   *
+   * @param {object} opts
+   * @param {string=} opts.ifMatch — версия дня-получателя
+   * @param {boolean=} opts.overwrite — «да, затереть» без версии
+   */
+  function copyTo(user, date, targetDate, sections = SECTIONS, opts = {}) {
     const src = getFull(user, date);
     if (src.rev === 0) throw notFound('Исходный день пуст');
     const want = new Set(sections);
+
+    /*
+     * Непустой день-получатель не затираем молча.
+     *
+     * Копирование стирает в цели всё, что было, — и делало это без единой
+     * проверки: одна опечатка в дате, и день с полным расписанием, делами и
+     * отметками заменялся чужим содержимым. Восстановить нечем.
+     *
+     * Пустой день (версия 0) копируем свободно: терять там нечего, а
+     * требовать версию у дня, которого ещё нет, — лишний шаг на ровном месте.
+     * Непустой требует либо версии в If-Match (как правки дня), либо явного
+     * «overwrite: true» — сознательного «да, затереть».
+     */
+    const цель = days.get(user.id, targetDate);
+    if ((цель?.rev ?? 0) > 0 && !opts.overwrite) {
+      checkIfMatch(opts.ifMatch, user, targetDate);
+    }
 
     /*
      * Прежний номер строки → новый. По нему приём пищи находит в копии свой

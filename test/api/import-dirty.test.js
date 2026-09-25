@@ -130,3 +130,17 @@ test('чужая тема из файла не приходит в режиме 
     assert.strictEqual(я.theme, 'light', 'при «добавить» свои настройки сильнее файла');
   } finally { await s.close(); }
 });
+
+test('интеграция не запишет невозможную дату', async () => {
+  const s = await loggedIn();
+  try {
+    const т = await api(s.url, s.cookie, 'POST', '/api/v1/tokens', { name: 'бот', scope: 'write' });
+    const r = await api(s.url, null, 'POST', '/api/v1/integrations/apply', {
+      source: 'бот',
+      items: [{ entity: 'task', externalId: 'a1', date: '2025-99-99', data: { text: 'Никогда' } }],
+    }, { Authorization: `Bearer ${т.token}` }, true);
+    assert.strictEqual(r.status, 400, `ждали отказ, получили ${r.status}`);
+    const задач = s.db.prepare('SELECT COUNT(*) n FROM tasks').get().n;
+    assert.strictEqual(задач, 0, 'в базу такая дата не попадает');
+  } finally { await s.close(); }
+});

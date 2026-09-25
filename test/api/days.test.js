@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { loggedIn, api, getJson } = require('../helpers/client');
+const { loggedIn, api, getJson, today, dayFromToday } = require('../helpers/client');
 
 test('PUT /full без If-Match отвергается', async () => {
   const s = await loggedIn();
@@ -354,5 +354,92 @@ test('план питания сохраняется в дне и пережив
       schedule: [{ time: '09:00-10:00', title: 'Работа' }],
     }, { 'If-Match': `"${after.rev}"` });
     assert.strictEqual(full.foodPlan, 'Рыба и салат', 'запись дня целиком его тоже пишет');
+  } finally { await s.close(); }
+});
+
+/*
+ * Копирование дня стирает в получателе всё, что там было. Одна опечатка в
+ * дате — и день с расписанием, делами и отметками заменён чужим содержимым,
+ * а восстановить нечем. Поэтому непустой получатель требует согласия.
+ */
+test('копия не затирает непустой день без согласия', async () => {
+  const s = await loggedIn();
+  try {
+    const источник = today();
+    const цель = dayFromToday(1);
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${источник}/schedule`,
+      { time: '09:00-10:00', title: 'Из источника' });
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${цель}/schedule`,
+      { time: '12:00-13:00', title: 'Своё дело' });
+
+    const r = await api(s.url, s.cookie, 'POST', `/api/v1/days/${источник}/copy-to`,
+      { targetDate: цель }, {}, true);
+    assert.strictEqual(r.status, 428, `ждали «нужна версия», получили ${r.status}`);
+
+    const день = await getJson(s.url, s.cookie, `/api/v1/days/${цель}/full`);
+    assert.ok(день.schedule.some(x => x.title === 'Своё дело'), 'своё дело на месте');
+  } finally { await s.close(); }
+});
+
+test('с версией получателя копия проходит', async () => {
+  const s = await loggedIn();
+  try {
+    const источник = today();
+    const цель = dayFromToday(1);
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${источник}/schedule`,
+      { time: '09:00-10:00', title: 'Из источника' });
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${цель}/schedule`,
+      { time: '12:00-13:00', title: 'Своё дело' });
+    const было = await getJson(s.url, s.cookie, `/api/v1/days/${цель}/full`);
+
+    const r = await api(s.url, s.cookie, 'POST', `/api/v1/days/${источник}/copy-to`,
+      { targetDate: цель }, { 'If-Match': `"${было.rev}"` }, true);
+    assert.strictEqual(r.status, 200, `ждали успех, получили ${r.status}`);
+    const день = await getJson(s.url, s.cookie, `/api/v1/days/${цель}/full`);
+    assert.ok(день.schedule.some(x => x.title === 'Из источника'));
+  } finally { await s.close(); }
+});
+
+test('в пустой день копия ложится без лишних условий', async () => {
+  const s = await loggedIn();
+  try {
+    const источник = today();
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${источник}/schedule`,
+      { time: '09:00-10:00', title: 'Из источника' });
+    const r = await api(s.url, s.cookie, 'POST', `/api/v1/days/${источник}/copy-to`,
+      { targetDate: dayFromToday(3) }, {}, true);
+    assert.strictEqual(r.status, 200, `терять там нечего, получили ${r.status}`);
+  } finally { await s.close(); }
+});
+
+test('один ключ повтора на разных путях — разные запросы', async () => {
+  const s = await loggedIn();
+  try {
+    const D = today();
+    const ключ = { 'Idempotency-Key': 'op-5' };
+    const задача = await api(s.url, s.cookie, 'POST', `/api/v1/days/${D}/tasks`,
+      { text: 'Отчёт' }, ключ);
+    const еда = await api(s.url, s.cookie, 'POST', `/api/v1/days/${D}/meals`,
+      { title: 'Обед' }, ключ);
+    assert.ok(еда.title === 'Обед' || еда.slot,
+      `приём пищи должен создаться, а не вернуть задачу: ${JSON.stringify(еда).slice(0, 120)}`);
+    assert.notStrictEqual(еда.text, задача.text);
+
+    const день = await getJson(s.url, s.cookie, `/api/v1/days/${D}/full`);
+    assert.strictEqual(день.meals.length, 1, 'приём пищи на месте');
+    assert.strictEqual([...день.tasks.work, ...день.tasks.home].length, 1, 'и задача тоже');
+  } finally { await s.close(); }
+});
+
+test('тот же ключ на том же пути по-прежнему не делает второй строки', async () => {
+  const s = await loggedIn();
+  try {
+    const D = today();
+    const ключ = { 'Idempotency-Key': 'op-7' };
+    const а = await api(s.url, s.cookie, 'POST', `/api/v1/days/${D}/tasks`, { text: 'Отчёт' }, ключ);
+    const б = await api(s.url, s.cookie, 'POST', `/api/v1/days/${D}/tasks`, { text: 'Отчёт' }, ключ);
+    assert.strictEqual(б.id, а.id, 'повтор отдаёт ту же строку');
+    const день = await getJson(s.url, s.cookie, `/api/v1/days/${D}/full`);
+    assert.strictEqual([...день.tasks.work, ...день.tasks.home].length, 1);
   } finally { await s.close(); }
 });

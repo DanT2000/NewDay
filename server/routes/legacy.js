@@ -87,9 +87,19 @@ module.exports = function legacyRouter({ db, auth, requireWrite }) {
       }
       if (Object.keys(fields).length) days.patch(user.id, date, fields);
 
+      /*
+       * Пустые элементы списка пропускаем.
+       *
+       * `[null]` в присланном дне давал обращение к полю у null — то есть
+       * «внутреннюю ошибку сервера» вместо понятного отказа. Приходит такое
+       * из чужого клиента и от старых версий; пропустить пустое место
+       * честнее, чем уронить сохранение всего дня.
+       */
+      const строки = сп => сп.filter(x => x && typeof x === 'object');
+
       if (Array.isArray(body.schedule)) {
         schedule.removeAllForDate(user.id, date);
-        body.schedule.forEach((s, i) => {
+        строки(body.schedule).forEach((s, i) => {
           const r = parseTimeRange(String(s.time ?? ''));
           schedule.create(user.id, date, {
             startMin: r ? r.startMin : 0,
@@ -105,14 +115,14 @@ module.exports = function legacyRouter({ db, auth, requireWrite }) {
         for (const row of tasks.list(user.id, date).filter(t => t.bucket === bucket)) {
           tasks.remove(user.id, row.id);
         }
-        body[field].forEach((t, i) => tasks.create(user.id, date, {
+        строки(body[field]).forEach((t, i) => tasks.create(user.id, date, {
           bucket, text: v.str(t.text ?? '', { max: MAX_TASK, field: 'задача' }), done: t.done ? 1 : 0,
           sortOrder: i, carriedFrom: t.carriedFrom ?? null,
         }));
       }
       if (Array.isArray(body.sport)) {
         sport.removeAllForDate(user.id, date);
-        body.sport.forEach((x, i) => sport.create(user.id, date, {
+        строки(body.sport).forEach((x, i) => sport.create(user.id, date, {
           exercise: String(x.exercise ?? ''),
           sets: Number.isFinite(Number(x.sets)) && x.sets !== '' ? Number(x.sets) : null,
           reps: Number.isFinite(Number(x.reps)) && x.reps !== '' ? Number(x.reps) : null,

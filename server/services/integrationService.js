@@ -19,7 +19,7 @@
  */
 
 const { badRequest } = require('../lib/errors');
-const { parseTimeRange, todayFor } = require('../lib/dates');
+const { parseTimeRange, todayFor, isValidDate } = require('../lib/dates');
 const { scheduleRepo } = require('../repos/schedule');
 const { tasksRepo } = require('../repos/tasks');
 const { mealsRepo } = require('../repos/meals');
@@ -108,7 +108,15 @@ function integrationService(db) {
     let date = null;
     if (DAY_TABLES[entity]) {
       date = String(item?.date ?? '');
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw badRequest(`items[${i}]: строке дня обязательна дата YYYY-MM-DD`);
+      /*
+       * Не образец, а настоящая дата. Образец пропускал «2025-99-99» и
+       * «2025-02-31»: такая строка ложилась в базу, день с невозможной датой
+       * всплывал в списках, арифметика по нему давала NaN, а выгрузка потом
+       * отказывалась восстанавливаться целиком — она проверяет даты строго.
+       */
+      if (!isValidDate(date)) {
+        throw badRequest(`items[${i}]: строке дня обязательна существующая дата YYYY-MM-DD`);
+      }
     }
     if (!item.delete && (item.data === undefined || item.data === null || typeof item.data !== 'object')) {
       throw badRequest(`items[${i}]: нужен объект data (или delete: true)`);

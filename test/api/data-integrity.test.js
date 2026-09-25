@@ -195,3 +195,36 @@ test('блок через полночь не создаётся молча об
     assert.strictEqual(момент.status, 201, 'напоминание без конца по-прежнему можно');
   } finally { await s.close(); }
 });
+
+test('одинаковые названия в разных разделах переносятся независимо', async () => {
+  const s = await loggedIn();
+  try {
+    await включитьПеренос(s);
+    const вчера = dayFromToday(-1);
+    // вчера домашнее «Позвонить», сегодня рабочее «Позвонить»
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${вчера}/tasks`,
+      { text: 'Позвонить', bucket: 'home' });
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${today()}/tasks`,
+      { text: 'Позвонить', bucket: 'work' });
+
+    const день = await getJson(s.url, s.cookie, `/api/v1/days/${today()}/full`);
+    const дома = день.tasks.home.filter(t => t.text === 'Позвонить');
+    assert.strictEqual(дома.length, 1,
+      'домашнее дело должно перенестись: рабочее с тем же названием ему не помеха');
+    assert.strictEqual(день.tasks.work.filter(t => t.text === 'Позвонить').length, 1);
+  } finally { await s.close(); }
+});
+
+test('та же задача в том же разделе второй раз не появляется', async () => {
+  const s = await loggedIn();
+  try {
+    await включитьПеренос(s);
+    const вчера = dayFromToday(-1);
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${вчера}/tasks`,
+      { text: 'Отчёт', bucket: 'work' });
+    await api(s.url, s.cookie, 'POST', `/api/v1/days/${today()}/tasks`,
+      { text: 'Отчёт', bucket: 'work' });
+    const день = await getJson(s.url, s.cookie, `/api/v1/days/${today()}/full`);
+    assert.strictEqual(день.tasks.work.filter(t => t.text === 'Отчёт').length, 1);
+  } finally { await s.close(); }
+});
