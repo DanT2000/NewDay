@@ -140,10 +140,15 @@ function habitRow(x) {
     h('span.hemoji', { text: x.emoji || '•', style: { fontSize: '20px' } }),
     h('div', { style: { minWidth: 0 } },
       h('b', { text: x.title }),
+      /*
+       * У цели серий не бывает: она считает не дни подряд, а сколько раз
+       * сделано. «Серия 0 дней · лучшая 0 дней» у марафона с сорока
+       * отметками читалось как «ничего не сделано».
+       */
       h('div.hmeta', { style: { display: 'flex', gap: '10px', flexWrap: 'wrap' } },
-        h('span', { text: `серия ${plDays(x.currentStreak)}` }),
-        h('span', { text: `лучшая ${plDays(x.bestStreak)}` }),
-        h('span', { text: `сделано ${x.done}` }),
+        x.kind === 'goal' ? null : h('span', { text: `серия ${plDays(x.currentStreak)}` }),
+        x.kind === 'goal' ? null : h('span', { text: `лучшая ${plDays(x.bestStreak)}` }),
+        h('span', { text: x.kind === 'goal' ? `сделано ${x.total ?? x.done}` : `сделано ${x.done}` }),
         x.missed ? h('span.danger', { text: `пропусков ${x.missed}` }) : null,
         x.skipped ? h('span', { text: `заморозок ${x.skipped}` }) : null),
       h('div.bar', { style: { marginTop: '6px' } },
@@ -164,7 +169,7 @@ function summaryCard() {
     h('div.card-hd', h('span.eyebrow', { text: 'коротко' })),
     h('div.card-bd.pad', h('div.stack',
       s.bestHabit ? h('p', { text: `Лучше всего идёт «${s.bestHabit.title}» — ${s.bestHabit.percent}%.` }) : null,
-      s.weakestHabit ? h('p', { text: `Слабее всего «${s.weakestHabit.title}» — ${s.weakestHabit.percent}%. Может, сузить дни недели или добавить заморозки.` }) : null,
+      s.weakestHabit ? h('p', { text: `Слабее всего «${s.weakestHabit.title}» — ${s.weakestHabit.percent}%. Может, сузить дни недели.` }) : null,
       h('p.small', { text: `Выше 70 % — ${s.habitsAbove70}, ниже 40 % — ${s.habitsBelow40}.` }))));
 }
 

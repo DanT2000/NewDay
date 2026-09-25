@@ -97,17 +97,22 @@ function meta(x) {
   if (x.challenge) {
     const c = x.challenge;
     parts.push(h('span.hchal', { text: `${c.day} / ${c.target}` }));
-    if (c.breaks > 0 && x.breakPolicy === 'keep') {
-      parts.push(h('span', { text: ` · срывов ${c.breaks}` }));
-    }
+    // срывы бывают только у серии: у цели пропуск — законное «не в зачёт»
+    if (c.breaks > 0) parts.push(h('span', { text: ` · срывов ${c.breaks}` }));
     if (c.complete) parts.push(h('span', { text: ' · цель взята' }));
+  } else if (x.kind === 'goal') {
+    /*
+     * Цель без числа — просто счётчик. Раньше все ветки промахивались, и
+     * подпись у такой привычки оказывалась пустой.
+     */
+    parts.push(h('span', { text: x.total ? `сделано ${x.total}` : 'пока ни разу' }));
   } else if (x.streak > 1) {
     parts.push(h('span', { text: `подряд ${x.streak}` }));
     if (x.bestStreak > x.streak) parts.push(h('span', { text: ` · лучшее ${x.bestStreak}` }));
   } else if (x.status === 'skipped') {
     parts.push(h('span', { text: 'пропуск не в счёт' }));
   } else if (x.status === 'missed') {
-    parts.push(h('span.danger', { text: x.polarity === 'avoid' ? 'срыв' : 'не сделано' }));
+    parts.push(h('span.danger', { text: 'не сделано' }));
   }
   return parts.length ? parts : [h('span', { text: ' ' })];
 }

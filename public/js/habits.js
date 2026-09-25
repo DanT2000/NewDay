@@ -15,7 +15,7 @@ import { bottomNav } from './shell.js';
 import { openSheet, confirmSheet } from './components/sheet.js';
 import { emojiButton } from './emoji.js';
 import { cycleTheme, getTheme, THEME_ICON, THEME_LABEL } from './theme.js';
-import { days as plDays } from './dates.js';
+import { days as plDays, plural } from './dates.js';
 
 const PRESETS = [
   { id: 'simple',      title: 'Просто привычка', hint: 'Делаю регулярно, считаю серию и процент' },
@@ -101,9 +101,12 @@ function card(x) {
   const s = statsCache.get(x.id);
   const challenge = s?.challenge;
 
+  const цель = s?.kind === 'goal';
   const headline = challenge
-    ? { value: `${challenge.day}`, of: `из ${challenge.target}`, label: 'день' }
-    : { value: s && s.percent !== null ? `${s.percent}%` : '—', of: null, label: 'за период' };
+    ? { value: `${challenge.day}`, of: `из ${challenge.target}`, label: цель ? 'раз' : 'день' }
+    : цель
+      ? { value: s?.total ? `${s.total}` : '—', of: null, label: 'раз сделано' }
+      : { value: s && s.percent !== null ? `${s.percent}%` : '—', of: null, label: 'за период' };
 
   const barPct = challenge
     ? Math.round((challenge.day / challenge.target) * 100)
@@ -142,20 +145,33 @@ function card(x) {
       challenge ? null : h('div.micro', { text: headline.label })));
 }
 
-const streakLine = s => s.currentStreak > 0
-  ? `серия ${plDays(s.currentStreak)}, лучшая ${plDays(s.bestStreak)}`
-  : s.bestStreak > 0 ? `серия прервана, лучшая была ${plDays(s.bestStreak)}` : 'серии пока нет';
+/*
+ * У цели серий нет по самому её смыслу: там считают не дни подряд, а
+ * сколько раз сделано. Писать такой привычке «серии пока нет» — врать:
+ * у марафона с сорока отметками это читалось как «ничего не сделано».
+ */
+const streakLine = s => (s.kind === 'goal'
+  ? (s.total ? `сделано ${s.total} ${plRaz(s.total)}` : 'пока ни разу')
+  : s.currentStreak > 0
+    ? `серия ${plDays(s.currentStreak)}, лучшая ${plDays(s.bestStreak)}`
+    : s.bestStreak > 0 ? `серия прервана, лучшая была ${plDays(s.bestStreak)}` : 'серии пока нет');
+
+const plRaz = n => plural(n, 'раз', 'раза', 'раз');
 
 /** Человеческая фраза вместо перечисления полей через точку. */
 function describe(x, challenge) {
   const parts = [];
 
-  if (x.polarity === 'avoid') {
-    parts.push(x.break_policy === 'reset' ? 'Удерживаюсь, срыв обнулит счётчик' : 'Удерживаюсь');
-  } else if (x.mode === 'challenge') {
-    parts.push(x.break_policy === 'reset' ? 'Подряд, без пропусков' : 'Накопительно, пропуски не обнуляют');
+  /*
+   * Вид привычки говорит сервер (поле `kind`): серия считает дни подряд и
+   * обнуляется на пропуске, цель копит отметки и пропуска не замечает.
+   * Раньше здесь пересказывались режим и «при срыве», и у цели выходило
+   * «Бессрочно» рядом со счётчиком цели.
+   */
+  if (x.kind === 'goal') {
+    parts.push(challenge ? 'Цель: сколько раз всего' : 'Счётчик: сколько раз сделано');
   } else {
-    parts.push('Бессрочно');
+    parts.push(challenge ? 'Серия: дней подряд' : 'Серия, без цели');
   }
 
   if (x.schedule_mask !== 127) {
@@ -169,9 +185,8 @@ function describe(x, challenge) {
     parts.push(`${x.allowed_skips_per_week} заморозки в неделю`);
   }
   if (challenge?.complete) parts.push('цель взята');
-  else if (challenge && challenge.breaks > 0 && x.break_policy === 'keep') {
-    parts.push(`срывов ${challenge.breaks}`);
-  }
+  // срывы бывают только у серии: у цели пропуск — законное «не в зачёт»
+  else if (challenge && challenge.breaks > 0) parts.push(`срывов ${challenge.breaks}`);
 
   return parts.join(' · ');
 }
@@ -258,10 +273,17 @@ function openEditor(existing) {
                 oninput: e => { draft.challengeTargetDays = Number(e.target.value) || null; },
               }))
           : null,
-        pickRow('При срыве', [['reset', 'Начинать заново'], ['keep', 'Копить дальше']],
+        /*
+         * Это и есть вид привычки, а не тонкая настройка поведения при
+         * срыве: серия считает дни подряд и обнуляется на пропуске, цель
+         * копит отметки и пропуска не замечает. Так и подписано — иначе
+         * человек меняет весь способ подсчёта, думая, что правит мелочь.
+         *
+         * Прежний выбор «Что отмечаю: сделал / удержался» убран: он не
+         * влиял ни на счёт, ни на что-либо ещё.
+         */
+        pickRow('Как считать', [['reset', 'Серия — дней подряд'], ['keep', 'Цель — сколько раз']],
           draft.breakPolicy, v => { draft.breakPolicy = v; }),
-        pickRow('Что отмечаю', [['do', 'Сделал'], ['avoid', 'Удержался']],
-          draft.polarity, v => { draft.polarity = v; }),
         h('div',
           h('span.eyebrow', { text: 'дни недели' }),
           h('div.row', { style: { gap: '4px', marginTop: '6px', flexWrap: 'wrap' } },
@@ -276,13 +298,12 @@ function openEditor(existing) {
                   (draft.scheduleMask & (1 << i)) ? 'true' : 'false');
               },
             })))),
-        h('label.stack',
-          h('span.eyebrow', { text: 'заморозок в неделю' }),
-          h('input.input', {
-            type: 'number', min: 0, max: 7, value: draft.allowedSkipsPerWeek,
-            oninput: e => { draft.allowedSkipsPerWeek = Number(e.target.value) || 0; },
-          }),
-          h('span.small', { text: 'Замороженный день не портит серию и не входит в процент' })),
+        /*
+         * Поля «заморозок в неделю» здесь больше нет: недельной квоты не
+         * существовало ни дня — в подсчёте участвуют только отметки
+         * «пропускаю», поставленные руками. Обещать человеку то, чего нет,
+         * хуже, чем не обещать.
+         */
         h('div',
           h('span.eyebrow', { text: 'цвет' }),
           h('div.row', { style: { gap: '6px', marginTop: '6px' } },
