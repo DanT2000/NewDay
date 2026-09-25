@@ -125,7 +125,15 @@ module.exports = function habitsRouter({ db }) {
   router.put('/:id/log/:date', wrap((req, res) => {
     const date = v.date(req.params.date, { field: 'дата' });
     const status = v.oneOf(req.body.status, STATUSES, { field: 'статус' });
-    const value = v.int(req.body.value, { min: 0, max: 100000, field: 'значение', nullable: true });
+    /*
+     * Поле есть в запросе или его нет — разные просьбы. Отметка без числа
+     * («сделал») не должна стирать счёт, который человек уже набрал; явный
+     * null стирает. Приложение при простой галочке присылает только статус.
+     */
+    const прислали = Object.prototype.hasOwnProperty.call(req.body ?? {}, 'value');
+    const value = прислали
+      ? v.int(req.body.value, { min: 0, max: 100000, field: 'значение', nullable: true })
+      : undefined;
     res.json(habits.setLog(req.user.id, idOf(req), date, { status, value }));
   }));
 

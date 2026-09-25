@@ -114,11 +114,12 @@ function devicesRepo(db) {
       const parsed = parseToken(raw);
       if (!parsed || parsed.kind !== 'ndd') return null;
 
+      // как и у токенов интеграций: префикс не уникален, сверяем все совпадения
+      const хеш = hashToken(parsed.secret);
       const row = db.prepare(
         'SELECT * FROM devices WHERE prefix = ? AND revoked_at IS NULL'
-      ).get(parsed.prefix);
+      ).all(parsed.prefix).find(r => safeEqual(хеш, r.token_hash));
       if (!row) return null;
-      if (!safeEqual(hashToken(parsed.secret), row.token_hash)) return null;
 
       const now = Date.now();
       if ((lastSeenCache.get(row.id) ?? 0) + LAST_SEEN_THROTTLE_MS < now) {

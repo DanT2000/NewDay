@@ -139,14 +139,26 @@ function habitsRepo(db) {
      * копию дня свежей: тот же ETag, тот же `If-Match` — и следующая правка
      * из браузера затирала отметку, не заметив чужого изменения.
      */
-    setLog(userId, habitId, date, { status, value = null }) {
+    /**
+     * Отметка дня.
+     *
+     * `value` без значения (undefined) — «не трогать», а не «стереть».
+     * Раньше умолчанием был null, и любая отметка без числа обнуляла счёт: у
+     * привычки «вода» стояло 8 стаканов, палец по галочке — и число исчезло.
+     * Отдельно приходит явный `null` — это «убрать число», и он работает.
+     */
+    setLog(userId, habitId, date, { status, value }) {
       own(userId, habitId);
+      const было = db.prepare(
+        'SELECT value FROM habit_logs WHERE user_id = ? AND habit_id = ? AND date = ?'
+      ).get(userId, habitId, date);
+      const итог = value === undefined ? (было?.value ?? null) : value;
       db.prepare(`
         INSERT INTO habit_logs (user_id, habit_id, date, status, value)
         VALUES (?,?,?,?,?)
         ON CONFLICT(user_id, habit_id, date)
         DO UPDATE SET status = excluded.status, value = excluded.value, updated_at = datetime('now')
-      `).run(userId, habitId, date, status, value);
+      `).run(userId, habitId, date, status, итог);
       bumpRev(db, userId, date);
       return db.prepare(
         'SELECT date, status, value FROM habit_logs WHERE user_id = ? AND habit_id = ? AND date = ?'

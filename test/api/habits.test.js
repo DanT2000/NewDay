@@ -269,3 +269,23 @@ test('привычка, созданная в UTC-вчера, не появля�
     assert.strictEqual(now.habits.length, 1, 'а сегодня есть');
   } finally { await s.close(); }
 });
+
+test('простая галочка не стирает набранное число', async () => {
+  const s = await loggedIn();
+  try {
+    const h = await api(s.url, s.cookie, 'POST', '/api/v1/habits',
+      { title: 'Вода', type: 'quant', unit: 'стакан', targetPerDay: 8 });
+    await api(s.url, s.cookie, 'PUT', `/api/v1/habits/${h.id}/log/${today()}`,
+      { status: 'done', value: 8 });
+
+    // отметка без числа: так её присылает и приложение, и очередь правок
+    const после = await api(s.url, s.cookie, 'PUT', `/api/v1/habits/${h.id}/log/${today()}`,
+      { status: 'done' });
+    assert.strictEqual(после.value, 8, 'набранные стаканы никуда не делись');
+
+    // а явный null — это просьба убрать число, и она работает
+    const убрали = await api(s.url, s.cookie, 'PUT', `/api/v1/habits/${h.id}/log/${today()}`,
+      { status: 'done', value: null });
+    assert.strictEqual(убрали.value, null);
+  } finally { await s.close(); }
+});

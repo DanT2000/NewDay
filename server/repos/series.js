@@ -1,5 +1,6 @@
 const { notFound } = require('../lib/errors');
 const { tombstonesRepo } = require('./tombstones');
+const { bumpRev } = require('./days');
 
 const FIELD_MAP = {
   target: 'target', freq: 'freq', interval: 'interval', byweekday: 'byweekday',
@@ -15,6 +16,20 @@ function seriesRepo(db) {
   };
 
   const tombs = tombstonesRepo(db);
+
+  /**
+   * Дни, из которых сейчас уйдут строки повтора, — их версия должна вырасти.
+   *
+   * Версия дня (`rev`) — то, чем два устройства договариваются, кто правит
+   * свежее. Удаление строк повтора меняло день, не двигая версию: телефон,
+   * державший день в памяти, отправлял его целиком со старой версией, сервер
+   * считал правку свежей — и удалённые строки возвращались. Собираем даты до
+   * удаления, потому что после него их взять уже негде.
+   */
+  const датыПовтора = (userId, id, from = null) => db.prepare(`
+    SELECT DISTINCT date FROM schedule_items
+     WHERE user_id = ? AND series_id = ? AND (? IS NULL OR date >= ?)
+  `).all(userId, id, from, from).map(r => r.date);
 
   const self = {
     /** Правила без имени — это повторы; с именем — шаблоны, применяются вручную. */
@@ -83,28 +98,36 @@ function seriesRepo(db) {
      *              поведение прежнее — только отцепить.
      */
     remove(userId, id, { today = null, fromIntegration = false } = {}) {
-      const row = own(userId, id);
-      // правило интеграции, удалённое человеком, не должно вернуться от apply
-      if (row.source && !fromIntegration) {
-        tombs.put(userId, 'series', '', row.source, row.external_id);
-      }
-      if (today) {
-        db.prepare('DELETE FROM schedule_items WHERE user_id = ? AND series_id = ? AND date >= ?')
-          .run(userId, id, today);
-      }
-      db.prepare('UPDATE schedule_items SET series_id = NULL WHERE series_id = ? AND user_id = ?').run(id, userId);
-      db.prepare('DELETE FROM series WHERE id = ?').run(id);
+      db.transaction(() => {
+        const row = own(userId, id);
+        // правило интеграции, удалённое человеком, не должно вернуться от apply
+        if (row.source && !fromIntegration) {
+          tombs.put(userId, 'series', '', row.source, row.external_id);
+        }
+        if (today) {
+          const дни = датыПовтора(userId, id, today);
+          db.prepare('DELETE FROM schedule_items WHERE user_id = ? AND series_id = ? AND date >= ?')
+            .run(userId, id, today);
+          for (const d of дни) bumpRev(db, userId, d);
+        }
+        db.prepare('UPDATE schedule_items SET series_id = NULL WHERE series_id = ? AND user_id = ?').run(id, userId);
+        db.prepare('DELETE FROM series WHERE id = ?').run(id);
+      })();
     },
 
     /** Завершить серию с даты, не трогая прошлое. */
     endFrom(userId, id, date) {
-      own(userId, id);
-      const { addDays } = require('../lib/dates');
-      db.prepare("UPDATE series SET end_date = ?, last_modified_by = 'user', updated_at = datetime('now') WHERE id = ?")
-        .run(addDays(date, -1), id);
-      db.prepare('DELETE FROM schedule_items WHERE user_id = ? AND series_id = ? AND date >= ?')
-        .run(userId, id, date);
-      return db.prepare('SELECT * FROM series WHERE id = ?').get(id);
+      return db.transaction(() => {
+        own(userId, id);
+        const { addDays } = require('../lib/dates');
+        db.prepare("UPDATE series SET end_date = ?, last_modified_by = 'user', updated_at = datetime('now') WHERE id = ?")
+          .run(addDays(date, -1), id);
+        const дни = датыПовтора(userId, id, date);
+        db.prepare('DELETE FROM schedule_items WHERE user_id = ? AND series_id = ? AND date >= ?')
+          .run(userId, id, date);
+        for (const d of дни) bumpRev(db, userId, d);
+        return db.prepare('SELECT * FROM series WHERE id = ?').get(id);
+      })();
     },
 
     // ── Переопределения по дням ─────────────────────────────────

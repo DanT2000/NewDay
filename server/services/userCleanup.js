@@ -62,6 +62,13 @@ function userCleanup(db, { soundsDir, reportsDir } = {}) {
 
     db.transaction(() => {
       db.prepare('DELETE FROM ai_usage WHERE user_id = ?').run(id);
+      /*
+       * Ключи повторных запросов (миграция 015) — тоже без FK: таблица без
+       * связи с users, и после удаления человека его ключи оставались лежать.
+       * Сами по себе они безвредны, но это его данные, и уходить они должны
+       * вместе с ним, а не по часовой уборке через сутки.
+       */
+      db.prepare('DELETE FROM op_keys WHERE user_id = ?').run(id);
       db.prepare('DELETE FROM users WHERE id = ?').run(id);
     })();
 

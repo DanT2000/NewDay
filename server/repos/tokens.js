@@ -59,11 +59,20 @@ function tokensRepo(db) {
       const parsed = parseToken(raw);
       if (!parsed || parsed.kind !== 'nd') return null;
 
+      /*
+       * По префиксу может найтись не одна строка.
+       *
+       * Префикс — четыре случайных байта, и он не уникален ни по схеме, ни по
+       * теории вероятностей. Пока брали первую попавшуюся, совпадение
+       * префиксов означало, что один из двух токенов перестаёт работать
+       * навсегда: сверка хеша не сходится, ответ 401 — и приложение выходит из
+       * аккаунта без объяснения. Проверяем все с этим префиксом.
+       */
+      const хеш = hashToken(parsed.secret);
       const row = db.prepare(
         'SELECT * FROM api_tokens WHERE prefix = ? AND revoked_at IS NULL'
-      ).get(parsed.prefix);
+      ).all(parsed.prefix).find(r => safeEqual(хеш, r.token_hash));
       if (!row) return null;
-      if (!safeEqual(hashToken(parsed.secret), row.token_hash)) return null;
 
       const now = Date.now();
       if ((lastUsedCache.get(row.id) ?? 0) + LAST_USED_THROTTLE_MS < now) {

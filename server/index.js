@@ -115,6 +115,28 @@ purgeOpKeys();
 const opKeysTimer = setInterval(purgeOpKeys, 60 * 60 * 1000);
 opKeysTimer.unref?.();
 
+/**
+ * Ссылки из писем — подтверждение почты и сброс пароля.
+ *
+ * Живут сутки и час соответственно, но таблица не чистилась никогда: строка
+ * оставалась после каждой регистрации и каждого «забыли пароль». Недельный
+ * запас — чтобы у поддержки была возможность разобраться, почему ссылка не
+ * сработала, и при этом таблица не росла бесконечно.
+ */
+const purgeEmailTokens = () => {
+  try {
+    const n = app.locals.db.prepare(
+      "DELETE FROM email_tokens WHERE expires_at < ? OR (used_at IS NOT NULL AND used_at < datetime('now', '-7 days'))",
+    ).run(Date.now() - 7 * 24 * 3600 * 1000).changes;
+    if (n) console.log(`NewDay: убрано просроченных ссылок из писем: ${n}`);
+  } catch (e) {
+    console.error('[newday] уборка ссылок из писем:', e.message);
+  }
+};
+purgeEmailTokens();
+const emailTokensTimer = setInterval(purgeEmailTokens, 6 * 60 * 60 * 1000);
+emailTokensTimer.unref?.();
+
 // Порт берём из фактически открытого сокета: при PORT=0 система выбирает его
 // сама, и запись «порт 0» в логе бесполезна
 const server = app.listen(config.port, '0.0.0.0', () => {

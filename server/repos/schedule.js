@@ -52,6 +52,25 @@ function scheduleRepo(db) {
     `).run(userId, seriesId, date, action);
   };
 
+  /** Удаление одной строки со всем, что за ней тянется. Всегда внутри транзакции. */
+  function удалитьОдну(userId, id, opts = {}) {
+    const before = db.prepare('SELECT series_id, date FROM schedule_items WHERE id = ? AND user_id = ?')
+      .get(id, userId);
+    const row = base.remove(userId, id, opts);
+    /*
+     * Приём пищи, который занимал этот блок, отпускаем.
+     *
+     * Ссылка двусторонняя, и без этого она оставалась висячей: приём пищи
+     * продолжал показывать «в расписании», а любая его правка и даже
+     * удаление упирались в «строка не найдена» — запись нельзя было ни
+     * сохранить, ни убрать.
+     */
+    db.prepare('UPDATE meals SET schedule_item_id = NULL WHERE user_id = ? AND schedule_item_id = ?')
+      .run(userId, id);
+    if (before) markOverride(userId, before.series_id, before.date, 'deleted');
+    return row;
+  }
+
   return {
     ...base,
 
@@ -59,32 +78,32 @@ function scheduleRepo(db) {
       return base.create(userId, date, normalizeTime(data));
     },
 
+    /*
+     * Правка и удаление — по нескольку записей за раз, и все вместе.
+     *
+     * Строка расписания живёт не одна: за ней отметка «в этот день повтор
+     * изменён» и ссылка приёма пищи. Пока шаги шли по отдельности, отказ на
+     * втором оставлял день в состоянии, которого не бывает: строка правлена, а
+     * повтор считает её нетронутой — и достраивает вторую такую же. Транзакция
+     * делает правку одним событием: либо всё, либо ничего.
+     *
+     * Вложенность безопасна: better-sqlite3 превращает внутреннюю транзакцию в
+     * точку сохранения, а день целиком (`PUT /days/:date/full`) правится своей.
+     */
     update(userId, id, data) {
-      const before = db.prepare('SELECT series_id, date FROM schedule_items WHERE id = ? AND user_id = ?')
-        .get(id, userId);
-      const result = base.update(userId, id, normalizeTime(data));
-      // отметка «выполнено» серию не меняет, а правка содержимого — меняет
-      const contentChanged = Object.keys(data).some(k => k !== 'done' && k !== 'updatedAt');
-      if (before && contentChanged) markOverride(userId, before.series_id, before.date, 'modified');
-      return result;
+      return db.transaction(() => {
+        const before = db.prepare('SELECT series_id, date FROM schedule_items WHERE id = ? AND user_id = ?')
+          .get(id, userId);
+        const result = base.update(userId, id, normalizeTime(data));
+        // отметка «выполнено» серию не меняет, а правка содержимого — меняет
+        const contentChanged = Object.keys(data).some(k => k !== 'done' && k !== 'updatedAt');
+        if (before && contentChanged) markOverride(userId, before.series_id, before.date, 'modified');
+        return result;
+      })();
     },
 
     remove(userId, id, opts = {}) {
-      const before = db.prepare('SELECT series_id, date FROM schedule_items WHERE id = ? AND user_id = ?')
-        .get(id, userId);
-      const row = base.remove(userId, id, opts);
-      /*
-       * Приём пищи, который занимал этот блок, отпускаем.
-       *
-       * Ссылка двусторонняя, и без этого она оставалась висячей: приём пищи
-       * продолжал показывать «в расписании», а любая его правка и даже
-       * удаление упирались в «строка не найдена» — запись нельзя было ни
-       * сохранить, ни убрать.
-       */
-      db.prepare('UPDATE meals SET schedule_item_id = NULL WHERE user_id = ? AND schedule_item_id = ?')
-        .run(userId, id);
-      if (before) markOverride(userId, before.series_id, before.date, 'deleted');
-      return row;
+      return db.transaction(() => удалитьОдну(userId, id, opts))();
     },
 
     /*
@@ -97,12 +116,14 @@ function scheduleRepo(db) {
      * строки, только для всех сразу.
      */
     removeAllForDate(userId, date) {
-      const были = db.prepare(
-        'SELECT DISTINCT series_id FROM schedule_items WHERE user_id = ? AND date = ? AND series_id IS NOT NULL',
-      ).all(userId, date);
-      base.removeAllForDate(userId, date);
-      db.prepare('UPDATE meals SET schedule_item_id = NULL WHERE user_id = ? AND date = ?').run(userId, date);
-      for (const r of были) markOverride(userId, r.series_id, date, 'deleted');
+      db.transaction(() => {
+        const были = db.prepare(
+          'SELECT DISTINCT series_id FROM schedule_items WHERE user_id = ? AND date = ? AND series_id IS NOT NULL',
+        ).all(userId, date);
+        base.removeAllForDate(userId, date);
+        db.prepare('UPDATE meals SET schedule_item_id = NULL WHERE user_id = ? AND date = ?').run(userId, date);
+        for (const r of были) markOverride(userId, r.series_id, date, 'deleted');
+      })();
     },
 
     /**
